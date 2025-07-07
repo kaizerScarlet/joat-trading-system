@@ -32,7 +32,7 @@ class CancelWindow(ABC):
     @abstractmethod 
     def flush_flags(self) -> List[Dict[str, Any]]:
         """
-        Return nd clear any flags generated since last call.
+        Return and clear any flags generated since last call.
 
         Each flag dict might look like:
         {
