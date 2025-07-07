@@ -1,0 +1,12 @@
+#python
+__pycache__/
+*.pyc 
+
+# Virtual environment
+.venv/
+
+# Jupyter
+.ipnyb_checkpoints/ 
+
+# VS Code
+.vscode/
