@@ -4,3 +4,4 @@ pandas
 pyyaml
 python-dotenv
 redis
+setuptools

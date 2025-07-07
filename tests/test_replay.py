@@ -1,5 +1,5 @@
 import json, gzip, pytest, pathlib
-from src.replay_runner import run
+from replay.replay_runner import run
 
 
 GT_PATH = pathlib.Path("data/fixtures/ground_truth_flags.jsonl.gz")
