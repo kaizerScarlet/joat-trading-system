@@ -1,0 +1,10 @@
+# General
+mode: live    # or 'paper'
+exchange: binance
+
+# Cancel Window
+cancel_window: 75
+
+# Risk
+max_daily_loss: 0.03 #3%
+max_order_notional: 100 #USD
