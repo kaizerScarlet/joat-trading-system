@@ -1,0 +1,1 @@
+#connects to binance's websocket

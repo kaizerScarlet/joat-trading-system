@@ -5,7 +5,7 @@ from typing import Dict, List, Any
 class CancelWindow(ABC):
     """
     Abstract Base Class for a cancel-window detector.
-    Implementation turn rw order-book + trade messages into high quality event flags such as:
+    Implementation turn raw order-book + trade messages into high quality event flags such as:
     * "CANCEL_SPOOF"
     * "PARTIAL_FILL"
     * "ICEBERG_FILL"

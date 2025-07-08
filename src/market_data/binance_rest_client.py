@@ -1,0 +1,1 @@
+#fetches historical candles or recent trades
