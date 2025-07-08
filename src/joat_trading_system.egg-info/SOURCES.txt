@@ -23,5 +23,7 @@ src/replay/replay_runner.py
 src/risk/__init__.py
 src/risk/interface.py
 src/utils/__init__.py
+src/utils/bus.py
+src/utils/event_types.py
 src/utils/logger.py
 tests/test_replay.py

@@ -5,3 +5,4 @@ pyyaml
 python-dotenv
 redis
 setuptools
+websockets==11.0

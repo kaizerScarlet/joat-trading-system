@@ -1,4 +1,8 @@
 import json, gzip, pytest, pathlib
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
+
 from replay.replay_runner import run
 
 
