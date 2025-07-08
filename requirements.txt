@@ -1,8 +1,9 @@
 websockets
-aiohtpp
+aiohttp
 pandas
 pyyaml
 python-dotenv
 redis
 setuptools
 websockets==11.0
+pytest-asyncio>=0.23

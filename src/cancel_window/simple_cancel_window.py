@@ -21,3 +21,11 @@ class SimpleCancelWindow(CancelWindow):
     def flush_flags(self) -> List[Dict[str, Any]]:
         out, self._flags = self._flags, []
         return out
+    
+
+    def set_window_ms(self, window_ms: int) -> None:
+        self._window_ms = window_ms
+
+    def snapshot_state(self) -> Dict[str, Any]:
+        #Return minimal state for now
+        return {"window_ms": self._window_ms, "flag_count":  len(self._flags)}

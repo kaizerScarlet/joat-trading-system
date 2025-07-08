@@ -8,7 +8,7 @@ def stream(path):
 
 def run():
     cw = SimpleCancelWindow(window_ms =75)
-    for l2 in stream("data/fixtures/btcusdt_10min.jsonl.gz"):
+    for l2 in stream("data/fixtures/btcusdt_10min_l2.jsonl.gz"):
         cw.process_l2_update(l2)
     
     for t in stream("data/fixtures/btcusdt_10min_trades.jsonl.gz"):

@@ -82,6 +82,6 @@ if __name__ == "__main__":
     async def _run():
         feed = BinanceWSFeed("btcusdt")
         await feed.connect()
-        await feed._demo(limit=10)
+        await feed._demo(limit=100)
         await feed.disconnect()
     asyncio.run(_run())

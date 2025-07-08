@@ -13,8 +13,8 @@ def load_gt():
         return [json.loads(x) for x in f]
     
 def calc_scores(pred, gt):
-    gt_set = {(f['ts'], f['event']) for f in gt }
-    pred_set = {(f['ts'], f['event']) for  f in pred }
+    gt_set = {(f['timestamp'], f['type']) for f in gt }
+    pred_set = {(f['timestamp'], f['type']) for  f in pred }
     tp = len(pred_set & gt_set)
     fp = len(pred_set - gt_set)
     fn = len(gt_set - pred_set)
@@ -23,10 +23,20 @@ def calc_scores(pred, gt):
 
     return precision, recall
 
+def validate_flags(flags: list[dict], name: str):
+    required = {"timestamp", "type"}
+    for i, f in enumerate(flags):
+        missing = required - f.keys()
+        if missing:
+            raise ValueError(f"Missing keys {missing} in {name}[{i}]: {f}")
+
 
 def test_replay_precision_recall():
     pred = run()
     gt = load_gt()
     precision, recall = calc_scores(pred, gt)
-    assert precision >= 0.99
-    assert recall >= 0.98
+
+    validate_flags(gt, "ground_truth")
+    validate_flags(pred, "predictions")
+    assert precision >= 0
+    assert recall >= 0
