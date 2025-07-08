@@ -11,6 +11,13 @@ src/joat_trading_system.egg-info/PKG-INFO
 src/joat_trading_system.egg-info/SOURCES.txt
 src/joat_trading_system.egg-info/dependency_links.txt
 src/joat_trading_system.egg-info/top_level.txt
+src/market_data/__init__.py
+src/market_data/binance_rest_client.py
+src/market_data/binance_ws_client.py
+src/market_data/data_normalizer.py
+src/market_data/data_storage.py
+src/market_data/interfaces.py
+src/market_data/stream_handler.py
 src/replay/__init__.py
 src/replay/replay_runner.py
 src/risk/__init__.py
