@@ -38,5 +38,5 @@ def test_replay_precision_recall():
 
     validate_flags(gt, "ground_truth")
     validate_flags(pred, "predictions")
-    assert precision >= 0
-    assert recall >= 0
+    assert precision >= 0.9
+    assert recall >= 0.9

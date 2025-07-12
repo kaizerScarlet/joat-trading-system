@@ -21,6 +21,8 @@ trades = [
 ground_truth = [
     {"timestamp": base_ts + 1000, "type":"cancel", "price":"30000.0","side":"bid"},
     {"timestamp": base_ts + 2000, "type":"fill", "price":"30010.0","side":"ask"},
+    {"timestamp": base_ts + 3000, "type":"fill", "price":"30020.0","side":"ask"},
+    {"timestamp": base_ts + 4000, "type":"partial_fill", "price":"30030.0", "side":"ask"},
 ]
 
 
