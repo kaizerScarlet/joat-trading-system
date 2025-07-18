@@ -301,3 +301,46 @@ class SimpleCancelWindow(CancelWindow):
     def flush(self):
         self.cancel_events.clear()
         self.fill_events.clear()
+
+    #revist to ensure if this is complete
+    def update_book(self, mid_price: float):
+        """Update mid price for cancel impact scoring """
+        self._mid_price = mid_price
+
+    
+    def compute_cancel_impact_score(self, price: float, side: str) -> float:
+        """Compute the impact score of cancels at a given price level and side.
+        The higher the score, the more market-impacting the cancel is.
+        """
+
+        # --- Step 1: Normalize Cancel Density -----
+        density = self.get_cancel_density(side)
+        total_cancels = sum(density.values()) or 1e-9
+        norm_density = density.get(price, 0) / total_cancels
+
+        # ------ Step 2: Distance from Midprice -----
+        if self.midprice is None:
+            dist_from_mid = 0.5 # Neutral
+        else:
+            max_rel_dist = 0.02 #2%
+            rel_dis = abs(price - self.midprice) / self.midprice
+            dist_from_mid = max(0.0, 1.0 - min(rel_dis / max_rel_dist)) # mapped to [0,1]
+
+        # ------Step 3: Recent Fills at that Price ----
+        recent_fills = [f for f in self.fill_events if f['price'] == price and f['side'] == side]
+        fill_score = min(len(recent_fills) / 5, 1.0)    #normalize
+
+        # ------Step 4: Inverse Book Depth at Price ----
+        size_at_price = self.orderbook.get_level_size(price, side) or 1e-9
+        inv_book_depth = min(1.0 / size_at_price, 1.0)
+
+        # -----Weighted Combination -------
+        w1, w2, w3, w4 = 0.6, 0.2, 0.1, 0.1
+        score = (
+            w1 * norm_density +
+            w2 * dist_from_mid +
+            w3 * fill_score +
+            w4 * inv_book_depth
+
+        )
+        return round(score, 4)
