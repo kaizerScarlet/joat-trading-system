@@ -28,4 +28,21 @@ def test_window_tuner_score():
 
     #Optional: check f1_scores improve with tuning
     assert results[50]['f1_score'] <= results[200]['f1_score'] #maybe better at higher window
-    
+
+
+def test_tuner_with_all_spoofing():
+    events = [
+        {'timestamp' : 1000, 'price': 100.0, 'side': 'ask', 'size':5},  #spoof
+        {'timestamp' : 1020, 'price': 100.0, 'side': 'ask', 'size':5},  #spoof
+        {'timestamp' : 1400, 'price': 100.0, 'side': 'ask', 'size':5},  #spoof
+    ]
+
+    labels = [True, True, True]
+
+    tuner = CancelWindowTuner(events, labels)
+    result = tuner.tune([200])
+    metrics = result[200]
+
+
+    assert metrics['precision'] >= 0.5
+    assert metrics['recall'] >= 0.5

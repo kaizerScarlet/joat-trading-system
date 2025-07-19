@@ -1,6 +1,6 @@
 import copy
 from typing import List, Dict
-from simple_cancel_window import SimpleCancelWindow
+from  cancel_window.simple_cancel_window import SimpleCancelWindow
 from sklearn.metrics import precision_score, recall_score, f1_score
 
 
@@ -46,18 +46,18 @@ class CancelWindowTuner:
                 predicted = any(flag['price'] == evt['price'] and flag['side'] == evt['side'] for flag in flags)
                 predictions.append(predicted)
 
-        #Score against ground_truth
-        precision = precision_score(self.labels, predictions)
-        recall = recall_score(self.labels, predictions)
-        f1 = f1_score(self.labels, predictions)
+            #Score against ground_truth
+            precision = precision_score(self.labels, predictions)
+            recall = recall_score(self.labels, predictions)
+            f1 = f1_score(self.labels, predictions)
 
 
-        results[win] = {
-            'precision': round(precision, 4),
-            'recall': round(recall, 4),
-            'f1_score': round(f1, 4)
+            results[win] = {
+                'precision': round(precision, 4),
+                'recall': round(recall, 4),
+                'f1_score': round(f1, 4)
 
 
-        } 
+            } 
 
         return results
