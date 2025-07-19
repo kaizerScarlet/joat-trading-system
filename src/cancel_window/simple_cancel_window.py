@@ -47,6 +47,10 @@ class SimpleCancelWindow(CancelWindow):
         self.orderbook = None   # to be injected/ set externally
         #---------------------------------------------------------------------------#
 
+        #Add Iceberg Cancel Buffer
+        self.iceberg_buffer = defaultdict(list) # (price, side) -> List(Dict)
+
+
 
 
     # -------------------------------------------------------------------------------------------------#
@@ -182,8 +186,17 @@ class SimpleCancelWindow(CancelWindow):
     # HELPER METHODS
     # -----------------------------------------------------------------------------------------------
     def flush_flags(self) -> List[Dict[str, Any]]:
+        #return current flags and clears them (destructive)
+        #Use in streaming or batch mode, where flags should be consumed once
         out, self._flags = self._flags, []
         return out
+    
+    def get_flags(self) -> list[dict]:
+        #returns current flags only (Non-destructive)
+        #Use to inspect flags multiple times or during testing/debugging
+        flags = self._flags[:]
+        self._flags.clear()
+        return flags
     
 
     def set_window_ms(self, window_ms: int) -> None:
@@ -226,16 +239,51 @@ class SimpleCancelWindow(CancelWindow):
     # Register Cancel
     #---------------------------------------------------------
 
-    def register_cancel(self, timestamp: datetime, price: float, side: str, size: float):
+    def register_cancel(self, timestamp: int, price: float, side: str, size: float) -> None:
         """
         Registers a cancel event with metadata
         """
-        self.cancel_events.append({
-            'timestamp': timestamp,
+        #Store Cancel
+        event = {
             'price': price,
-            'side': side.lower(),
-            'size': size
-        })
+            'side': side,
+            'timestamp': timestamp,
+            'size': size}
+        self.cancel_events.append(event)
+        #Buffer cancels for ice detection
+        key = (price, side)
+        self.iceberg_buffer[key].append(event)
+
+        #Prune Old Ones
+        self.iceberg_buffer[key] = [
+            e for e in self.iceberg_buffer[key]
+            if timestamp - e["timestamp"] <= self.window_ms
+        ]
+
+        #Trigger detection
+        self._detect_iceberg_cancel(key)
+
+    def _detect_iceberg_cancel(self, key: Tuple[float, str]) -> None:
+        events = self.iceberg_buffer[key]
+        if len(events) <3:
+            return
+        total_size = sum(e['size'] for e in events)
+        unique_ts = len(set(e['timestamp'] for e in events))
+
+        if total_size >= 10.0 and unique_ts > 1:
+            self._flags.append({
+                "type": "ICEBERG_CANCEL",
+                "price": key[0],
+                "side": key[1],
+                "size": total_size,
+                "count": len(events),
+                "timestamp": events[-1]["timestamp"]
+
+
+            })
+
+            #Clear to avoid double reporting
+            self.iceberg_buffer[key].clear()
 
 
     def get_cancel_density(self, side:str) -> dict:
@@ -331,6 +379,7 @@ class SimpleCancelWindow(CancelWindow):
         fill_score = min(len(recent_fills) / 5, 1.0)    #normalize
 
         # ------Step 4: Inverse Book Depth at Price ----
+        """Still need to implement the orderbook.get_level_size(price, size)"""
         size_at_price = self.orderbook.get_level_size(price, side) or 1e-9
         inv_book_depth = min(1.0 / size_at_price, 1.0)
 

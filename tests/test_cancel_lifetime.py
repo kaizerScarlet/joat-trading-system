@@ -348,14 +348,19 @@ def test_cancel_density_flush():
 
 
 
+# Test for Icerberg Cancels
+def test_iceberg_cancel_detection():
+    cw = SimpleCancelWindow(window_ms=100)
+    ts = 100
+    for _ in range(5):
+        cw.register_cancel(price= 101.0, side='ask', timestamp=ts, size=2.5)
+        ts += 10
+    flags = cw.get_flags()
+    assert any(f['type'] == 'ICEBERG_CANCEL' for f in flags)
+
 
 #Test for Orderflow impact scoring
-
-
-
-
-
-#Test case 1: High Density + Near mid High Score = high score
+# #Test case 1: High Density + Near mid High Score = high score
 
 #Test-only Mock
 class MockOrderBook:
