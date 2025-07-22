@@ -1,7 +1,7 @@
 import time
 
 class ThrottleCooldownManager:
-    def __init__(self, max_losses = 3, cooldonw_seconds=300, max_trades_per_minute=10):
+    def __init__(self, max_losses = 3, cooldown_seconds=300, max_trades_per_minute=10):
         """
         Initialize the throttle cooldown manager.:
         :param max_losses: Maximum consecutive losses before cooldown
@@ -14,7 +14,7 @@ class ThrottleCooldownManager:
         self.cooldown_until = 0
         self.trade_timestamps = []
         self.max_losses = max_losses
-        self.cooldown_seconds = cooldonw_seconds
+        self.cooldown_seconds = cooldown_seconds
         self.max_trades_per_minute = max_trades_per_minute
 
     def register_trade(self, pnl):
@@ -62,5 +62,7 @@ class ThrottleCooldownManager:
             return False
         
         return True
+
+    
 
     
