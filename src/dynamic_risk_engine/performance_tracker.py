@@ -16,14 +16,18 @@ class PerformanceTracker:
 
         :param pnl: Profit or Loss of the trade
         :param risk: The risk taken in the trade (used to calculate RRR)
+        :param reward: The reward gained from the trade (used to calculate RRR)
         :param metadata: Optional metadata about the trade
         """
+
+        is_win = pnl > 0
 
         trade = {
             'pnl': pnl,
             'risk': risk,
             'reward': reward,
             'rrr': (reward / risk) if risk else 0.0,
+            'win': is_win,
             'metadata': metadata or {}
         }
 
@@ -38,7 +42,7 @@ class PerformanceTracker:
         """
         if not self.trades:
             return 0.0
-        wins =sum(t['win'] for t in self.trades)
+        wins = sum(1 for t in self.trades if t.get('win', False))
         return wins / len(self.trades)
     
     def average_rrr(self) -> float:
