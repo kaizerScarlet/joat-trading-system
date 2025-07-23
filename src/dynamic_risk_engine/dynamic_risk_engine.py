@@ -1,0 +1,119 @@
+from dynamic_risk_engine.performance_tracker import PerformanceTracker
+from dynamic_risk_engine.daily_drawdown_manager import DailyDrawdownManager
+from dynamic_risk_engine.signal_confidence_calibrator import SignalConfidenceCalibrator
+from dynamic_risk_engine.dynamic_position_sizer import DynamicPositionSizer
+from dynamic_risk_engine.throttle_cooldown_manager import ThrottleCooldownManager
+
+
+
+class DynamicRiskEngine:
+    """
+    Master coordinator for all risk and sizing modules.
+    Governs whether trades can proceed based on how large they should be
+    """
+
+    def __init__(self, initial_balance: float = 100000.0, max_risk_per_trade: float = 0.01):
+
+        """
+        :param initial_balance: Starting balance for the risk engine
+        :param max_risk_per_trade: Maximum risk allowed per trade as a fraction of the balance
+        """
+        self.performance_tracker = PerformanceTracker()
+        self.daily_drawdown_manager = DailyDrawdownManager(starting_balance=initial_balance)
+        self.signal_confidence_calibrator = SignalConfidenceCalibrator()
+        self.dynamic_position_sizer = DynamicPositionSizer(max_risk_per_trade=max_risk_per_trade, account_balance=initial_balance)
+        self.throttle_cooldown_manager = ThrottleCooldownManager()
+
+
+        self.initial_balance = initial_balance
+        self.max_risk_per_trade = max_risk_per_trade
+
+
+    def can_trade(self) -> bool:
+        """
+        Determine if trading is currently allowed  on the risk engine state.
+        :return: True if trading is allowed, False otherwise
+        """
+        return (
+            not self.daily_drawdown_manager.in_drawdown_limit()
+            and self.throttle_cooldown_manager.can_trade()
+
+        )
+    
+    def get_position_size(self, stop_loss_distance: float) -> float:
+        """
+        Get optimal position size based on current edge and risk conditions.
+        :param stop_loss_distnace: price units from entry to stop loss
+        :return: Calculated position size in units
+        """
+
+        confidence = self.signal_confidence_calibrator.get_current_confidence()
+        win_rate = self.performance_tracker.win_rate()
+        rr_ratio = self.performance_tracker.average_rrr()
+
+
+        return self.dynamic_position_sizer.calculate_position_size(
+            stop_loss_distance=stop_loss_distance,
+            signal_confidence=confidence,
+            win_rate=win_rate,
+            rr_ratio=rr_ratio
+        )
+    
+
+    def register_trade(self, pnl:float, risk: float, reward: float, signal_id: str, was_correct: bool, metadata: dict = None):
+        """
+        Register a trade with its PnL and risk parameters.
+        :param pnl: Profit or Loss from the trade
+        :param risk: Risk amount for the trade
+        :param reward: Reward amount for the trade
+        :param signal_id: Unique identifier for the trading signal
+        :param was_correct: Whether the signal was correct (True) or incorrect (False)
+        :param metadata: Optional metadata about the trade
+        """
+        self.performance_tracker.record_trade(pnl, risk, reward, metadata)
+        self.daily_drawdown_manager.record_pnl(signal_id, pnl)
+        self.signal_confidence_calibrator.update_signal_result(
+            signal_id=signal_id,
+            was_correct=was_correct,
+            pnl=pnl,
+            risk=risk,
+            reward=reward
+        )
+        self.throttle_cooldown_manager.register_trade(pnl)
+
+    
+    def reset(self):
+        """
+        Reset all internal state (e.g., start of day
+        )"""
+
+        self.performance_tracker.reset()
+        self.daily_drawdown_manager.reset_daily_drawdown()
+        self.signal_confidence_calibrator.reset()
+        self.dynamic_position_sizer = DynamicPositionSizer(
+            max_risk_per_trade=self.max_risk_per_trade,
+            account_balance=self.initial_balance
+        )
+        self.throttle_cooldown_manager =  ThrottleCooldownManager()
+
+
+    def get_diagnostic(self) -> dict:
+        """
+        Return full risk risk enigine diagnostic state.
+        Usefule for debugging and monitoring, or audit logs
+        """
+
+        return {
+
+            'can_trade': self.can_trade(),
+            'position_size_for_1_unit_stop_loss': self.get_position_size(stop_loss_distance=1.0),
+            'current_confidence': self.signal_confidence_calibrator.get_current_confidence(),
+            'current_win_rate': round(self.performance_tracker.win_rate(), 4),
+            'average_rrr': round(self.performance_tracker.average_rrr(), 4),
+            'profit_factor': round(self.performance_tracker.profit_factor(), 4),
+            'drawdown_triggered': self.daily_drawdown_manager.in_drawdown_limit(),
+            'cooldown_active': self.throttle_cooldown_manager.is_in_cooldown(),
+        }
+    
+
+    
