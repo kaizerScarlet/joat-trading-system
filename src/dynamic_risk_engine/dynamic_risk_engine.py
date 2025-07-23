@@ -19,7 +19,7 @@ class DynamicRiskEngine:
         :param max_risk_per_trade: Maximum risk allowed per trade as a fraction of the balance
         """
         self.performance_tracker = PerformanceTracker()
-        self.daily_drawdown_manager = DailyDrawdownManager(starting_balance=initial_balance)
+        self.daily_drawdown_manager = DailyDrawdownManager(daily_drawdown_limit=daily_drawdown_limit)
         self.signal_confidence_calibrator = SignalConfidenceCalibrator()
         self.dynamic_position_sizer = DynamicPositionSizer(max_risk_per_trade=max_risk_per_trade, account_balance=initial_balance)
         self.throttle_cooldown_manager = ThrottleCooldownManager()
@@ -106,7 +106,7 @@ class DynamicRiskEngine:
         return {
 
             'can_trade': self.can_trade(),
-            'position_size_for_1_unit_stop_loss': self.get_position_size(stop_loss_distance=1.0),
+            'position_size_for_1_sl': self.get_position_size(stop_loss_distance=1.0),
             'current_confidence': self.signal_confidence_calibrator.get_current_confidence(),
             'current_win_rate': round(self.performance_tracker.win_rate(), 4),
             'average_rrr': round(self.performance_tracker.average_rrr(), 4),
@@ -116,4 +116,3 @@ class DynamicRiskEngine:
         }
     
 
-    
