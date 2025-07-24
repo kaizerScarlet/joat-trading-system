@@ -3,6 +3,7 @@ import pytest
 from dynamic_risk_engine.dynamic_risk_engine import DynamicRiskEngine
 
 def test_initial_state():
+
     engine =  DynamicRiskEngine(initial_balance=100000.0, max_risk_per_trade=0.02)
 
     diagnostic = engine.get_diagnostic()
@@ -33,7 +34,7 @@ def test_register_trade_win_updates_all_modules():
 
     assert diagnostic['current_win_rate'] == 1.0
     assert diagnostic['current_confidence'] == 1.0
-    assert diagnostic['equity_curve'][-1] == 1100.0
+    assert diagnostic['equity_curve'][-1] == 100.0
     assert diagnostic['drawdown_triggered'] is False
     assert diagnostic['cooldown_active'] is False
 

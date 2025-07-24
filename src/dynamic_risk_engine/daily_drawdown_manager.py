@@ -20,6 +20,8 @@ class DailyDrawdownManager:
         :param timestamp: datetime object
         :return: Date string in 'YYYY-MM-DD' format
         """
+        if isinstance(timestamp, str):
+            return timestamp #Already a day string
         return timestamp.strftime('%Y-%m-%d')
     
 
@@ -39,20 +41,22 @@ class DailyDrawdownManager:
             self.trading_halted[day] = True
             self.alert_trading_halted(day)
 
-    def calculate_daily_drawdown(self, day: str) -> float:
+    def calculate_daily_drawdown(self, timestamp: datetime) -> float:
         """
         Calculate the total PnL for a given day.
         """
+        day = self._get_day(timestamp)
         if day not in self.day_pnls:
             return 0.0
         return sum(self.day_pnls[day])
     
-    def alert_trading_halted(self, day: str):
+    def alert_trading_halted(self, timestamp: datetime):
         """
         Alert that trading has been halted for the day due to drawdown limit.
         :param day: Date string in 'YYYY-MM-DD' format
         """
-        print(f"Trading halted for {day} due to drawdown limit exceeded: {self.daily_drawdown_limit}")
+        days = self._get_day(timestamp)
+        print(f"Trading halted for {days} due to drawdown limit exceeded: {self.daily_drawdown_limit}")
 
     def is_trading_halted(self, timestamp: datetime) -> bool:
         """
@@ -73,3 +77,13 @@ class DailyDrawdownManager:
             del self.day_pnls[day]
         if day in self.trading_halted:
             del self.trading_halted[day]
+
+
+    def in_drawdown_limit(self, timestamp: datetime) -> bool:
+        """
+        Check if the current drawdown is within the allowed limit.
+        :param timestamp: datetime object of the current state
+        :return: True if within limit, False otherwise
+        """
+        day = self._get_day(timestamp)
+        return self.calculate_daily_drawdown(day) >= -self.daily_drawdown_limit

@@ -8,7 +8,7 @@ class PerformanceTracker:
     def  __init__(self):
         self.trades : List[Dict] = []
         self.equity_curve: List[float] = []
-        self.balance: float = 0.0 
+        self.balance: float = 0.0
 
     def record_trade(self, pnl: float, risk: float, reward: float, metadata: Optional[Dict] = None):
         """
