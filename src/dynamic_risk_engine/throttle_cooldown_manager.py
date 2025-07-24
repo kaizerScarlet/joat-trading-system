@@ -38,7 +38,7 @@ class ThrottleCooldownManager:
             return
 
         #Only add to timestamp if not in cooldown
-        if not self.is_in_cooldown:
+        if not self.is_in_cooldown() and pnl < 0:
             # Record the time of this trade
             self.trade_timestamps.append(now)
             # Remove timestamps older than 60 seconds for rate-limiting
@@ -72,7 +72,7 @@ class ThrottleCooldownManager:
             return False
 
         # ⬇️ Prune timestamps older than 60 seconds to enforce rate limit
-        self.trade_timestamps = [t for t in self.trade_timestamps if t > now - 60]
+        self._prune_trade_timestamps(now)
 
         # ❌ Deny if too many trades occurred in the last 60 seconds
         if len(self.trade_timestamps) >= self.max_trades_per_minute:

@@ -42,7 +42,7 @@ def test_cooldown_expires_after_duration(manager):
 
 
 
-def test_rate_limit_blocks_trade_when_exceeded(manager):
+def test_rate_limit_blocks_trade_when_exceeded_profits(manager):
     manager.reset()
     #simulate 3 trades under one minute
     manager.register_trade(10)
@@ -50,24 +50,45 @@ def test_rate_limit_blocks_trade_when_exceeded(manager):
     manager.register_trade(20)
     time.sleep(0.5)
     manager.register_trade(30)
-    assert manager.can_trade() is False  # Should be blocked due to rate limit
+    assert manager.can_trade() is True  # Should not be blocked due to rate limit not affected by profitable trades
 
-
-
-def test_rate_limit_resets_after_60_seconds(manager):
+def test_rate_limit_blocks_trade_when_exceeded_losses(manager):
     manager.reset()
     #simulate 3 trades under one minute
-    manager.register_trade(10)
+    manager.register_trade(-10)
+    time.sleep(0.5)
+    manager.register_trade(-20)
+    time.sleep(0.5)
+    manager.register_trade(-30)
+    assert manager.can_trade() is False  # Should be blocked due to rate limit affected by losses
+
+def test_rate_limit_resets_after_60_seconds_losses(manager):
+    manager.reset()
+    #simulate 3 trades under one minute
+    manager.register_trade(-10)
     time.sleep(1)
-    manager.register_trade(20)
+    manager.register_trade(-20)
     time.sleep(1)
-    manager.register_trade(30)
+    manager.register_trade(-30)
     assert manager.can_trade() is False  # Should be blocked due to rate limit
     
     #simulate time passing
     time.sleep(64)
     assert manager.can_trade() is True  # Should be able to trade again after 60 seconds
 
+def test_rate_limit_resets_after_60_seconds_profits(manager):
+    manager.reset()
+    #simulate 3 trades under one minute
+    manager.register_trade(10)
+    time.sleep(1)
+    manager.register_trade(20)
+    time.sleep(1)
+    manager.register_trade(30)
+    assert manager.can_trade() is True  # Should not be blocked due to rate limit due to profits
+    
+    #simulate time passing
+    time.sleep(64)
+    assert manager.can_trade() is True  # Should be able to trade again after 60 seconds
 
 
 def test_no_cooldown_on_profitable_trades(manager):
