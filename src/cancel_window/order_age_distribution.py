@@ -20,7 +20,7 @@ Output:
 from typing import List, Dict
 
 class OrderAgeDistribution:
-    def __init(self):
+    def __init__(self):
         self.active_orders = {}  # Maps order_id to timestamp_created
         self.cancelled_orders = []  # List of cancelled orders with their ages
         self.filled_orders = []  # List of filled orders with their ages

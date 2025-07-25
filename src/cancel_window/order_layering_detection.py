@@ -78,7 +78,7 @@ class OrderLayeringDetection:
                 for j in range(i + 1, len(orders)):
                     if (orders[j]['timestamp'] - orders[i]['timestamp'] > self.time_window_ms):
                         break
-                    if abs(orders[j]['price'] - orders[i]['price']) <= self.price_tick:
+                    if abs(orders[j]['price'] - orders[i]['price']) <= self.price_tick * self.cluster_depth:
                         cluster.append(orders[j])
 
                 if len(cluster) >= self.min_orders:

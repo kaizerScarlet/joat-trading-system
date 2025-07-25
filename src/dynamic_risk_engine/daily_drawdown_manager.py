@@ -6,11 +6,11 @@ class DailyDrawdownManager:
     Manages daily drawdown limits for trading strategies.
     when limits are hit, it can trigger alerts or stop trading.
     """
-    def __init__(self, daily_drawdown_limit: float):
+    def __init__(self, daily_drawdown_limit: float, account_balance: float):
         """
         :param daily drawdown_limit: Maximum allowed drawdown for the day (in base currency or % of account balance)
         """
-        self.daily_drawdown_limit = daily_drawdown_limit
+        self.daily_drawdown_limit = -abs(daily_drawdown_limit * account_balance)
         self.day_pnls : Dict[str, List[float]] = {}  # Maps date to list of daily PnLs
         self.trading_halted: Dict[str, bool] = {}  # Maps date to trading halted status
 
@@ -37,7 +37,7 @@ class DailyDrawdownManager:
             self.day_pnls[day] = []
         self.day_pnls[day].append(pnl)
 
-        if self.calculate_daily_drawdown(day) < -self.daily_drawdown_limit:
+        if self.calculate_daily_drawdown(day) <= self.daily_drawdown_limit:
             self.trading_halted[day] = True
             self.alert_trading_halted(day)
 
@@ -85,5 +85,4 @@ class DailyDrawdownManager:
         :param timestamp: datetime object of the current state
         :return: True if within limit, False otherwise
         """
-        day = self._get_day(timestamp)
-        return self.calculate_daily_drawdown(day) >= -self.daily_drawdown_limit
+        return not self.is_trading_halted(timestamp)

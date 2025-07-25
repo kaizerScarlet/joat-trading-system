@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from dynamic_risk_engine.daily_drawdown_manager import DailyDrawdownManager
 
 def test_record_pnl_and_no_halt():
-    manager = DailyDrawdownManager(daily_drawdown_limit=1000.0)
+    manager = DailyDrawdownManager(daily_drawdown_limit=0.25, account_balance=1000)
 
     # Record some PnL
     timestamp =  datetime.now()
@@ -18,7 +18,7 @@ def test_record_pnl_and_no_halt():
 
 
 def test_trading_halted_when_limit_exceeded(capfd):
-    manager = DailyDrawdownManager(daily_drawdown_limit=300.0)
+    manager = DailyDrawdownManager(daily_drawdown_limit=0.25, account_balance = 1000)
     timestamp = datetime.now()
 
 
@@ -40,14 +40,14 @@ def test_trading_halted_when_limit_exceeded(capfd):
 
 
 def test_test_trades_returns_zero_drawdown():
-    manager = DailyDrawdownManager(daily_drawdown_limit=1000.0)
+    manager = DailyDrawdownManager(daily_drawdown_limit=0.25, account_balance =  1000)
     random_date = datetime.now().strftime('%Y-%m-%d')
     assert manager.calculate_daily_drawdown(random_date) == 0.0
 
     manager.reset_daily_drawdown(random_date)
 
 def test_reset_daily_drawdown():
-    manager = DailyDrawdownManager(daily_drawdown_limit=1000.0)
+    manager = DailyDrawdownManager(daily_drawdown_limit=0.25, account_balance= 1000)
 
     # Record some PnL
     timestamp = datetime(2023, 10, 1, 10, 0, 0)
@@ -64,7 +64,7 @@ def test_reset_daily_drawdown():
     manager.reset_daily_drawdown(timestamp)
 
 def test_mulitple_days_handling():
-    manager = DailyDrawdownManager(daily_drawdown_limit=300.00)
+    manager = DailyDrawdownManager(daily_drawdown_limit=0.25, account_balance=1000)
 
     today = datetime.now()
     yesterday = today - timedelta(days=1)

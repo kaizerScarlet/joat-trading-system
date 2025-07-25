@@ -13,14 +13,14 @@ class DynamicRiskEngine:
     Governs whether trades can proceed based on how large they should be
     """
 
-    def __init__(self, initial_balance: float = 100000.0, max_risk_per_trade: float = 0.01):
+    def __init__(self, initial_balance: float = 100000.0, max_risk_per_trade: float = 0.01, daily_drawdown_limit: float = 0.25):
 
         """
         :param initial_balance: Starting balance for the risk engine
         :param max_risk_per_trade: Maximum risk allowed per trade as a fraction of the balance
         """
         self.performance_tracker = PerformanceTracker()
-        self.daily_drawdown_manager = DailyDrawdownManager(daily_drawdown_limit=0.25)  # 25% daily drawdown limit
+        self.daily_drawdown_manager = DailyDrawdownManager(daily_drawdown_limit, initial_balance)  # 25% daily drawdown limit
         self.signal_confidence_calibrator = SignalConfidenceCalibrator()
         self.dynamic_position_sizer = DynamicPositionSizer(max_risk_per_trade=max_risk_per_trade, account_balance=initial_balance)
         self.throttle_cooldown_manager = ThrottleCooldownManager()
@@ -36,7 +36,7 @@ class DynamicRiskEngine:
         :return: True if trading is allowed, False otherwise
         """
         return (
-            not self.daily_drawdown_manager.in_drawdown_limit(datetime.now()) and
+             self.daily_drawdown_manager.in_drawdown_limit(datetime.now()) and
              self.throttle_cooldown_manager.can_trade()
 
         )
@@ -109,7 +109,7 @@ class DynamicRiskEngine:
             'current_win_rate': round(self.performance_tracker.win_rate(), 4),
             'average_rrr': round(self.performance_tracker.average_rrr(), 4),
             'profit_factor': round(self.performance_tracker.profit_factor(), 4),
-            'drawdown_triggered': self.daily_drawdown_manager.in_drawdown_limit(datetime.now()),
+            'drawdown_triggered': self.daily_drawdown_manager.is_trading_halted(datetime.now()),
             'cooldown_active': self.throttle_cooldown_manager.is_in_cooldown(),
             'equity_curve': self.performance_tracker.get_equity_curve()
         }

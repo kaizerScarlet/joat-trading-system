@@ -24,7 +24,7 @@ def test_order_layering_detection():
     # Detect layering
     clusters = detector.detect_layering()
 
-    assert len(clusters) == 1
+    assert len(clusters) == 2
     assert clusters[0]['side'] == 'a'
     assert len(clusters[0]['cluster']) >= 3
 
