@@ -69,7 +69,7 @@ def test_true_fill_flag_bid():
     assert any(f["type"] == "TRUE_FILL" for f in flags)
 
 #Test partial fill flag bid side
-@pytest.mark.asyncio
+#@pytest.mark.asyncio
 def test_partial_fill_flag_bid():
     """
     Order is added -> partially removed via  trade smaller than original size
@@ -97,7 +97,7 @@ def test_partial_fill_flag_bid():
 
 
 #Test partial fill flag ask side
-@pytest.mark.asyncio
+#@pytest.mark.asyncio
 def test_partial_fill_flag_ask():
     """
     Order is added -> partially removed via  trade smaller than original size

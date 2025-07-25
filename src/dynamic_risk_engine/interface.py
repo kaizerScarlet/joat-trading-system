@@ -8,7 +8,7 @@ class RiskEngine(ABC):
     @abstractmethod
     def assess(self, signal: Dict) -> bool:
         """
-        Returns True if trade psses risk checks, False otherwise.
+        Returns True if trade passes risk checks, False otherwise.
         """
         pass
 

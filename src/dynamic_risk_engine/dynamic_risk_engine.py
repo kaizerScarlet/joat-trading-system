@@ -13,7 +13,7 @@ class DynamicRiskEngine:
     Governs whether trades can proceed based on how large they should be
     """
 
-    def __init__(self, initial_balance: float = 100000.0, max_risk_per_trade: float = 0.01, daily_drawdown_limit: float = 0.25):
+    def __init__(self, initial_balance: float, max_risk_per_trade: float, daily_drawdown_limit: float):
 
         """
         :param initial_balance: Starting balance for the risk engine

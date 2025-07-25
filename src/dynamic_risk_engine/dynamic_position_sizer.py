@@ -1,5 +1,5 @@
 class DynamicPositionSizer:
-    def __init__(self, max_risk_per_trade = 0.01, account_balance = 100000):
+    def __init__(self, max_risk_per_trade: float, account_balance: float):
         """
         Initialize the dynamic position sizer.
         
@@ -9,7 +9,7 @@ class DynamicPositionSizer:
         self.max_risk_per_trade = max_risk_per_trade
         self.account_balance = account_balance
     
-    def calculate_position_size(self, stop_loss_distance, signal_confidence=1.0, win_rate=0.5, rr_ratio=2.0):
+    def calculate_position_size(self, stop_loss_distance, signal_confidence: float, win_rate: float, rr_ratio: float):
         """
         Calculate position size based on account balance, risk parameters, and signal confidence.
         :param stop_loss_distance: Distance to stop loss in price units

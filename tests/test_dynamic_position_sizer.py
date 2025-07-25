@@ -2,7 +2,7 @@ import pytest
 from dynamic_risk_engine.dynamic_position_sizer import DynamicPositionSizer
 
 def test_default_initialization():
-    sizer = DynamicPositionSizer()
+    sizer = DynamicPositionSizer(max_risk_per_trade = 0.01, account_balance = 100000)
     assert sizer.max_risk_per_trade == 0.01
     assert sizer.account_balance == 100000
 
