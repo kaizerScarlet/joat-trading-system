@@ -2,7 +2,7 @@ from typing import List, Dict
 from cancel_window.order_layering_detection import OrderLayeringDetection
 
 class LayeringScoring:
-    def __init__(self, reference_size: float = 5.0, base_score: float= 1.0):
+    def __init__(self, reference_size: float, base_score: float):
         """
         :param reference_size: Normalizing size for order weighting
         :param base_score: Base multiplier per cluster
