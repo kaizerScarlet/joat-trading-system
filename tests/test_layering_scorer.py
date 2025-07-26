@@ -129,3 +129,49 @@ def test_time_decay_reduces_score():
 
     assert decayed_score < fresh_score
     assert decayed_score > 0.0
+
+
+def test_side_skew_detection():
+    """Triggers when one side dominates the cluster"""
+    scorer = LayeringScoring(
+        reference_size = 5.0,
+        base_score =1.0,
+        skew_threshold = 0.9 #Low Threshold to trigger for test
+    )
+
+    #Heavy Buy-side activity
+    scorer.register_order(timestamp=1000, price=100.0, size=5.0, side='b')
+    scorer.register_order(timestamp=1010, price=99.9, size=5.0, side='b')
+    scorer.register_order(timestamp=1020, price=99.8, size=5.0, side='b')
+    scorer.register_order(timestamp=1030, price=100.1, size=1.0, side='s')
+
+    score = scorer.compute_score(current_time=1100)
+    assert score > 3.0 # 3 base orders + skew bump
+
+
+def test_reposting_detection():
+    """Checks if score increase after cancel and repost behaviour"""
+    scorer = LayeringScoring(
+        reference_size = 5.0,
+        base_score=1.0,
+        repost_window_ms = 500,
+        repost_price_tolerance=0.02,
+    )
+
+    #simulate a cancel
+    scorer.register_cancel(timestamp=1000, price=100.0, size=5.0, side='b')
+
+    #Repost same order slightly after
+    scorer.register_order(timestamp=1100, price=100.01, soze=5.0, side='b')
+
+    score = scorer.compute_score(current_time=1200)
+    assert score >= 1.0 #Includesrepost score bump
+
+
+
+def test_combined_skew_repost():
+    
+
+
+
+
