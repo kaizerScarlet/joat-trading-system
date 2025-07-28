@@ -51,15 +51,28 @@ class AlphaSignalPipeline:
         """
         Compute and return the blended alpha signal at the given timestamp.
         Args:
-            float: 
+            float: Blended alpha signal (e.g 0.0 to 1.0)
         """
         return self.blender.compute_alpha_score(timestamp)
     
 
-    def trade_feedback(self, signal_dict, pnl):
+    def trade_feedback(self, signal_dict: Dict[str, float], pnl: float) -> None:
+        """
+        Provide trade outcome feedback to allow the blender to adaptively adjust signal weights.
+
+        Args:
+            signal_dict (Dict[str, float]): Signal values used for the trade.
+            pnl (float): Realized profit or loss for that trade
+        """
         self.blender.update_trade_feedback(signal_dict, pnl)
 
     
-    def get_debug(self):
+    def get_debug(self) -> Dict[str, Any]:
+        """
+        Retrieve debug information from the blender, including  signal history and weights.
+
+        Returns:
+            Dict[str, Any]: Debug data for diagnostics or visualization
+        """
         return self.blender.get_debug_view()
 
