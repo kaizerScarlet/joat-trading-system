@@ -29,7 +29,7 @@ def test_ignores_mixed_side_orders():
     assert score > 0.0
 
 def test_cluster_just_below_threshold_fails():
-    scorer =LayeringScoring(reference_size = 5.0, base_score=1.0)
+    scorer =LayeringScoring(reference_size = 1.0, base_score=1.0)
 
     scorer.register_order(timestamp=1000, price=100.0, size=5.0, side='b')
     scorer.register_order(timestamp=1010, price= 99.9, size= 5.0, side='b') #Only 2 orders
@@ -51,7 +51,7 @@ def test_old_orders_break_cluster():
 
 
 def test_scores_both_bid_and_ask_clusters_separately():
-    scorer = LayeringScoring(reference_size=5.0, base_score=1.0)
+    scorer = LayeringScoring(reference_size=1.0, base_score=1.0)
 
     #Bid Cluster
     scorer.register_order(timestamp=1000, price= 100.0, size=5.0, side='b')
@@ -134,9 +134,9 @@ def test_time_decay_reduces_score():
 def test_side_skew_detection():
     """Triggers when one side dominates the cluster"""
     scorer = LayeringScoring(
-        reference_size = 5.0,
+        reference_size = 1.0,
         base_score =1.0,
-        skew_threshold = 0.9 #Low Threshold to trigger for test
+        skew_threshold = 1.0 #Low Threshold to trigger for test
     )
 
     #Heavy Buy-side activity
@@ -152,24 +152,50 @@ def test_side_skew_detection():
 def test_reposting_detection():
     """Checks if score increase after cancel and repost behaviour"""
     scorer = LayeringScoring(
-        reference_size = 5.0,
+        reference_size = 1.0,
         base_score=1.0,
-        repost_window_ms = 500,
+        repost_window_ms = 100,
         repost_price_tolerance=0.02,
+        skew_threshold = 0.8,
     )
 
     #simulate a cancel
     scorer.register_cancel(timestamp=1000, price=100.0, size=5.0, side='b')
 
     #Repost same order slightly after
-    scorer.register_order(timestamp=1100, price=100.01, soze=5.0, side='b')
+    scorer.register_order(timestamp=1040, price=100.01, size=5.0, side='b')
 
-    score = scorer.compute_score(current_time=1200)
+    score = scorer.compute_score(current_time=1100)
     assert score >= 1.0 #Includesrepost score bump
 
 
 
-def test_combined_skew_repost():
+def test_combined_skew_and_repost():
+    scorer = LayeringScoring(
+        reference_size = 5.0,
+        base_score = 1.0,
+        repost_window_ms = 500,
+        skew_threshold = 0.8,
+        repost_price_tolerance = 0.05
+    )
+
+    #Cancel large buy order
+    scorer.register_cancel(timestamp=1000, price=100.0, size=5.0, side='b')
+
+
+    #Repost similar buy orders
+    scorer.register_order(timestamp=1050, price=100.01, size=5.0, side='b')
+    scorer.register_order(timestamp=1060, price=99.99, size=5.0, side='b')
+    scorer.register_order(timestamp=1070, price=100.02, size=5.0, side='b')
+
+
+    #Minimal sell-side to trigger skew
+    scorer.register_order(timestamp=1080, price=100.1, size=1.0, side='s')
+
+    score = scorer.compute_score(current_time=1100)
+
+    #Should include decay score + skew bump + reposting bump
+    assert score >= 4.0
     
 
 

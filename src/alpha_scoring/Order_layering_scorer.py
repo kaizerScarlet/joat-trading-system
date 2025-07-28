@@ -3,9 +3,9 @@ from collections import defaultdict
 from cancel_window.order_layering_detection import OrderLayeringDetection
 
 class LayeringScoring:
-    def __init__(self, reference_size: float, base_score: float, decay_half_life: int = 500, cluster_window_ms: int = 300,
-                 min_orders_in_cluster: int = 3, min_order_density: float = 1.0, max_price_range_bps = 5.0,
-                 skew_threshold: float = 2.0, repost_window_ms: int = 500, repost_price_tolerance: float = 0.01):
+    def __init__(self, reference_size: float, base_score: float, decay_half_life: int = 500, cluster_window_ms: int = 500,
+                 min_orders_in_cluster: int = 3, min_order_density: float = 1.0, max_price_range_bps = 100.0,
+                 skew_threshold: float = 1.0, repost_window_ms: int = 500, repost_price_tolerance: float = 1):
         """
         :param reference_size: Normalizing size for order weighting
         :param base_score: Base multiplier per cluster
