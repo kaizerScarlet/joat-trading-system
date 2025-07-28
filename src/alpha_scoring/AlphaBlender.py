@@ -73,7 +73,7 @@ class AlphaBlender:
             new_weights[signal] = max(avg_return / total_return, 0.0)
 
         #Normalize
-        total = sum(new_weights.vlaues())
+        total = sum(new_weights.values())
         self.dynamic_weights = {k: v / total if total > 0 else 0.0 for k, v in new_weights.items()}
 
     def get_debug_view(self) -> Dict:
