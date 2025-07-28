@@ -32,7 +32,7 @@ def test_size_weighting():
     assert high_score > low_score
 
 def test_depth_penalty():
-    scorer = CancelActivityScorer(tick_penalty=0.1)
+    scorer = CancelActivityScorer(tick_penalty= 0.1)
     scorer.register_events(1000, 'CANCEL_SPOOF', size=5.0, distance_from_best=0)
     score_near = scorer.compute_score(1500)
 
