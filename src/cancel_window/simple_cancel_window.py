@@ -2,6 +2,74 @@ from typing import Dict, Any, List, Tuple
 from .interface import CancelWindow #samefolder
 from collections import defaultdict
 from datetime import datetime
+import time 
+import math 
+
+# ====== adaptive_density_tuner.py
+class AdaptiveDensityWindow:
+    def __init__(self, initial_window_ms: int = 100, decay: float = 0.1):
+        self.current_window = initial_window_ms
+        self.decay = decay 
+
+    def update(self, ts: float, recent_cancel_rate: float):
+        #assume cancel rate is in cancels per second
+        ideal_window = max(25, min(500, 1000) / (recent_cancel_rate + 1e-6))
+        self.current_window = (1 - self.decay) * self.current_window + self.decay * ideal_window
+
+    def get_current_window(self) -> int:
+        return int(self.current_window)
+    
+# ======Adaptive Threshold ============
+class AdaptiveThreshold:
+    def __init__(self, initial_threshold: int = 3, decay: float = 0.1):
+        self.threshold = initial_threshold
+        self.decay = decay 
+
+    def update(self, volume: float, volatility: float):
+        #Simple heuristic: increase threshold when volume or volatility is high
+        factor = 1 + 0.5 * math.tanh(volume * volatility)
+        adjusted = max(2, min(10, factor * self.threshold))
+        self.threshold = (1 - self.decay) * self.threshold + self.decay *adjusted
+
+    def get_threshold(self) -> int:
+        return int(self.threshold)
+    
+
+# ========== adaptive_fill_threshold ============
+class FillThresholdTuner:
+    def __init__(self, initial_ratio: float = 0.9, decay: float = 0.05):
+        self.ratio = initial_ratio 
+        self.decay = decay 
+
+    def update(self, avg_trade_size: float, volatility: float):
+        #Reduce threshold slightly in high volatility to allow more fills
+        adjustment = max(0.7, min(0.98, self.ratio - 0.1 * math.tanh(volatility)))
+        self.ratio = (1 - self.decay) * self.ratio + self.decay * adjustment 
+
+    def get_ratio(self) -> float :
+        return self.ratio
+
+# ===== CancelWindowTuner (inline) ========
+class CancelWindowTuner:
+    def __init__(self, ema_alpha: float = 0.2, min_ms: int = 25, max_ms: int = 150):
+        self.ema_latency = None
+        self.ema_alpha = ema_alpha
+        self.min_ms = min_ms
+        self.max_ms = max_ms 
+
+    def update(self, latency_ms: float):
+        if self.ema_latency is None:
+            self.ema_latency = latency_ms
+        else:
+            self.ema_latency = (
+                self.ema_alpha * latency_ms + (1 - self.ema_alpha) * self.ema_latency
+            )
+        self.ema_latency = max(self.min_ms, min(self.ema_latency, self.max_ms))
+    
+    def current_window_ms(self) -> int :
+        return int(self.ema_latency or 75)
+    
+# ===== Main Class ======
 
 class SimpleCancelWindow(CancelWindow):
     """
@@ -15,8 +83,12 @@ class SimpleCancelWindow(CancelWindow):
         6. CANCEL_DENSITY_SPIKE -> More than threshold cancels at same level rollwing window
     """
     # -----------------------------------------------------------------------------------------------#
-    def __init__(self, window_ms: int = 75):
-        self.window_ms = window_ms
+    def __init__(self, adaptive: bool = True):
+        
+        self.adaptive =adaptive
+        self.window_ms = 75
+        self.tuner = CancelWindowTuner() if adaptive else None
+
         self._flags: List[Dict[str,Any]] = []
 
         #-----------------New shadow-book state ---------------------------------
@@ -37,8 +109,8 @@ class SimpleCancelWindow(CancelWindow):
         self.cancel_timestamps: Dict[Tuple[str, float], List[int]] = {}
 
         #Dynamic cancel Density Thresholds
-        self.cancel_density_threshold = 3 #Example: 3 cancels in the last 100ms
-        self.cancel_density_window_ms = 100 #Timewindow to evaluate density 
+        self.cancel_density_threshold = AdaptiveThreshold(initial_threshold=3) #Example: 3 cancels in the last 100ms
+        self.cancel_density_window_ms = AdaptiveDensityWindow(initial_window_ms=75) #Timewindow to evaluate density 
 
         #----------------------------NOT YET SEEN WHAT IT DOES-----------------------#
         self.cancel_events = []
@@ -91,6 +163,11 @@ class SimpleCancelWindow(CancelWindow):
                         removed_size = book[price]
                         dt = ts - self.add_ts.get(key, ts)
 
+                        #---Adaptive tuner update -------
+                        if self.adaptive and dt >= 0:
+                            self.tuner.update(dt)
+                            self.window_ms = self.tuner.current_window_ms()
+
                         # cache the cancel for a potential trade match
                         self.cancel_cache[key] = (ts, removed_size)
                         #Iceberg detection: multiple reductions before cancel
@@ -118,16 +195,25 @@ class SimpleCancelWindow(CancelWindow):
                         #check for high cancel density
                         recent_cancels = [
                             t for t in self.cancel_timestamps[key]
-                            if ts -t <= self.cancel_density_window_ms
+                            if ts -t <= self.cancel_density_window_ms.get_current_window()
                         ]
-                        if len(recent_cancels) >= self.cancel_density_threshold:
+
+                        recent_cancel_rate = len(recent_cancels) / (self.cancel_density_window_ms.get_current_window() / 1000)
+                        self.cancel_density_window_ms.update(ts, recent_cancel_rate)
+
+                        vol = self.orderbook.get_estimated_volume(side)
+                        volty = self.orderbook.get_volatility_estimate()
+                        self.cancel_density_threshold.update(vol, volty)
+
+
+                        if len(recent_cancels) >= self.cancel_density_threshold.get_threshold():
                             self._flags.append({
                                 "timestamp": ts,
                                 "type": "HIGH_CANCEL_DENSITY",
                                 "side": side,
                                 "price": price,
                                 "count": len(recent_cancels),
-                                "density_window_ms": self.cancel_density_window_ms,
+                                "density_window_ms": self.cancel_density_window_ms.get_current_window(),
                             })
 
                         # Clean up
@@ -214,7 +300,7 @@ class SimpleCancelWindow(CancelWindow):
 
         }
     
-    def compute_cancel_density(self, window_ms: int = 100) -> Dict[Tuple[str, float], int]:
+    def compute_cancel_density(self, window_ms: int) -> Dict[Tuple[str, float], int]:
         """
         Compute how many cancels occured at each (side, price) level in the past window 'window-ms'
         """

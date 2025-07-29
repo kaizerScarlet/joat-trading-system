@@ -22,6 +22,7 @@ class SignalConfidenceCalibrator:
         self.signal_history.append({
             'signal_id': signal_id,
             'was_correct': was_correct
+            
         })
 
     def compute_adjusted_confidence(self) -> float:
