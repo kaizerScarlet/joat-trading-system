@@ -83,11 +83,11 @@ class SimpleCancelWindow(CancelWindow):
         6. CANCEL_DENSITY_SPIKE -> More than threshold cancels at same level rollwing window
     """
     # -----------------------------------------------------------------------------------------------#
-    def __init__(self, adaptive: bool = True):
+    def __init__(self):
         
-        self.adaptive =adaptive
-        self.window_ms = 75
-        self.tuner = CancelWindowTuner() if adaptive else None
+        self.adaptive = True
+        self.window_ms = None
+        self.tuner = CancelWindowTuner() if self.adaptive else None
 
         self._flags: List[Dict[str,Any]] = []
 
@@ -172,7 +172,7 @@ class SimpleCancelWindow(CancelWindow):
                         self.cancel_cache[key] = (ts, removed_size)
                         #Iceberg detection: multiple reductions before cancel
                         reductions = self.reduction_history.get(key, [])
-                        if len(reductions) >= 2 and dt < self.window_ms:    #Iceberg flag
+                        if len(reductions) >= 2 and dt < self.get_window_ms():    #Iceberg flag
                             self._flags.append({
                                 "timestamp": ts,
                                 "type": "ICEBERG_CANCEL",
@@ -195,7 +195,7 @@ class SimpleCancelWindow(CancelWindow):
                         #check for high cancel density
                         recent_cancels = [
                             t for t in self.cancel_timestamps[key]
-                            if ts -t <= self.cancel_density_window_ms.get_current_window()
+                            if ts - t <= self.cancel_density_window_ms.get_current_window()
                         ]
 
                         recent_cancel_rate = len(recent_cancels) / (self.cancel_density_window_ms.get_current_window() / 1000)
@@ -225,16 +225,16 @@ class SimpleCancelWindow(CancelWindow):
         _handle("ask", self.asks, asks_updates)
         
         #Detect excessive cancel density
-        density = self.compute_cancel_density(100)  #you can parameterize this too
+        density = self.compute_cancel_density()  #you can parameterize this too
         for (side, price), count in density.items():
-            if count >= 5: #Set a meaningful threshold
+            if count >= self.cancel_density_threshold.get_threshold(): #Set a meaningful threshold
                 self._flags.append({
                     "timestamp": msg["E"],
                     "type": "CANCEL_DENSITY_SPIKE",
                     "side": side,
                     "price": price,
                     "cancel_count": count,
-                    "window_ms": 100
+                    "window_ms": self.cancel_density_window_ms.get_current_window()
                 })
     
     # --------------------------------------------------------------------------#
@@ -255,6 +255,11 @@ class SimpleCancelWindow(CancelWindow):
         if key in self.cancel_cache:
             cancel_ts, removed_size = self.cancel_cache.pop(key)
             dt = ts - cancel_ts
+
+            if self.adaptive and dt >= 0:
+                self.tuner.update(dt)
+                self.window_ms = self.tuner.current_window_ms()
+
             if dt < self.window_ms:
                 flag_type = "TRUE_FILL" if qty >= removed_size else "PARTIAL_FILL"
                 self._flags.append({
@@ -285,27 +290,33 @@ class SimpleCancelWindow(CancelWindow):
         return flags
     
 
-    def set_window_ms(self, window_ms: int) -> None:
-        self.window_ms = window_ms
+    def set_window_ms(self) -> None:
+        self.window_ms = self.tuner.current_window_ms()
+
+    def get_window_ms(self) -> int:
+        return self.tuner.current_window_ms()
 
 
     def snapshot_state(self) -> Dict[str, Any]:
         #Return minimal state for now
         return {
-            "window_ms": self.window_ms,
+            "window_ms": self.get_window_ms(),
             "flag_count":  len(self._flags),
             "bids": len(self.bids),
             "asks": len(self.asks),
             "cancel_cache": len(self.cancel_cache),
+            "flags": self.get_flags(),
+            "cancel_density": self.compute_cancel_density()
+            
 
         }
     
-    def compute_cancel_density(self, window_ms: int) -> Dict[Tuple[str, float], int]:
+    def compute_cancel_density(self) -> Dict[Tuple[str, float], int]:
         """
-        Compute how many cancels occured at each (side, price) level in the past window 'window-ms'
+        Compute how many cancels occured at each (side, price) level in the past window 'self.get_window_ms()'
         """
         now = max((ts for timestamps in self.cancel_timestamps.values() for ts in timestamps), default=0)
-        cutoff = now - window_ms
+        cutoff = now - self.get_window_ms()
         cancel_density: Dict[Tuple[str, float], int] = {}
 
         for key, timestamps in self.cancel_timestamps.items():
@@ -316,9 +327,10 @@ class SimpleCancelWindow(CancelWindow):
         
         return cancel_density
     
-    def set_cancel_density_params(self, threshold: int, window_ms: int) -> None:
-        self.cancel_density_threshold = threshold
-        self.cancel_density_window_ms = window_ms
+    def set_cancel_density_params(self, initial_threshold: int, initial_window_ms: int) -> None:
+        self.cancel_density_threshold = AdaptiveThreshold(initial_threshold=3) #Example: 3 cancels in the last 100ms
+        self.cancel_density_window_ms = AdaptiveDensityWindow(initial_window_ms=75) #Timewindow to evaluate density 
+
 
 
     #-------------------------------------------------------------
@@ -343,7 +355,7 @@ class SimpleCancelWindow(CancelWindow):
         #Prune Old Ones
         self.iceberg_buffer[key] = [
             e for e in self.iceberg_buffer[key]
-            if timestamp - e["timestamp"] <= self.window_ms
+            if timestamp - e["timestamp"] <= self.get_window_ms()
         ]
 
         #Trigger detection

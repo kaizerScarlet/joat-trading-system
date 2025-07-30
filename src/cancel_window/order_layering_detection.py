@@ -27,6 +27,9 @@ Detection Signals:
 
 from collections import defaultdict
 from typing import List, Dict
+from cancel_window.simple_cancel_window import CancelWindowTuner
+from cancel_window.simple_cancel_window import AdaptiveDensityWindow
+from cancel_window.simple_cancel_window import AdaptiveThreshold
 
 class OrderLayeringDetection:
     def __init__(self, time_window_ms= 500, price_tick: float = 0.1, cluster_depth = 3, min_orders =3):
