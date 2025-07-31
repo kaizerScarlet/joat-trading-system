@@ -275,25 +275,6 @@ class SimpleCancelWindow(CancelWindow):
                     "latency_ms": dt,
                 })
 
-            else:
-                #Fallback detection: fill seen at meaningful price w/o cancel
-                best_price = self.orderbook.get_best_price('ask' if side == 'bid' else 'bid')
-                spread = abs(best_price - price)
-                if spread < 2 * self.orderbook.get_tick_size(): # Near top of book
-                    self._flags.append({
-                        'timestamp': ts,
-                        'type': 'FILL_NO_CANCEL_CACHE',
-                        'side': side,
-                        'price': price,
-                        'qty': qty
-                    })
-            self.fill_events.append({
-                'timestamp': ts,
-                'price': price,
-                'qty': qty,
-                'side': side
-            })
-
             self.add_ts.pop(key, None)  # cleanup
             self.reduction_history.pop(key, None)
     # -----------------------------------------------------------------------------------------------
@@ -384,54 +365,6 @@ class SimpleCancelWindow(CancelWindow):
 
         #Trigger detection
         self._detect_iceberg_cancel(key)
-
-        #New Spoof detection features
-        self.detect_ping_cancel(timestamp, price, side)
-        self.detect_reposting_behavior(timestamp, price, side)
-        self.detect_multilevel_laddering(side)
-
-    def detect_ping_cancel(self, timestamp: int, price: float, side: str):
-        "Tracks orders placed for a very short time (ping for liquidity)"
-        cancels_at_price = [
-            e for e in self.cancel_events if e['price'] == price and e['side'] == side
-        ]
-        if len(cancels_at_price) >= 2:
-            deltas = [
-                cancels_at_price[i+1]['timestamp'] - cancels_at_price[i]['timestamp']
-                for i in range(len(cancels_at_price)-1)
-            ]
-            if any(delta < 100 for delta in deltas): #Arbitary ping delta
-                self._flags.append({
-                    'type': 'PING_CANCEL',
-                    'price': price,
-                    'side': side,
-                    'timestamp': timestamp,
-                    'cancel_count': len(cancels_at_price)
-                })
-
-    def detect_reposting_behavior(self, timestamp: int, price: float, side:str):
-        """Tracks cancel at price and re-add at same/ nearby price (spoofing/layering)"""
-        book = self.bids if side == 'bid' else self.asks
-        if (side, price) in self.cancel_cache and price in book:
-            self._flags.append({
-                'type': 'REPOSTING_BEHAVIOUR',
-                'price': price,
-                'side': side,
-                'timestamp': timestamp
-            })
-
-    def detect_multilevel_laddering(self, side: str):
-        """Cancelling several price at once in a single direction(layer wipe)"""
-        price_levels = self.bids.keys() if side == 'bid' else self.asks.keys()
-        cancel_levels = [price for (s, price), _ in self.cancel_cache.items() if s == side]
-        active_levels = set(price_levels).intersection(cancel_levels)
-        if len(active_levels) >= 3: #arbitary threshold
-            self._flags.append({
-                'type': 'MULTILEVEL_LADDERING',
-                'side': side,
-                'price_levels': list(active_levels),
-                'timestamp': int(time.time()*1000)
-            })
 
     def _detect_iceberg_cancel(self, key: Tuple[float, str]) -> None:
         events = self.iceberg_buffer[key]
@@ -564,3 +497,213 @@ class SimpleCancelWindow(CancelWindow):
 
         )
         return round(score, 4)
+    
+
+    """Order layering Dection module
+Detects the strategtic placemeent of multiple orders at different price levels(typically on one side of the book) meant to 
+manipulate preice perception.
+
+Inputs:
+
+* Stream of limit_orders (price, size, side, timestamp)
+*Configurable layering_distance_threshold and min_layers
+
+Logic:
+*Group Orders by side
+* Check for multiple levels within a certain price spread
+* Check temporal proximit or burst patterns
+
+Output:
+*List of detected layering patterns
+*Optional: flag aggressive layering activity
+
+Purpose: Detects spoofing patterns based on clustered orders layered near the top of the book
+
+Detection Signals:
+*Multiple large orders placed at adjacent price levels 
+*On the same side(ask or bid)
+*Placed within a short time window.
+*Quickly canceled before execution
+"""
+
+from collections import defaultdict
+from typing import List, Dict
+from cancel_window.simple_cancel_window import CancelWindowTuner
+from cancel_window.simple_cancel_window import AdaptiveDensityWindow
+from cancel_window.simple_cancel_window import AdaptiveThreshold
+
+class OrderLayeringDetection:
+    def __init__(self, time_window_ms= 500, price_tick: float = 0.1, cluster_depth = 3, min_orders =3):
+        """
+        :param time_window_ms: Time window to consider for clustering orders
+        :param price_tick: Minimum price difference to consider as a separate level
+        :param cluster_depth: Number of levels to consider for layering detection
+        :param min_orders: Minimum number of orders at each level to qualify as layering
+        """
+        self.time_window_ms = time_window_ms
+        self.price_tick = price_tick
+        self.cluster_depth = cluster_depth
+        self.min_orders = min_orders
+        self.orders_log = [] 
+
+
+    def register_order(self, timestamp: int, price: float, size: float, side: str):
+        """
+        Register a new order in the system.
+        :param timestamp: Order timestamp in milliseconds
+        :param price: Order price
+        :param size: Order size
+        :param side: 'a' for ask, 'b' for bid
+        """
+        self.orders_log.append({
+            'timestamp': timestamp,
+            'price': price,
+            'size': size,
+            'side': side
+        })
+
+    def detect_layering(self) -> List[Dict]:
+        """
+        Detect potential layering patterns in the order log.
+        :return: List of detected layering clusters with spoofing characteristics
+        """
+        suspicious_clusters = []
+
+        # Group orders into clusters by side and time_window
+        orders_by_side = defaultdict(list)
+        for order in self.orders_log:
+            orders_by_side[order['side']].append(order)
+
+        for side, orders in orders_by_side.items():
+            # Sort orders by price and then by timestamp
+            orders.sort(key=lambda x: (x['price'], x['timestamp']))
+            for i in range(len(orders)):
+                cluster = [orders[i]]
+                for j in range(i + 1, len(orders)):
+                    if (orders[j]['timestamp'] - orders[i]['timestamp'] > self.time_window_ms):
+                        break
+                    if abs(orders[j]['price'] - orders[i]['price']) <= self.price_tick * self.cluster_depth:
+                        cluster.append(orders[j])
+
+                if len(cluster) >= self.min_orders:
+                    # Check if the cluster has enough depth
+                    if len(cluster) >= self.cluster_depth:
+                        cluster_info = {
+                            'side': side,
+                            'cluster': cluster,
+                            'timestamp': cluster[0]['timestamp'],
+                        }
+                        suspicious_clusters.append(cluster_info) 
+       
+
+
+        return suspicious_clusters
+    
+
+    def reset(self):
+        """
+        Reset the order log for a new detection cycle.
+        """
+        self.orders_log.clear()
+        
+
+
+"""
+Order Age Distribution Module 
+
+Tracks the age of active orders to understand whether orders are passive (long lived) or aggressive(shortlived)
+- a feature tied to informed trading or liquidity stress
+
+input:
+*Order lifecylce (add, fill, cancel)
+
+Logic:
+*For each order, store timestamp_created 
+*When the order is cancelled or filled, compute age.
+*Use histogram or statiscal summary (e.g mean, std, quantiles)
+
+Output:
+*Age Distribution statistics
+*Optional: Detection of unusual burst of short-leved orders
+"""
+
+from typing import List, Dict
+
+class OrderAgeDistribution:
+    def __init__(self):
+        self.active_orders = {}  # Maps order_id to timestamp_created
+        self.cancelled_orders = []  # List of cancelled orders with their ages
+        self.filled_orders = []  # List of filled orders with their ages
+
+    def place_order(self, order_id: str, timestamp: int, price: float, size: float, side: str):
+        """
+        Place a new order and record its creation time.
+        :param order_id: Unique identifier for the order
+        :param timestamp: Order timestamp in milliseconds
+        :param price: Order price
+        :param size: Order size
+        :param side: 'a' for ask, 'b' for bid
+        """
+        self.active_orders[order_id] = (timestamp, price, size, side)
+
+    def cancel_order(self, order_id: str, timestamp: int):
+        """
+        Cancel an order and record its age.
+        :param order_id: Unique identifier for the order
+        :param timestamp: Cancellation timestamp in milliseconds
+        """
+        if order_id in self.active_orders:
+            entry = self.active_orders.pop(order_id)
+            age = timestamp - entry[0]
+            self.cancelled_orders.append({
+                'order_id': order_id,
+                'age': age,
+                'timestamp': timestamp
+            })
+
+    def fill_order(self, order_id: str, timestamp: int):
+        """
+        Fill an order and record its age.
+        :param order_id: Unique identifier for the order
+        :param timestamp: Fill timestamp in milliseconds
+        """
+        if order_id in self.active_orders:
+            entry = self.active_orders.pop(order_id)
+            age = timestamp - entry[0]
+            self.filled_orders.append({
+                'order_id': order_id,
+                'age': age,
+                'timestamp': timestamp
+            })
+
+    def get_statistics(self) -> Dict[str, float]:
+        """
+        Compute statistics on the ages of cancelled and filled orders.
+        :return: Dictionary with mean, std, and quantiles of order ages
+        """
+        from numpy import mean, std, quantile
+
+        cancelled_ages = [order['age'] for order in self.cancelled_orders]
+        filled_ages = [order['age'] for order in self.filled_orders]
+
+        stats = {
+            'cancelled_mean': mean(cancelled_ages) if cancelled_ages else 0,
+            'cancelled_std': std(cancelled_ages) if cancelled_ages else 0,
+            'cancelled_quantiles': quantile(cancelled_ages, [0.25, 0.5, 0.75]) if cancelled_ages else [],
+            'filled_mean': mean(filled_ages) if filled_ages else 0,
+            'filled_std': std(filled_ages) if filled_ages else 0,
+            'filled_quantiles': quantile(filled_ages, [0.25, 0.5, 0.75]) if filled_ages else []
+        }
+
+        return stats
+    
+
+    def reset(self):
+        """
+        Reset the order age distribution tracker.
+        """
+        self.active_orders = {}
+        self.cancelled_orders = []
+        self.filled_orders = []
+     
+     
