@@ -51,7 +51,7 @@ class FillThresholdTuner:
 
 # ===== CancelWindowTuner (inline) ========
 class CancelWindowTuner:
-    def __init__(self, ema_alpha: float = 0.2, min_ms: int = 25, max_ms: int = 150):
+    def __init__(self, ema_alpha: float = 0.2, min_ms: int = 50, max_ms: int = 75):
         self.ema_latency = None
         self.ema_alpha = ema_alpha
         self.min_ms = min_ms
@@ -81,6 +81,11 @@ class SimpleCancelWindow(CancelWindow):
         4. ICERBERG_CANCEL - size is rudeced to zero over multiple orders
         5. HIGH_CANCEL_DENSITY - >= N cancels at the same (side, price) within cancel_density_window_ms
         6. CANCEL_DENSITY_SPIKE -> More than threshold cancels at same level rollwing window
+        7. MULTILEVEL_LADDERING
+        8. LADDER_CANCEL_ONLY
+        9. FILL_NO_CANCEL_CACHE
+        10. LADDER_TRUE_FILL
+        11. LADDER_PARTIAL_FILL
     """
     # -----------------------------------------------------------------------------------------------#
     def __init__(self):
@@ -122,6 +127,10 @@ class SimpleCancelWindow(CancelWindow):
         #Add Iceberg Cancel Buffer
         self.iceberg_buffer = defaultdict(list) # (price, side) -> List(Dict)
 
+        # For detecting multilevel laddering
+        self.laddering_buffer = [] #For detecting multilevel laddering
+        self.active_ladder = None
+
 
 
 
@@ -156,6 +165,31 @@ class SimpleCancelWindow(CancelWindow):
                     #Update book
                     book[price] = size
 
+                    #Track new laddering levels
+                    if prev_size is None:
+                        self.laddering_buffer.append({
+                            'side': side,
+                            'price': price,
+                            'timestamp': ts,
+                        })
+                        self.laddering_buffer = [e for e in self.laddering_buffer if ts - e['timestamp'] <= self.get_window_ms()]
+                        recent_levels =[e['price'] for e in self.laddering_buffer if e['side'] == side]
+                        if len(set(recent_levels)) >= 3:
+                            self._flags.append({
+                                'type': 'MULTILEVEL_LADDERING',
+                                'side': side,
+                                'size': size,
+                                'prices': sorted(set(recent_levels)),
+                                'timestamp': ts
+                            })
+                            self.active_ladder = {
+                                'side': side,
+                                'prices': set(recent_levels),
+                                'timestamp': ts,
+                                'size': size,
+                                'filled': False
+                            }
+
                 # size == 0 -> Cancel
                 #Delete (Cancel)
                 else:
@@ -181,6 +215,7 @@ class SimpleCancelWindow(CancelWindow):
                                 "type": "ICEBERG_CANCEL",
                                 "side": side,
                                 "price": price,
+                                "size": size,
                                 "reductions": reductions,
                                 "latency_ms": dt,
                             })
@@ -190,6 +225,7 @@ class SimpleCancelWindow(CancelWindow):
                                 "timestamp": ts,
                                 "type": "CANCEL_SPOOF",
                                 "side": side,
+                                'size': size,
                                 "price": price,
                                 "latency_ms": dt
                                 
@@ -215,9 +251,20 @@ class SimpleCancelWindow(CancelWindow):
                                 "timestamp": ts,
                                 "type": "HIGH_CANCEL_DENSITY",
                                 "side": side,
+                                'size': size,
                                 "price": price,
                                 "count": len(recent_cancels),
                                 "density_window_ms": self.cancel_density_window_ms.get_current_window(),
+                            })
+
+                        #Check for ladder cancels
+                        if self.active_ladder and key[0] == self.active_ladder['side'] and price in self.active_ladder['prices']:
+                            self._flags.append({
+                                'type': 'LADDER_CANCEL_ONLY',
+                                'side': side,
+                                'size': size,
+                                'price': price,
+                                'timestamp': ts
                             })
 
                         # Clean up
@@ -227,6 +274,10 @@ class SimpleCancelWindow(CancelWindow):
 
         _handle("bid", self.bids, bid_updates)
         _handle("ask", self.asks, asks_updates)
+
+
+        if self.active_ladder and ts - self.active_ladder['timestamp'] > 300:
+            self.active_ladder = None
         
         #Detect excessive cancel density
         density = self.compute_cancel_density()  #you can parameterize this too
@@ -247,6 +298,7 @@ class SimpleCancelWindow(CancelWindow):
     def process_trade(self, trade_msg: Dict[str, Any]) -> None:
         """
         Match trade to recently-cancelled level to flag true/partial fills.
+        
         """
         ts     = trade_msg["T"]
         price  = float(trade_msg["p"])
@@ -273,6 +325,7 @@ class SimpleCancelWindow(CancelWindow):
                     "price": price,
                     "qty": qty,
                     "latency_ms": dt,
+                    'window_ms': self.window_ms
                 })
 
             else:
@@ -294,6 +347,21 @@ class SimpleCancelWindow(CancelWindow):
                 'side': side
             })
 
+            #Fill  follow-up for laddering
+            if self.active_ladder and price in self.active_ladder['prices'] and side == self.active_ladder['side']:
+                self.active_ladder['filled'] = True
+                fill_type = "LADDER_TRUE_FILL" if qty >= self.orderbook.get_level_size(price, side) else 'LADDER_PARTIAL_FILL'
+                self._flags.append({
+                    'timestamp': ts,
+                    'type': fill_type,
+                    'side': side,
+                    'price': price,
+                    'qty': qty
+                })
+
+            if self.active_ladder and ts -self.activate_ladder['timestamp'] > 300:
+                self.activate_ladder =  None
+
             self.add_ts.pop(key, None)  # cleanup
             self.reduction_history.pop(key, None)
     # -----------------------------------------------------------------------------------------------
@@ -313,11 +381,12 @@ class SimpleCancelWindow(CancelWindow):
         return flags
     
 
-    def set_window_ms(self) -> None:
+    def set_window_ms(self):
         self.window_ms = self.tuner.current_window_ms()
 
     def get_window_ms(self) -> int:
-        return self.set_window_ms()
+        self.window_ms = self.tuner.current_window_ms()
+        return self.window_ms
 
 
     def snapshot_state(self) -> Dict[str, Any]:
@@ -386,49 +455,74 @@ class SimpleCancelWindow(CancelWindow):
         self._detect_iceberg_cancel(key)
 
         #New Spoof detection features
-        self.detect_ping_cancel(timestamp, price, side)
-        self.detect_reposting_behavior(timestamp, price, side)
-        self.detect_multilevel_laddering(side)
+        self.detect_ping_cancel(timestamp, price, side, size)
+        self.detect_reposting_behavior(timestamp, price, side, size)
+        self.detect_layer_wipe(timestamp, price, side, size)
+        self.detect_burst_cancel(timestamp, price, side, size)
 
-    def detect_ping_cancel(self, timestamp: int, price: float, side: str):
+    def detect_burst_cancel(self, timestamp:int, price:float, side: str, size: float):
+        """Very rapid cancels across multiple levels (like a cancel sweep)"""
+        window_ms = self.get_window_ms()      #Rolling burst window
+        recent = [e for e in self.cancel_events if timestamp -e['timestamp'] <= window_ms]
+        if len(recent) >= self.cancel_density_threshold.get_threshold():
+            self._flags.append({
+                'type': 'BURST_CANCEL',
+                'timestamp': timestamp,
+                'cancel_count': len(recent),
+                'price': price,
+                'side': side,
+                'size': size,
+                'window_ms': window_ms,
+               
+            })
+
+    def detect_ping_cancel(self, timestamp: int, price: float, side: str, size: float):
         "Tracks orders placed for a very short time (ping for liquidity)"
         cancels_at_price = [
             e for e in self.cancel_events if e['price'] == price and e['side'] == side
         ]
-        if len(cancels_at_price) >= 2:
+        if len(cancels_at_price) >= self.cancel_density_threshold.get_threshold():
             deltas = [
                 cancels_at_price[i+1]['timestamp'] - cancels_at_price[i]['timestamp']
                 for i in range(len(cancels_at_price)-1)
             ]
-            if any(delta < 100 for delta in deltas): #Arbitary ping delta
+            if any(delta < self.get_window_ms() for delta in deltas): #Arbitary ping delta
                 self._flags.append({
                     'type': 'PING_CANCEL',
+                    'timestamp': timestamp,
+                    'cancel_count': len(cancels_at_price),
                     'price': price,
                     'side': side,
-                    'timestamp': timestamp,
-                    'cancel_count': len(cancels_at_price)
+                    'size': size,
+                    'window_ms': self.get_window_ms()
+
                 })
 
-    def detect_reposting_behavior(self, timestamp: int, price: float, side:str):
+    def detect_reposting_behavior(self, timestamp: int, price: float, side:str, size: float):
         """Tracks cancel at price and re-add at same/ nearby price (spoofing/layering)"""
         book = self.bids if side == 'bid' else self.asks
         if (side, price) in self.cancel_cache and price in book:
             self._flags.append({
                 'type': 'REPOSTING_BEHAVIOUR',
+                'timestamp': timestamp,
                 'price': price,
                 'side': side,
+                'size': size,
                 'timestamp': timestamp
             })
 
-    def detect_multilevel_laddering(self, side: str):
+    def detect_layer_wipe(self, timestamp: int, price: float, side:str, size:float):
         """Cancelling several price at once in a single direction(layer wipe)"""
         price_levels = self.bids.keys() if side == 'bid' else self.asks.keys()
         cancel_levels = [price for (s, price), _ in self.cancel_cache.items() if s == side]
         active_levels = set(price_levels).intersection(cancel_levels)
-        if len(active_levels) >= 3: #arbitary threshold
+        if len(active_levels) >= self.cancel_density_threshold.get_threshold(): #arbitary threshold
             self._flags.append({
-                'type': 'MULTILEVEL_LADDERING',
+                'type': 'LAYER_WIPE',
+                'timestamp': timestamp,
+                'price': price,
                 'side': side,
+                'size': size,
                 'price_levels': list(active_levels),
                 'timestamp': int(time.time()*1000)
             })
