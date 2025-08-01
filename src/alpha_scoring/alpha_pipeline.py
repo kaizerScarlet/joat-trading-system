@@ -17,7 +17,8 @@ class AlphaSignalPipeline:
         Initializes the AlphaSignalPipeline with all scorers and the AlphaBlender.
         """
         self.cancel_scorer = CancelActivityScorer()
-        self.layering_scorer = LayeringScoring()
+        self.layering_scorer = LayeringScoring(reference_size=5.0, base_score=1.0 #You can tune these
+                                               )
         self.age_scorer = OrderAgeDistributionScorer()
 
         # AlphaBlender combines signals using specified weights and blending  method
@@ -47,8 +48,8 @@ class AlphaSignalPipeline:
 
         #Compute Scores
         cancel_score = self.cancel_scorer.compute_score(timestamp)
-        layering_score = self.layering_scorer.compute_score(market_snapshot)
-        age_score = self.age_scorer.compute_score(market_snapshot)
+        layering_score = self.layering_scorer.compute_score(timestamp)
+        age_score = self.age_scorer.compute_score()
 
         # Push scores into blender for this timestamp
         self.blender.update_signals(timestamp, {
