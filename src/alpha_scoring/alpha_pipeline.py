@@ -35,7 +35,18 @@ class AlphaSignalPipeline:
             timestamp (int): Timestamp in milliseconds.
             market_snapshot (Dict[str, Any]): The current market state (book, trades, etc.).
         """
-        cancel_score = self.cancel_scorer.compute_score(market_snapshot)
+        #Register flags for cancel activity scoring
+        if 'flag' in market_snapshot:
+            for flag in market_snapshot['flags']:
+                self.cancel_scorer.register_events(
+                    timestamp=flag['timestamp'],
+                    event_type=flag['type'],
+                    size=flag.get('size', 1.0),
+                    distance_from_best=flag.get('distance', 0)
+                )
+
+        #Compute Scores
+        cancel_score = self.cancel_scorer.compute_score(timestamp)
         layering_score = self.layering_scorer.compute_score(market_snapshot)
         age_score = self.age_scorer.compute_score(market_snapshot)
 

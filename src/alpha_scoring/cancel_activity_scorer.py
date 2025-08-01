@@ -18,11 +18,28 @@ class CancelActivityScorer:
         self.tick_penalty = tick_penality
         self.order_events: List[Dict] =[]
 
+        #Use Exponential Moving Average(EMA) to dampen alpha volatility
+        self.alpha_ema = None
+        self.ema_decay = 0.2
+
+
         self.base_weights = {
             'TRUE_FILL': -0.25,
             'CANCEL_SPOOF': 1.0,
             'PARTIAL_FILL': -0.5,
             'ICEBERG_CANCEL': 1.5,
+            'REPOSTING_BEHAVIOUR': 1.0,
+            'BURST_CANCEL': 1.2,
+            'LAYER_WIPE' : 1.4,
+            'PING_CANCEL': 0.8,
+            'HIGH_CANCEL_DENSITY': 1.1,
+            'CANCEL_DENSITY_SPIKE': 1.2,
+            'FILL_NO_CANCEL_CACHE': 0.3,
+            'LADDER_TRUE_FILL': -0.5,
+            'LADDER_PARTIAL_FILL': -0.25,
+            'LADDER_CANCEL_ONLY': 1.3,
+            'MULTILEVEL_LADDERING': 1.0,
+
         }
 
     def register_events(self, timestamp: int, event_type: str, size: float, distance_from_best: int):
@@ -45,6 +62,7 @@ class CancelActivityScorer:
     def compute_score(self, current_time: int) -> float:
         window_start = current_time - self.window_ms
         score = 0.0
+        event_count = 0
 
         for event in self.order_events:
             if event['timestamp'] < window_start:
@@ -55,7 +73,18 @@ class CancelActivityScorer:
 
             weighted_score = base * size_weight * depth_penalty
             score += weighted_score
-        return score
+            event_count += 1
+
+        raw_score = score / max(event_count, 1)
+
+        if self.alpha_ema is None:
+            self.alpha_ema = raw_score
+        
+        else:
+            self.alpha_ema  = (
+                self.ema_decay * raw_score + (1 - self.ema_decay) * self.alpha_ema
+            )
+        return round(self.alpha_ema, 4)
 
     def reset(self):
         """Clears all logged events"""

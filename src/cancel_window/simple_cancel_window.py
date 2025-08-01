@@ -81,11 +81,15 @@ class SimpleCancelWindow(CancelWindow):
         4. ICERBERG_CANCEL - size is rudeced to zero over multiple orders
         5. HIGH_CANCEL_DENSITY - >= N cancels at the same (side, price) within cancel_density_window_ms
         6. CANCEL_DENSITY_SPIKE -> More than threshold cancels at same level rollwing window
-        7. MULTILEVEL_LADDERING
+        7. MULTILEVEL_LADDERING -> Placing multiple orders across several adjacent price levels on one side (bid or ask) in rapid succession to simulate strong or selling interest with the intent to fill them
         8. LADDER_CANCEL_ONLY
-        9. FILL_NO_CANCEL_CACHE
+        9. FILL_NO_CANCEL_CACHE -> for stealth fills near top of book
         10. LADDER_TRUE_FILL
         11. LADDER_PARTIAL_FILL
+        12. REPOSTING_BEHAVIOR -> Cancel at nearby price, then re-add at same / nearby price (spoofing or layering)
+        13. LAYER_WIPE -> Canceling several prices at once in a singl direction (layer wipe)
+        14. BURST_CANCEL -> Very rapid cancels across multiple levels (cancel sweep)
+        15. PING_CANCEL -> Orders placed for very short time (ping for liquidity)
     """
     # -----------------------------------------------------------------------------------------------#
     def __init__(self):
@@ -180,7 +184,11 @@ class SimpleCancelWindow(CancelWindow):
                                 'side': side,
                                 'size': size,
                                 'prices': sorted(set(recent_levels)),
-                                'timestamp': ts
+                                'timestamp': ts,
+                                'context': {
+                                    "window_ms": self.get_window_ms(),
+                                    "cancel_density": self.get_cancel_density(side),
+                                }
                             })
                             self.active_ladder = {
                                 'side': side,
@@ -218,6 +226,10 @@ class SimpleCancelWindow(CancelWindow):
                                 "size": size,
                                 "reductions": reductions,
                                 "latency_ms": dt,
+                                "context": {
+                                    "window_ms": self.get_window_ms(),
+                                    "cancel_density": self.get_cancel_density(side),
+                                }
                             })
 
                         elif dt < self.window_ms: #spoof flag
@@ -227,7 +239,11 @@ class SimpleCancelWindow(CancelWindow):
                                 "side": side,
                                 'size': size,
                                 "price": price,
-                                "latency_ms": dt
+                                "latency_ms": dt,
+                                "context": {
+                                    "window_ms": self.get_window_ms(),
+                                    "cancel_density": self.get_cancel_density(side)
+                                }
                                 
                             })
                         # Record cancel timestamp
@@ -255,6 +271,10 @@ class SimpleCancelWindow(CancelWindow):
                                 "price": price,
                                 "count": len(recent_cancels),
                                 "density_window_ms": self.cancel_density_window_ms.get_current_window(),
+                                "context": {
+                                    "window_ms": self.get_window_ms(),
+                                    "Cancel Density": self.get_cancel_density(side)
+                                }
                             })
 
                         #Check for ladder cancels
@@ -264,7 +284,11 @@ class SimpleCancelWindow(CancelWindow):
                                 'side': side,
                                 'size': size,
                                 'price': price,
-                                'timestamp': ts
+                                'timestamp': ts,
+                                "context": {
+                                    "window_ms": self.get_window_ms(),
+                                    "Cancel Density": self.get_cancel_density(side)
+                                }
                             })
 
                         # Clean up
@@ -289,7 +313,11 @@ class SimpleCancelWindow(CancelWindow):
                     "side": side,
                     "price": price,
                     "cancel_count": count,
-                    "window_ms": self.cancel_density_window_ms.get_current_window()
+                    "window_ms": self.cancel_density_window_ms.get_current_window(),
+                    "context": {
+                                    "window_ms": self.get_window_ms(),
+                                    "Cancel Density": self.get_cancel_density(side)
+                                }
                 })
     
     # --------------------------------------------------------------------------#
@@ -325,7 +353,10 @@ class SimpleCancelWindow(CancelWindow):
                     "price": price,
                     "qty": qty,
                     "latency_ms": dt,
-                    'window_ms': self.window_ms
+                    "context": {
+                                    "window_ms": self.get_window_ms(),
+                                    "Cancel Density": self.get_cancel_density(side)
+                                }
                 })
 
             else:
@@ -338,7 +369,11 @@ class SimpleCancelWindow(CancelWindow):
                         'type': 'FILL_NO_CANCEL_CACHE',
                         'side': side,
                         'price': price,
-                        'qty': qty
+                        'qty': qty,
+                        "context": {
+                                    "window_ms": self.get_window_ms(),
+                                    "Cancel Density": self.get_cancel_density(side)
+                                }
                     })
             self.fill_events.append({
                 'timestamp': ts,
@@ -356,11 +391,15 @@ class SimpleCancelWindow(CancelWindow):
                     'type': fill_type,
                     'side': side,
                     'price': price,
-                    'qty': qty
+                    'qty': qty,
+                    "context": {
+                                    "window_ms": self.get_window_ms(),
+                                    "Cancel Density": self.get_cancel_density(side)
+                                }
                 })
 
-            if self.active_ladder and ts -self.activate_ladder['timestamp'] > 300:
-                self.activate_ladder =  None
+            if self.active_ladder and ts -self.active_ladder['timestamp'] > 300:
+                self.active_ladder =  None
 
             self.add_ts.pop(key, None)  # cleanup
             self.reduction_history.pop(key, None)
@@ -552,7 +591,8 @@ class SimpleCancelWindow(CancelWindow):
 
     def get_cancel_density(self, side:str) -> dict:
         """
-        Returns a dictironary of {price: cancel_count} for the given side
+        :param side: str
+        :Returns a dictironary of {price: cancel_count} for the given side
         Helps quantify where cancel activity is concentrated
         """
         density = defaultdict(int)
