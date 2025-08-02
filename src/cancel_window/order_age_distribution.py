@@ -38,33 +38,127 @@ class OrderAgeDistribution:
 
     def cancel_order(self, order_id: str, timestamp: int):
         """
-        Cancel an order and record its age.
+        Cancel an order and record its age and side/price context.
         :param order_id: Unique identifier for the order
         :param timestamp: Cancellation timestamp in milliseconds
         """
         if order_id in self.active_orders:
             entry = self.active_orders.pop(order_id)
-            age = timestamp - entry[0]
+            created_time, price, size, side = entry
+            age = timestamp - created_time
             self.cancelled_orders.append({
                 'order_id': order_id,
                 'age': age,
-                'timestamp': timestamp
+                'timestamp': timestamp,
+                'price': price,
+                'size': size,
+                'side': side
             })
 
     def fill_order(self, order_id: str, timestamp: int):
         """
-        Fill an order and record its age.
+        Fill an order and record its age and side/price context
         :param order_id: Unique identifier for the order
         :param timestamp: Fill timestamp in milliseconds
         """
         if order_id in self.active_orders:
             entry = self.active_orders.pop(order_id)
-            age = timestamp - entry[0]
+            created_time, price, size, side = entry
+            age = timestamp - created_time
             self.filled_orders.append({
                 'order_id': order_id,
                 'age': age,
-                'timestamp': timestamp
+                'timestamp': timestamp,
+                'price': price,
+                'size': size,
+                'side': side
             })
+
+    def detect_bursts(self, age_threshold_ms: int = 200, burst_window_ms: int = 1000):
+        """
+        
+        detects bursts of short-lived orders (potential manipulation or stress).
+        (
+        Binary event flag- quickly tells you if there is a single burst of short lived orders right now, per side. Useful for real-time 
+        alerting
+
+        Use this in the Dynamic Risk Engine
+        )
+
+        :param age_threshold_ms: Max age for an order to be considered short-lived
+        :param burst_window_ms: Time window to look for bursts
+        :return: Dict with burst flags per side
+
+        This allows you to flag:
+            *Aggressive cancellation waves just before a spoof/fake move
+            *Real-time stress signals (liquidity panic, front running)
+            *Highly responsive algo tactics (e.g pinging for fills)
+
+        """
+        current_time = max([
+            *(o['timestamp'] for o in self.cancelled_orders),
+            *(o['timestamp'] for o in self.filled_orders) 
+        ], default=0)
+
+        recent_cancel_burst = [
+            o for o in self.cancelled_orders
+            if o['age'] <= age_threshold_ms and (current_time - o['timestamp'] <= burst_window_ms)
+        ]
+
+        recent_fill_burst = [
+            o for o in self.filled_orders
+            if o['age'] <= age_threshold_ms and (current_time - o['timestamp'] <= burst_window_ms)
+        ]
+
+        burst_by_side = {'a': 0, 'b': 0}
+        for o in recent_cancel_burst + recent_fill_burst:
+            burst_by_side[o['side']] += 1
+
+        return {
+            'burst_detected_bid': burst_by_side['b'] >= 3, #Tweak threshold if needed
+            'burst_detected_ask': burst_by_side['a'] >= 3
+        }
+    def detect_short_lived_bursts(self, age_threshold_ms: int = 300, cluster_window_ms: int= 500) -> Dict[str, int]:
+        """
+        Detect bursts of short-lived orders on each side (ask and bid).
+        (
+            Useful for:
+            * alphaScoring modules
+            * Volatility-aware fill thresholds
+            * Spoof heatmaps or cancel densities
+            * Execution deferral heuristics
+        )
+        :param age_threshold_ms: Max age to be considered short-lived
+        :param cluster_window_ms: Time window to count count orders as a burst
+        :return: Dict with number of detected bursts per side
+        """
+        from collections import defaultdict
+        
+        bursts = defaultdict(int)
+        for side in ['a', 'b']:
+            #Combine filled and cancelled orders on the same side that were short-lived
+            short_lived = [
+                o for o in self.cancelled_orders + self.filled_orders
+                if o.get('side') == side and o['age'] <= age_threshold_ms
+            ]
+
+            short_lived.sort(key=lambda o: o['timestamp'])
+
+            #Sliding window to detect bursts
+            i = 0
+            while i < len(short_lived):
+                burst_count = 1
+                j = i + 1
+                while j < len(short_lived) and (short_lived[j]['timestamp'] - short_lived[i]['timestamp'] <= cluster_window_ms):
+                    burst_count += 1
+                    j += 1
+                if burst_count >= 3:
+                    bursts[side] += 1
+                    i = j #Skip ahead after a burst
+                else:
+                    i += 1
+        return dict(bursts)
+
 
     def get_statistics(self) -> Dict[str, float]:
         """
@@ -84,6 +178,19 @@ class OrderAgeDistribution:
             'filled_std': std(filled_ages) if filled_ages else 0,
             'filled_quantiles': quantile(filled_ages, [0.25, 0.5, 0.75]) if filled_ages else []
         }
+
+        #Now add side-specific stats
+        for side in ['b', 'a']:
+            side_cancelled = [o['age'] for o in self.cancelled_orders if o.get('side') == side]
+            side_filled = [o['age'] for o in self.filled_orders if o.get('side') == side]
+
+            stats[f'cancelled_mean_{side}'] = mean(side_cancelled) if side_cancelled else 0.0
+            stats[f'cancelled_std_{side}'] = std(side_cancelled) if side_cancelled else 0.0
+            stats[f'cancelled_quantiles_{side}'] = quantile(side_cancelled, [0.25, 0.5, 0.75]).tolist() if side_cancelled else []
+
+            stats[f'filled_mean_{side}'] = mean(side_filled) if side_filled else 0.0
+            stats[f'filled_std_{side}'] = std(side_filled) if side_filled else 0.0
+            stats[f'filled_quantiles_{side}'] = quantile(side_filled, [0.25, 0.5, 0.75]).tolist() if side_filled else []
 
         return stats
     

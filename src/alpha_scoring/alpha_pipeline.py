@@ -21,7 +21,7 @@ class AlphaSignalPipeline:
                                                )
         self.age_scorer = OrderAgeDistributionScorer()
 
-        # AlphaBlender combines signals using specified weights and blending  method
+        # AlphaBlender combines signals using specified weights and blending  method per side
         self.blender = AlphaBlender(
             weights = {'cancel_activity': 0.4, 'layering': 0.3, 'order_age': 0.3},
             blending_method = 'weighted_average', #Options: 'weighted_average', 'max_score', 'min_score'
@@ -36,9 +36,9 @@ class AlphaSignalPipeline:
             timestamp (int): Timestamp in milliseconds.
             market_snapshot (Dict[str, Any]): The current market state (book, trades, etc.).
         """
-        #Register flags for cancel activity scoring
+        #Feed cancels flags to CancelActivityScorer
         if 'flag' in market_snapshot:
-            for flag in market_snapshot['flags']:
+            for flag in market_snapshot['flag']:
                 self.cancel_scorer.register_events(
                     timestamp=flag['timestamp'],
                     event_type=flag['type'],
@@ -47,44 +47,48 @@ class AlphaSignalPipeline:
                 )
 
         #Compute Scores
-        cancel_score = self.cancel_scorer.compute_score(timestamp)
-        layering_score = self.layering_scorer.compute_score(timestamp)
-        age_score = self.age_scorer.compute_score()
+        cancel_score = self.cancel_scorer.compute_score(timestamp)  #Float
+        layering_score = self.layering_scorer.compute_score(timestamp)  #float
+        age_score = self.age_scorer.compute_score()     #{'a': ...., 'b': ...}
 
-        # Push scores into blender for this timestamp
-        self.blender.update_signals(timestamp, {
-            'cancel_activity': cancel_score,
-            'layering': layering_score,
-            'order_age': age_score
-        })
+        #Update AlphaBlender for each side separately
+        for side in ['a', 'b']:
+            self.blender.update_signals(timestamp, {
+                'cancel_activity': cancel_score,    #Placeholder: side-aware in future
+                'layering': layering_score,         #Placeholder: side-aware in future
+                'order_age': age_score.get(side, 0.0)
+            }, side=side)
 
 
-    def get_alpha_signal(self, timestamp: int) -> float:
+    def get_alpha_signal(self, timestamp: int) -> Dict[str,float]:
         """
-        Compute and return the blended alpha signal at the given timestamp.
+        Get the current alpha signal per side.
         Args:
-            float: Blended alpha signal (e.g 0.0 to 1.0)
+            timestamp (int): Current time in ms (optional for consistency)
+        Returns:
+            Dict[str, float]: {'a': score, 'b': score}
         """
         return self.blender.compute_alpha_score(timestamp)
     
 
-    def trade_feedback(self, signal_dict: Dict[str, float], pnl: float) -> None:
+    def trade_feedback(self, signal_dict: Dict[str, float], pnl: float, side: str) -> None:
         """
         Provide trade outcome feedback to allow the blender to adaptively adjust signal weights.
 
         Args:
             signal_dict (Dict[str, float]): Signal values used for the trade.
             pnl (float): Realized profit or loss for that trade
+            side (str): 'a' or 'b'
         """
-        self.blender.update_trade_feedback(signal_dict, pnl)
+        self.blender.update_trade_feedback(signal_dict, pnl, side=side)
 
     
     def get_debug(self) -> Dict[str, Any]:
         """
-        Retrieve debug information from the blender, including  signal history and weights.
+        Retrieve internal diagnostic information from the AlphaBlender
 
         Returns:
-            Dict[str, Any]: Debug data for diagnostics or visualization
+            Dict[str, Any]: Debug data for diagnostics or visualization (weights, raw scores, blended scores)
         """
         return self.blender.get_debug_view()
 

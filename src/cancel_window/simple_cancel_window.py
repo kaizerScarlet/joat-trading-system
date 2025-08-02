@@ -232,7 +232,7 @@ class SimpleCancelWindow(CancelWindow):
                                 }
                             })
 
-                        elif dt < self.window_ms: #spoof flag
+                        elif dt < self.get_window_ms(): #spoof flag
                             self._flags.append({
                                 "timestamp": ts,
                                 "type": "CANCEL_SPOOF",
