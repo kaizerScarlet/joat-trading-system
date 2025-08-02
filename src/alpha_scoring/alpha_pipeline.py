@@ -43,20 +43,21 @@ class AlphaSignalPipeline:
                     timestamp=flag['timestamp'],
                     event_type=flag['type'],
                     size=flag.get('size', 1.0),
-                    distance_from_best=flag.get('distance', 0)
+                    distance_from_best=flag.get('distance', 0),
+                    side=flag.get('side', 'a') #Default to 'a' if missing
                 )
 
         #Compute Scores
-        cancel_score = self.cancel_scorer.compute_score(timestamp)  #Float
-        layering_score = self.layering_scorer.compute_score(timestamp)  #float
-        age_score = self.age_scorer.compute_score()     #{'a': ...., 'b': ...}
+        cancel_score_by_side = self.cancel_scorer.compute_score(timestamp)  #{'a': ...., 'b': ...}
+        layering_score_by_side = self.layering_scorer.compute_score(timestamp)  #{'a': ...., 'b': ...}
+        age_score_by_side = self.age_scorer.compute_score()     #{'a': ...., 'b': ...}
 
         #Update AlphaBlender for each side separately
         for side in ['a', 'b']:
             self.blender.update_signals(timestamp, {
-                'cancel_activity': cancel_score,    #Placeholder: side-aware in future
-                'layering': layering_score,         #Placeholder: side-aware in future
-                'order_age': age_score.get(side, 0.0)
+                'cancel_activity': cancel_score_by_side.get(side, 0.0),    #side-aware
+                'layering': layering_score_by_side.get(side, 0.0),         #Placeholder: side-aware in future
+                'order_age': age_score_by_side.get(side, 0.0)   #Side-Aware
             }, side=side)
 
 

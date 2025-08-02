@@ -4,22 +4,22 @@ from typing import Dict, List
 class CancelActivityScorer:
     """
     Analyzes cancel patterns in a given time window and assigns an alpha score.
-    Designed to detect aggressive canceling behaviour (spoofing-like).
+    Designed to detect aggressive canceling behaviour (spoofing-like) in microstructure
     """
 
     def __init__(self, window_ms: int =  1000, reference_size: float = 5.0, tick_penality: float = 0.1):
         """
         :param window_ms: Time window in milliseconds to consider recent activity
-        :param reference_size:
-        :param tick_penalty:
+        :param reference_size: Used to normalize order size
+        :param tick_penalty: Reduces weight of orders further from the top of book
         """
         self.window_ms = window_ms
         self.reference_size = reference_size
         self.tick_penalty = tick_penality
-        self.order_events: List[Dict] =[]
+        self.order_events_by_side: Dict[str, List[Dict]] = {'a': [], 'b': []}
 
         #Use Exponential Moving Average(EMA) to dampen alpha volatility
-        self.alpha_ema = None
+        self.alpha_ema_by_side = {'a': None, 'b': None}
         self.ema_decay = 0.2
 
 
@@ -42,50 +42,65 @@ class CancelActivityScorer:
 
         }
 
-    def register_events(self, timestamp: int, event_type: str, size: float, distance_from_best: int):
+    def register_events(self, timestamp: int, event_type: str, size: float, distance_from_best: int, side: str = 'a'):
         """
         Register an order-related event
 
         :param timestamp: Time of event in ms
         :param event_type: One of 'TRUE_FILL', "CANCEL_SPOOF', 'PARTIAL_FILL', 'ICEBERG_CANCEL'
         :param size: Size of order
-        :param distance_from_best: Number of ticks away from best  bid/ask
+        :param distance_from_best: Number of ticks away from best  bid/ask (number of ticks from top of book)
+        :param side: 'a' for ask, 'b' for bid
         """
 
-        self.order_events.append({
+        self.order_events_by_side[side].append({
             'timestamp': timestamp,
             'type': event_type,
             'size': size,
-            'distance': distance_from_best,}
-        )
+            'distance': distance_from_best,
+            })
 
-    def compute_score(self, current_time: int) -> float:
-        window_start = current_time - self.window_ms
-        score = 0.0
-        event_count = 0
+    def compute_score(self, current_time: int) -> Dict[str, float]:
+        """
+        Compute and return alpha score per side based on recent activity.
 
-        for event in self.order_events:
-            if event['timestamp'] < window_start:
-                continue
-            base = self.base_weights.get(event['type'], 0.0)
-            size_weight = event['size'] / self.reference_size
-            depth_penalty = max(1.0 - event['distance'] * self.tick_penalty, 0.0)
+        :param current_time: current time in ms
+        :return: Dict like {'a': score_a, 'b': score_b}
+        """
+        scores = {}
 
-            weighted_score = base * size_weight * depth_penalty
-            score += weighted_score
-            event_count += 1
+        for side in ['a', 'b']:
+            events = self.order_events_by_side[side]    
+            window_start = current_time - self.window_ms
+            score = 0.0
+            event_count = 0
 
-        raw_score = score / max(event_count, 1)
+            for event in events:
+                if event['timestamp'] < window_start:
+                    continue
+                base = self.base_weights.get(event['type'], 0.0)
+                size_weight = event['size'] / self.reference_size
+                depth_penalty = max(1.0 - event['distance'] * self.tick_penalty, 0.0)
 
-        if self.alpha_ema is None:
-            self.alpha_ema = raw_score
+                weighted_score = base * size_weight * depth_penalty
+                score += weighted_score
+                event_count += 1
+
+            raw_score = score / max(event_count, 1)
+
+            if self.alpha_ema_by_side[side] is None:
+                self.alpha_ema_by_side[side] = raw_score
         
-        else:
-            self.alpha_ema  = (
-                self.ema_decay * raw_score + (1 - self.ema_decay) * self.alpha_ema
+            else:
+                self.alpha_ema_by_side[side]  = (
+                    self.ema_decay * raw_score + (1 - self.ema_decay) * self.alpha_ema_by_sid[side]
             )
-        return round(self.alpha_ema, 4)
+                
+            scores[side] = round(self.alpha_ema_by_side[side], 4)
+        return scores
 
     def reset(self):
-        """Clears all logged events"""
-        self.order_events.clear()
+        """Clears all logged events and resets EMAs"""
+
+        self.order_events_by_side = {'a': [], 'b': []}
+        self.alpha_ema_by_side = {'a': None, 'b': None}
