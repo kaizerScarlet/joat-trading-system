@@ -16,10 +16,10 @@ class CancelActivityScorer:
         self.window_ms = window_ms
         self.reference_size = reference_size
         self.tick_penalty = tick_penality
-        self.order_events_by_side: Dict[str, List[Dict]] = {'a': [], 'b': []}
+        self.order_events_by_side: Dict[str, List[Dict]] = {'ask': [], 'bid': []}
 
         #Use Exponential Moving Average(EMA) to dampen alpha volatility
-        self.alpha_ema_by_side = {'a': None, 'b': None}
+        self.alpha_ema_by_side = {'ask': None, 'bid': None}
         self.ema_decay = 0.2
 
 
@@ -42,7 +42,7 @@ class CancelActivityScorer:
 
         }
 
-    def register_events(self, timestamp: int, event_type: str, size: float, distance_from_best: int, side: str = 'a'):
+    def register_events(self, timestamp: int, event_type: str, size: float, distance_from_best: int, side: str = 'ask'):
         """
         Register an order-related event
 
@@ -50,7 +50,7 @@ class CancelActivityScorer:
         :param event_type: One of 'TRUE_FILL', "CANCEL_SPOOF', 'PARTIAL_FILL', 'ICEBERG_CANCEL'
         :param size: Size of order
         :param distance_from_best: Number of ticks away from best  bid/ask (number of ticks from top of book)
-        :param side: 'a' for ask, 'b' for bid
+        :param side: 'ask' for ask, 'bid' for bid
         """
 
         self.order_events_by_side[side].append({
@@ -65,11 +65,11 @@ class CancelActivityScorer:
         Compute and return alpha score per side based on recent activity.
 
         :param current_time: current time in ms
-        :return: Dict like {'a': score_a, 'b': score_b}
+        :return: Dict like {'ask': score_a, 'bid': score_b}
         """
         scores = {}
 
-        for side in ['a', 'b']:
+        for side in ['ask', 'bid']:
             events = self.order_events_by_side[side]    
             window_start = current_time - self.window_ms
             score = 0.0
@@ -93,7 +93,7 @@ class CancelActivityScorer:
         
             else:
                 self.alpha_ema_by_side[side]  = (
-                    self.ema_decay * raw_score + (1 - self.ema_decay) * self.alpha_ema_by_sid[side]
+                    self.ema_decay * raw_score + (1 - self.ema_decay) * self.alpha_ema_by_side[side]
             )
                 
             scores[side] = round(self.alpha_ema_by_side[side], 4)
@@ -102,5 +102,5 @@ class CancelActivityScorer:
     def reset(self):
         """Clears all logged events and resets EMAs"""
 
-        self.order_events_by_side = {'a': [], 'b': []}
-        self.alpha_ema_by_side = {'a': None, 'b': None}
+        self.order_events_by_side = {'ask': [], 'bid': []}
+        self.alpha_ema_by_side = {'ask': None, 'bid': None}

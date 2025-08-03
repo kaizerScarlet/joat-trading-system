@@ -41,7 +41,7 @@ class OrderAgeDistributionScorer:
         self.enable_zscore_detection = enable_zscore_detection
         self.zscore_history_window = zscore_history_window
 
-        self.history_by_side = {'a': [], 'b':[]} # For z-score
+        self.history_by_side = {'ask': [], 'bid':[]} # For z-score
 
     def compute_score(self) -> Dict[str,float]:
         """
@@ -54,7 +54,7 @@ class OrderAgeDistributionScorer:
         current_time = int(time.time() * 1000)
         scores = {}
 
-        for side in ['a', 'b']:
+        for side in ['ask', 'bid']:
             # Merge Cancelled + filled by side
             recent_orders = [
                 o for o in self.tracker.cancelled_orders + self.tracker.filled_orders
@@ -121,4 +121,4 @@ class OrderAgeDistributionScorer:
         Reset the scorer and underlying tracker
         """
         self.tracker.reset()
-        self.history_by_side = {'a': [], 'b': []}
+        self.history_by_side = {'ask': [], 'bid': []}

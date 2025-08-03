@@ -24,7 +24,7 @@ class AlphaSignalPipeline:
         # AlphaBlender combines signals using specified weights and blending  method per side
         self.blender = AlphaBlender(
             weights = {'cancel_activity': 0.4, 'layering': 0.3, 'order_age': 0.3},
-            blending_method = 'weighted_average', #Options: 'weighted_average', 'max_score', 'min_score'
+            blending_method = 'weighted average', #Options: 'weighted_average', 'max_score', 'min_score'
             adaptive = True #Enables adaptive reweighting from trade feedback
 
         )
@@ -44,7 +44,7 @@ class AlphaSignalPipeline:
                     event_type=flag['type'],
                     size=flag.get('size', 1.0),
                     distance_from_best=flag.get('distance', 0),
-                    side=flag.get('side', 'a') #Default to 'a' if missing
+                    side=flag.get('side', 'ask') #Default to 'ask' if missing
                 )
 
         #Compute Scores
@@ -53,10 +53,10 @@ class AlphaSignalPipeline:
         age_score_by_side = self.age_scorer.compute_score()     #{'a': ...., 'b': ...}
 
         #Update AlphaBlender for each side separately
-        for side in ['a', 'b']:
+        for side in ['ask', 'bid']:
             self.blender.update_signals(timestamp, {
                 'cancel_activity': cancel_score_by_side.get(side, 0.0),    #side-aware
-                'layering': layering_score_by_side.get(side, 0.0),         #Placeholder: side-aware in future
+                'layering': layering_score_by_side.get(side, 0.0),         #side-aware 
                 'order_age': age_score_by_side.get(side, 0.0)   #Side-Aware
             }, side=side)
 

@@ -15,21 +15,21 @@ class AlphaBlender:
 
         #Per-side signal buffers
         self.latest_signals_by_side: Dict[str, Dict[str, float]] = {
-            'a': {}, 'b': {}
+            'ask': {}, 'bid': {}
         }
 
         #Adaptive performance tracking
         self.signal_performance_by_side: Dict[str, Dict[str, Dict[str, float]]] = {
-            'a' : {k: {'hits': 0, 'returns': 0.0, 'count': 0} for k in weights},
-            'b' : {k: {'hits': 0, 'returns': 0.0, 'count': 0} for k in weights}
+            'ask' : {k: {'hits': 0, 'returns': 0.0, 'count': 0} for k in weights},
+            'bid' : {k: {'hits': 0, 'returns': 0.0, 'count': 0} for k in weights}
             }
         
         self.dynamic_weights_by_side ={
-            'a': weights.copy(),
-            'b': weights.copy()
+            'ask': weights.copy(),
+            'bid': weights.copy()
         }
 
-    def update_signals(self, timestamp: int, signal_scores: Dict[str, float], side: str = 'b'):
+    def update_signals(self, timestamp: int, signal_scores: Dict[str, float], side: str = 'bid'):
         """
         Store latest signal values per side.
         """
@@ -38,12 +38,12 @@ class AlphaBlender:
     def compute_alpha_score(self, timestamp: Optional[int] = None) -> Dict[str, float]:
         """
         Compute alpha Score per side using selected blending strategy
-        :return: Dict[str, float]: {'a': score, 'b': score}
+        :return: Dict[str, float]: {'ask': score, 'bid': score}
         """
 
         scores = {}
 
-        for side in ['a', 'b']:
+        for side in ['ask', 'bid']:
             signals = self.latest_signals_by_side.get(side, {})
             weights = self.dynamic_weights_by_side[side] if self.adaptive else self.static_weights
 
@@ -65,7 +65,7 @@ class AlphaBlender:
                 raise ValueError(f"Unsupported Blending method: {self.blending_method}")
         return scores
         
-    def update_trade_feedback(self, signal_scores: Dict[str, float], pnl: float, side: str='b'):
+    def update_trade_feedback(self, signal_scores: Dict[str, float], pnl: float, side: str='bid'):
         """
         After a trade completes, call this method to update signal performance.
 
@@ -114,8 +114,8 @@ class AlphaBlender:
             'method': self.blending_method,
             'adaptive': self.adaptive,
             'weights': {
-                'a': self.dynamic_weights_by_side['a'] if self.adaptive else self.static_weights,
-                'b': self.dynamic_weights_by_side['b'] if self.adaptive else self.static_weights,
+                'ask': self.dynamic_weights_by_side['ask'] if self.adaptive else self.static_weights,
+                'bid': self.dynamic_weights_by_side['bid'] if self.adaptive else self.static_weights,
                         },
             'signals': self.latest_signals_by_side,
             'blended_score': self.compute_alpha_score(),
@@ -126,12 +126,12 @@ class AlphaBlender:
         """
         Reset all stored signal states and performance history.
         """
-        self.latest_signals_by_side = {'a': {}, 'b': {}}
+        self.latest_signals_by_side = {'ask': {}, 'bid': {}}
         self.signal_performance_by_side = {
-            'a': {k: {'hits': 0, 'returns': 0.0, 'count': 0} for k in self.static_weights},
-            'b': {k: {'hits': 0, 'returns': 0.0, 'count': 0} for k in self.static_weights}
+            'ask': {k: {'hits': 0, 'returns': 0.0, 'count': 0} for k in self.static_weights},
+            'bid': {k: {'hits': 0, 'returns': 0.0, 'count': 0} for k in self.static_weights}
             }
         self.dynamic_weights_by_side = {
-            'a': self.static_weights.copy(),
-            'b': self.static_weights.copy()
+            'ask': self.static_weights.copy(),
+            'bid': self.static_weights.copy()
             }

@@ -41,7 +41,7 @@ class LayeringScoring:
         self.repost_window_ms = repost_window_ms
         self.repost_price_tolerance = repost_price_tolerance
 
-        self.last_score_by_side = {'a': 0.0, 'b': 0.0}
+        self.last_score_by_side = {'ask': 0.0, 'bid': 0.0}
         self.last_time = None
 
     def register_order(self, timestamp: int, price: float, size: float, side: str):
@@ -73,7 +73,7 @@ class LayeringScoring:
         Compute alpha scores per side based on layering clusters, skew, and decay.
         """
         suspicious_clusters = self.layering_detector.detect_layering()
-        score_by_side = {'a': 0.0, 'b': 0.0}
+        score_by_side = {'ask': 0.0, 'bid': 0.0}
         side_volume = defaultdict(float)
 
         for cluster in suspicious_clusters:
@@ -104,14 +104,14 @@ class LayeringScoring:
                 side_volume[side] += sum(o['size'] for o in orders if o['side'] == side)
 
         #Skew scoring bonus
-        bid_volume = side_volume.get('b', 0.0)
-        ask_volume = side_volume.get('a', 0.0)
+        bid_volume = side_volume.get('bid', 0.0)
+        ask_volume = side_volume.get('ask', 0.0)
         total_volume = bid_volume + ask_volume
 
         if total_volume > 0:
             skew_ratio = max(bid_volume, ask_volume) / total_volume
             if skew_ratio >= self.skew_threshold:
-                dominant_side = 'b' if bid_volume > ask_volume else 'a'
+                dominant_side = 'bid' if bid_volume > ask_volume else 'ask'
                 score_by_side[dominant_side] += self.base_score * 0.5
 
         #Apply decay to each side
@@ -120,7 +120,7 @@ class LayeringScoring:
 
         decay = 0.5 ** ((current_time - self.last_time)/ self.decay_half_life)
 
-        for side in ['a', 'b']:
+        for side in ['ask', 'bid']:
             score_by_side[side] = score_by_side[side] * decay + self.last_score_by_side[side] * (1 - decay)
 
         self.last_score_by_side = score_by_side
@@ -129,7 +129,7 @@ class LayeringScoring:
 
     def reset(self):
         self.layering_detector.reset()
-        self.last_score_by_side = {'a': 0.0, 'b': 0.0}
+        self.last_score_by_side = {'ask': 0.0, 'bid': 0.0}
         self.recent_orders = []
         self.recent_cancels = []
         self.last_time = None
