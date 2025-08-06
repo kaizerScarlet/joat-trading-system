@@ -57,7 +57,7 @@ class AlphaSignalPipeline:
                     side = flag.get('side', 'ask') #Default to 'ask' if missing
                 )
 
-                #Feed TRUE FILL, PARTIAL FILL, CANCEL SPOOF, BURST CANCEL, PING CANCEL, LAYER CANCEL ONLY, LADDER TRUE FILL, LADDER CANCEL ONLY MULTILEVEL_LADDERING(if lifespan is tracked per layer)
+                #Feed All age based flags to OrderAgeDistributionScoring
                 self.age_scorer.register_events(
                     timestamp = flag['timestamp'],
                     event_type = flag['type'],
