@@ -21,11 +21,11 @@ from typing import List, Dict
 
 class OrderAgeDistribution:
     def __init__(self):
-        self.active_orders = {}  # Maps order_id to timestamp_created
-        self.cancelled_orders = []  # List of cancelled orders with their ages
-        self.filled_orders = []  # List of filled orders with their ages
+        self.active_orders: List[Dict] = []  # Maps order_id to timestamp_created
+        self.cancelled_orders: List[Dict]    = []  # List of cancelled orders with their ages
+        self.filled_orders: List[Dict]  = []  # List of filled orders with their ages
 
-    def place_order(self, order_id: str, timestamp: int, price: float, size: float, side: str):
+    def register_event(self, timestamp: int, price: float, size: float, side: str):
         """
         Place a new order and record its creation time.
         :param order_id: Unique identifier for the order
@@ -34,45 +34,55 @@ class OrderAgeDistribution:
         :param size: Order size
         :param side: 'a' for ask, 'b' for bid
         """
-        self.active_orders[order_id] = (timestamp, price, size, side)
+        self.active_orders.append({
+            'timestamp': timestamp,
+            'price': price,
+            'size': size,
+            'side': side,
+        })
 
-    def cancel_order(self, order_id: str, timestamp: int):
+    def cancel_order(self, timestamp: int, event_type:str, price: float, size: float,distance_from_best:int, side: str):
         """
         Cancel an order and record its age and side/price context.
-        :param order_id: Unique identifier for the order
         :param timestamp: Cancellation timestamp in milliseconds
+        :param price:
         """
-        if order_id in self.active_orders:
-            entry = self.active_orders.pop(order_id)
-            created_time, price, size, side = entry
-            age = timestamp - created_time
-            self.cancelled_orders.append({
-                'order_id': order_id,
-                'age': age,
-                'timestamp': timestamp,
-                'price': price,
-                'size': size,
-                'side': side
-            })
-
-    def fill_order(self, order_id: str, timestamp: int):
+        for order in reversed(self.active_orders):
+            if(order['price'] == price and order['side'] == side and order['size'] == size):
+                age = timestamp - order['timestamp']
+                self.cancelled_orders.append({
+                    'timestamp': timestamp,
+                    'event_type': event_type,
+                    'price': price,
+                    'size': size,
+                    'distance_from_best': distance_from_best,
+                    'side': side,
+                    'age': age,
+                })
+                self.active_orders.remove(order)
+                break
+       
+    
+    def fill_order(self, timestamp: int, event_type:str, price: float, size: float,distance_from_best:int, side: str):
         """
         Fill an order and record its age and side/price context
         :param order_id: Unique identifier for the order
         :param timestamp: Fill timestamp in milliseconds
         """
-        if order_id in self.active_orders:
-            entry = self.active_orders.pop(order_id)
-            created_time, price, size, side = entry
-            age = timestamp - created_time
-            self.filled_orders.append({
-                'order_id': order_id,
-                'age': age,
-                'timestamp': timestamp,
-                'price': price,
-                'size': size,
-                'side': side
-            })
+        for order in reversed(self.active_orders):
+            if (order['price'] == price and order['side'] == side and order['size'] == size):
+                age = timestamp - order['timestamp']
+                self.filled_orders({
+                    'timestamp': timestamp,
+                    'event_type': event_type,
+                    'price': price,
+                    'size': size,
+                    'distance_from_best': distance_from_best,
+                    'side': side,
+                    'age': age
+                })
+                self.active_orders.remove(order)
+                break
 
     def detect_bursts(self, age_threshold_ms: int = 200, burst_window_ms: int = 1000):
         """
@@ -199,8 +209,8 @@ class OrderAgeDistribution:
         """
         Reset the order age distribution tracker.
         """
-        self.active_orders = {}
-        self.cancelled_orders = []
-        self.filled_orders = []
+        self.active_orders.clear()
+        self.cancelled_orders.clear()
+        self.filled_orders.clear()
      
      

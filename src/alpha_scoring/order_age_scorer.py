@@ -47,10 +47,20 @@ class OrderAgeDistributionScorer:
         """
         Register all raw order lifecylce time based orders
         """
-        if event_type in ['TRUE_FILL', 'PARTIAL_FILL', 'LAYER_TRUE_FILL','LADDER_TRUE_FILL','CANCEL_SPOOF','BURST_CANCEL', 'PING_CANCEL','LAYER_CANCEL_ONLY', 'LADDER_CANCEL_ONLY','MULTILEVEL_LADDERING']:
-            self.tracker.place_order(timestamp, event_type, size, distance_from_best, side)
+        if event_type in ['TRUE_FILL', 'PARTIAL_FILL', 'LAYER_TRUE_FILL','LADDER_TRUE_FILL']:
+            self.fill_order(timestamp, event_type, size, distance_from_best, side)
+
+        elif event_type in ['CANCEL_SPOOF','BURST_CANCEL', 'PING_CANCEL','LAYER_CANCEL_ONLY', 'LADDER_CANCEL_ONLY','MULTILEVEL_LADDERING']:
+            self.cancel_order(timestamp, event_type, size, distance_from_best, side)
+
         else:
             pass
+
+    def cancel_order(self, timestamp: int, event_type: str, size: float, distance_from_best: int, side: str='ask'):
+        self.tracker.cancel_order(timestamp, event_type, size, distance_from_best, side)
+
+    def fill_order(self, timestamp: int, event_type: str, price, size: float, distance_from_best: int, side:str='ask'):
+        self.tracker.fill_order(timestamp, event_type, price, size, distance_from_best, side)
 
 
     def compute_score(self) -> Dict[str,float]:
