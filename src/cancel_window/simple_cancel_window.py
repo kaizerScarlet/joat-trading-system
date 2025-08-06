@@ -502,7 +502,7 @@ class SimpleCancelWindow(CancelWindow):
     def detect_burst_cancel(self, timestamp:int, price:float, side: str, size: float):
         """Very rapid cancels across multiple levels (like a cancel sweep)"""
         window_ms = self.get_window_ms()      #Rolling burst window
-        recent = [e for e in self.cancel_events if timestamp -e['timestamp'] <= window_ms]
+        recent = [e for e in self.cancel_events if timestamp - e['timestamp'] <= window_ms]
         if len(recent) >= self.cancel_density_threshold.get_threshold():
             self._flags.append({
                 'type': 'BURST_CANCEL',

@@ -43,6 +43,16 @@ class OrderAgeDistributionScorer:
 
         self.history_by_side = {'ask': [], 'bid':[]} # For z-score
 
+    def register_events(self, timestamp:int, event_type: str, size: float, distance_from_best: int, side:str='ask'):
+        """
+        Register all raw order lifecylce time based orders
+        """
+        if event_type in ['TRUE_FILL', 'PARTIAL_FILL', 'LAYER_TRUE_FILL','LADDER_TRUE_FILL','CANCEL_SPOOF','BURST_CANCEL', 'PING_CANCEL','LAYER_CANCEL_ONLY', 'LADDER_CANCEL_ONLY','MULTILEVEL_LADDERING']:
+            self.tracker.place_order(timestamp, event_type, size, distance_from_best, side)
+        else:
+            pass
+
+
     def compute_score(self) -> Dict[str,float]:
         """
         Compute alpha score based on burst of short-lived orders for both ask and bid side (or unified if side score is disabled)

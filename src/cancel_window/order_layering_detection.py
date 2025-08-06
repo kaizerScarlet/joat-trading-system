@@ -68,11 +68,13 @@ class OrderLayeringDetection:
             'status': 'active'  # initially active
         })
 
-    def register_cancel(self, timestamp: int, price: float, size: float, side: str):
+    def register_cancel(self, timestamp: int, event_type:str, price: float, size: float,distance_from_best:int, side: str):
         self.cancel_log.append({
             'timestamp': timestamp,
+            'event_type': event_type,
             'price': price,
             'size': size,
+            'distance_from_best': distance_from_best,
             'side': side,
         })
 
@@ -83,11 +85,13 @@ class OrderLayeringDetection:
                 order['status'] = 'canceled'
                 break
 
-    def register_fill(self, timestamp: int, price: float,size: float, side: str):
+    def register_fill(self, timestamp: int, event_type: str, price: float,size: float, distance_from_best:int, side: str):
         self.fills_log.append({
             'timestamp': timestamp,
+            'event_type': event_type,
             'price': price,
             'size': size,
+            'distance_from_best': distance_from_best,
             'side': side,
 
         })
@@ -117,7 +121,7 @@ class OrderLayeringDetection:
             for i in range(len(orders)):
                 cluster = [orders[i]]
                 for j in range(i + 1, len(orders)):
-                    if (orders[j]['timestamp'] - orders[i]['timestamp'] > self.time_window_ms):
+                    if (orders[j]['timestamp'] - orders[i]['timestamp'] > self.cancel_window_ms):
                         break
                     if abs(orders[j]['price'] - orders[i]['price']) <= self.price_tick * self.cluster_depth:
                         cluster.append(orders[j])

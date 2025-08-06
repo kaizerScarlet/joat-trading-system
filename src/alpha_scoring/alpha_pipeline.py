@@ -48,16 +48,22 @@ class AlphaSignalPipeline:
                     side=flag.get('side', 'ask') #Default to 'ask' if missing
                 )
 
-
-
-
-                #Feed LayeringScoring
+                #Feed Ladder and Layering flags to LayeringScoring
                 self.layering_scorer.register_events(
                     timestamp=flag['timestamp'],
                     event_type = flag['type'],
                     size = flag.get('size', 1.0),
                     distance_from_best=flag.get('distance', 0),
                     side = flag.get('side', 'ask') #Default to 'ask' if missing
+                )
+
+                #Feed TRUE FILL, PARTIAL FILL, CANCEL SPOOF, BURST CANCEL, PING CANCEL, LAYER CANCEL ONLY, LADDER TRUE FILL, LADDER CANCEL ONLY MULTILEVEL_LADDERING(if lifespan is tracked per layer)
+                self.age_scorer.register_events(
+                    timestamp = flag['timestamp'],
+                    event_type = flag['type'],
+                    size = flag.get('size', 1.0),
+                    distance_from_best=flag.get('distance', 0),
+                    side = flag.get('side', 'ask')#Default to 'ask' if missing
                 )
 
 

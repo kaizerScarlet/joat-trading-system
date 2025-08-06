@@ -44,34 +44,50 @@ class LayeringScoring:
         self.last_score_by_side = {'ask': 0.0, 'bid': 0.0}
         self.last_time = None
 
-    def register_events(self, timestamp: int, event_type:str, price: float, size: float,distance_from_best:int, side: str):
+    def register_events(self, timestamp: int, event_type: str, price: float, size: float,distance_from_best:int, side: str):
         """
         Unified event ingestion for layering-related flags.
         Automatically dispatches based  on event type
         """
         if event_type in ['LAYER_CANCEL_ONLY', 'LADDER_CANCEL_ONLY', 'LAYER_WIPE', 'MULTILEVEL_LADDERING']:
-            self.register_cancel(timestamp, price, size, side)
+            self.register_cancel(timestamp,event_type, price, size, distance_from_best, side)
 
         elif event_type in ['LAYER_TRUE_FILL', 'LAYER_PARTIAL_FILL', 'LADDER_TRUE_FILL', 'LADDER_PARTIAL_FILL']:
-            self.register_fill(timestamp, price, size, side)
+            self.register_fill(timestamp,event_type, price, size, distance_from_best, side)
         
         else:
             #For now Layering will be scored with Laddering, but phase 2 we need to develop separate scorers
             pass
 
-    def register_cancel(self, timestamp: int, price: float, size: float, side: str):
+    def register_cancel(self, timestamp: int,event_type: str, price: float, size: float,distance_from_best:int, side: str):
         #Track Cancelled Orders for reposting detection
-        self.layering_detector.register_cancel(timestamp, price, size, side)
+        """
+        Track LAYERING and LADDERING CANCEL and WIPE ORDERS
+        """
+        self.layering_detector.register_cancel(timestamp, event_type, price, size, distance_from_best, side)
         self.recent_cancels.append({
             'timestamp': timestamp,
+            'event_type': event_type,
             'price': price,
             'size': size,
+            'distance_from_best': distance_from_best,
             'side': side,
         })
 
-    def register_fill(self, timestamp: int, price: float, size: float, side: str):
+    def register_fill(self, timestamp: int,event_type: str, price: float, size: float,distance_from_best: int, side: str):
         #Track filled orders
-        self.layering_detector.register_fill(timestamp, price, size, side)
+        """
+        Track LAYERING and LADDERING  TRUE and PARTIAL FILLS
+        """
+        self.layering_detector.register_fill(timestamp, event_type, price, size, distance_from_best, side)
+        self.recent_orders.append({
+            'timestamp': timestamp,
+            'event_type': event_type,
+            'price': price,
+            'size': size,
+            'distance_from_best': distance_from_best,
+            'side': side
+        })
 
     def compute_score(self, current_time: int) -> Dict[str, float]:
         """
@@ -91,11 +107,11 @@ class LayeringScoring:
                 avg_cancel_time = sum(cluster['durations']) / len(cluster['durations'])
                 duration_penalty = max(1.0 - (avg_cancel_time / self.decay_half_life), 0.1)
 
-            if label == 'LAYER_CANCEL_ONLY':
+            if label == 'LAYER_CANCEL_ONLY' or 'LADDER_CANCEL_ONLY' or 'LAYER_WIPE' or 'MULTILEVEL_LADDERING':
                 base = self.base_score
-            elif label == 'LAYER_PARTIAL_FILL':
+            elif label == 'LAYER_PARTIAL_FILL' or 'LADDER_PARTIAL_FILL':
                 base = self.base_score * 0.5
-            elif label == 'LAYER_TRUE_FILL':
+            elif label == 'LAYER_TRUE_FILL' or 'LADDER_TRUE_FILL':
                 base = self.base_score * 0.25 
             else:
                 base = 0.0
