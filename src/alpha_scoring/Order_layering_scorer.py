@@ -44,20 +44,25 @@ class LayeringScoring:
         self.last_score_by_side = {'ask': 0.0, 'bid': 0.0}
         self.last_time = None
 
-    def register_order(self, timestamp: int, price: float, size: float, side: str):
-        #Track new orders and send to detector
-        self.layering_detector.register_order(timestamp, price, size, side)
-        self.recent_orders.append({
-            'timestamp': timestamp,
-            'price': price,
-            'size': size,
-            'side': side,
-        })
+    def register_events(self, timestamp: int, event_type:str, price: float, size: float,distance_from_best:int, side: str):
+        """
+        Unified event ingestion for layering-related flags.
+        Automatically dispatches based  on event type
+        """
+        if event_type in ['LAYER_CANCEL_ONLY', 'LADDER_CANCEL_ONLY', 'LAYER_WIPE', 'MULTILEVEL_LADDERING']:
+            self.register_cancel(timestamp, price, size, side)
+
+        elif event_type in ['LAYER_TRUE_FILL', 'LAYER_PARTIAL_FILL', 'LADDER_TRUE_FILL', 'LADDER_PARTIAL_FILL']:
+            self.register_fill(timestamp, price, size, side)
+        
+        else:
+            #For now Layering will be scored with Laddering, but phase 2 we need to develop separate scorers
+            pass
 
     def register_cancel(self, timestamp: int, price: float, size: float, side: str):
         #Track Cancelled Orders for reposting detection
         self.layering_detector.register_cancel(timestamp, price, size, side)
-        self.recent_cancels({
+        self.recent_cancels.append({
             'timestamp': timestamp,
             'price': price,
             'size': size,

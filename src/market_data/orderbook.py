@@ -21,7 +21,7 @@ class OrderBook:
         Updates bid and ask level accordingly.
         :param msg: L2 depth update from Binance WebSocket stream
         """
-        for p, q in msg.get("b",[]):
+        for p, q in msg.get("bid",[]):
             price = float(p)
             size = float(q)
             if size > 0 :
@@ -29,7 +29,7 @@ class OrderBook:
             elif price in self.bids:
                 del self.bids[price]
 
-        for p, q in msg.get('a', []):
+        for p, q in msg.get('ask', []):
             price = float(p)
             size = float(q)
             if size > 0:

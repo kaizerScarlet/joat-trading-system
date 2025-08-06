@@ -42,7 +42,7 @@ class CancelActivityScorer:
 
         }
 
-    def register_events(self, timestamp: int, event_type: str, size: float, distance_from_best: int, side: str = 'ask'):
+    def register_events(self, timestamp: int, event_type: str, price: float, size: float, distance_from_best: int, side: str = 'ask'):
         """
         Register an order-related event
 
@@ -56,6 +56,7 @@ class CancelActivityScorer:
         self.order_events_by_side[side].append({
             'timestamp': timestamp,
             'type': event_type,
+            'price': price,
             'size': size,
             'distance': distance_from_best,
             })
@@ -72,6 +73,11 @@ class CancelActivityScorer:
         for side in ['ask', 'bid']:
             events = self.order_events_by_side[side]    
             window_start = current_time - self.window_ms
+
+            #Prune Stale events
+            events = [e for e in events if e['timestamp'] >= window_start]
+            self.order_events_by_side[side] = events
+
             score = 0.0
             event_count = 0
 

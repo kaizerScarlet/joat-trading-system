@@ -36,9 +36,10 @@ class AlphaSignalPipeline:
             timestamp (int): Timestamp in milliseconds.
             market_snapshot (Dict[str, Any]): The current market state (book, trades, etc.).
         """
-        #Feed cancels flags to CancelActivityScorer
+        
         if 'flag' in market_snapshot:
             for flag in market_snapshot['flag']:
+                #Feed cancels flags to CancelActivityScorer
                 self.cancel_scorer.register_events(
                     timestamp=flag['timestamp'],
                     event_type=flag['type'],
@@ -46,6 +47,20 @@ class AlphaSignalPipeline:
                     distance_from_best=flag.get('distance', 0),
                     side=flag.get('side', 'ask') #Default to 'ask' if missing
                 )
+
+
+
+
+                #Feed LayeringScoring
+                self.layering_scorer.register_events(
+                    timestamp=flag['timestamp'],
+                    event_type = flag['type'],
+                    size = flag.get('size', 1.0),
+                    distance_from_best=flag.get('distance', 0),
+                    side = flag.get('side', 'ask') #Default to 'ask' if missing
+                )
+
+
 
         #Compute Scores
         cancel_score_by_side = self.cancel_scorer.compute_score(timestamp)  #{'a': ...., 'b': ...}
@@ -67,7 +82,7 @@ class AlphaSignalPipeline:
         Args:
             timestamp (int): Current time in ms (optional for consistency)
         Returns:
-            Dict[str, float]: {'a': score, 'b': score}
+            Dict[str, float]: {'ask': score, 'bid': score}
         """
         return self.blender.compute_alpha_score(timestamp)
     
@@ -79,7 +94,7 @@ class AlphaSignalPipeline:
         Args:
             signal_dict (Dict[str, float]): Signal values used for the trade.
             pnl (float): Realized profit or loss for that trade
-            side (str): 'a' or 'b'
+            side (str): 'ask' or 'bid'
         """
         self.blender.update_trade_feedback(signal_dict, pnl, side=side)
 
