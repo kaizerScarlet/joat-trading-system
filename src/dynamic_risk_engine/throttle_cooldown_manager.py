@@ -4,6 +4,7 @@
 
 import time
 from collections import deque
+import asyncio
 
 
 class ThrottleCooldownManager:
@@ -21,7 +22,7 @@ class ThrottleCooldownManager:
     def __init__(
             self,
             max_losses=3, 
-            cooldown_seconds=300,
+            cooldown_seconds=60,
             max_trades_per_minute=3,
 
             max_orders_per_10s = 100,
@@ -289,3 +290,35 @@ class ThrottleCooldownManager:
             "loss_streak": self.loss_streak,
             "in_cooldown": self.is_in_cooldown()
         }
+
+
+class AsyncThrottleCooldownManager(ThrottleCooldownManager):
+    """
+    Extends the existing Throttle Manager with async-safe event registration.
+    If using multi-threading or multi-process, consider proper locking.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        #Use an asyncio.Lock for concurrency safety (if needed)
+        self._lock = asyncio.Lock()
+
+    async def record_order_async(self, volume: float = 1.0, weight: int = 1):
+        async with self._lock:
+            self.record_order(volume, weight)
+    
+    async def record_cancel_async(self):
+        async with self._lock:
+            self.record_cancel()
+
+    async def record_fill_async(self, volume:float):
+        async with self._lock:
+            self.record_fill(volume)
+
+    async def register_trade_result(self, pnl: float):
+        async with self._lock:
+            self.register_trade_result(pnl)
+
+
+
+
+    

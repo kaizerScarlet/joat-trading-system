@@ -1,4 +1,5 @@
 from typing import Dict, List
+from cancel_window.simple_cancel_window import SimpleCancelWindow
 
 
 class CancelActivityScorer:
@@ -7,13 +8,14 @@ class CancelActivityScorer:
     Designed to detect aggressive canceling behaviour (spoofing-like) in microstructure
     """
 
-    def __init__(self, window_ms: int =  1000, reference_size: float = 5.0, tick_penality: float = 0.1):
+    def __init__(self, reference_size: float = 5.0, tick_penality: float = 0.1):
         """
         :param window_ms: Time window in milliseconds to consider recent activity
         :param reference_size: Used to normalize order size
         :param tick_penalty: Reduces weight of orders further from the top of book
         """
-        self.window_ms = window_ms
+        self.window_ms_tuner = SimpleCancelWindow()
+        self.window_ms = self.window_ms_tuner.get_window_ms()
         self.reference_size = reference_size
         self.tick_penalty = tick_penality
         self.order_events_by_side: Dict[str, List[Dict]] = {'ask': [], 'bid': []}
