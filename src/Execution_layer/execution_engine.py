@@ -71,9 +71,17 @@ class ExecutionEngine:
             )
 
 
+            #Record the order to throttle manager
+            self.throttle_manager.record_order(volume=size, weight=order_response.get("weight", 1))
+
             #6. Handle order fill and update tracker
             if order_response.get("filled"):
                 pnl = order_response.get("pnl", 0.0)
+
+
+                #Feed the trade result to the throttle manager for cooldown
+                self.throttle_manager.register_trade_result(pnl)
+
                 risk = self.risk_engine.get_risk_for_trade(score, side)
                 reward = pnl if pnl > 0 else 0.0
 
@@ -89,6 +97,8 @@ class ExecutionEngine:
                         "price": price,
                     }
                 )
+
+                
 
                 #7. Feedback to Alpha Blender
                 self.alpha_signal_pipeline.trade_feedback(

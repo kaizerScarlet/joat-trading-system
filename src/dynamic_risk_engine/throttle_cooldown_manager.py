@@ -285,5 +285,7 @@ class ThrottleCooldownManager:
             "conversion_rate": round(self.get_conversion_rate(), 4),
             "fill_weight": round(self.get_fill_weight(), 4),
             "weight_per_minute": round(self.get_weight_per_minute(), 2),
-            "daily_order_count": self.daily_order_count
+            "daily_order_count": self.daily_order_count,
+            "loss_streak": self.loss_streak,
+            "in_cooldown": self.is_in_cooldown()
         }
