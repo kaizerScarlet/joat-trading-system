@@ -43,6 +43,7 @@ class AlphaSignalPipeline:
                 self.cancel_scorer.register_events(
                     timestamp=flag['timestamp'],
                     event_type=flag['type'],
+                    price = flag['price'],
                     size=flag.get('size', 1.0),
                     distance_from_best=flag.get('distance', 0),
                     side=flag.get('side', 'ask') #Default to 'ask' if missing
@@ -52,6 +53,7 @@ class AlphaSignalPipeline:
                 self.layering_scorer.register_events(
                     timestamp=flag['timestamp'],
                     event_type = flag['type'],
+                    price = flag['price'],
                     size = flag.get('size', 1.0),
                     distance_from_best=flag.get('distance', 0),
                     side = flag.get('side', 'ask') #Default to 'ask' if missing
@@ -61,6 +63,7 @@ class AlphaSignalPipeline:
                 self.age_scorer.register_events(
                     timestamp = flag['timestamp'],
                     event_type = flag['type'],
+                    price = flag['price'],
                     size = flag.get('size', 1.0),
                     distance_from_best=flag.get('distance', 0),
                     side = flag.get('side', 'ask')#Default to 'ask' if missing

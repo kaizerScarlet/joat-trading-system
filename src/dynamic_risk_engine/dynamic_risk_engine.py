@@ -41,6 +41,11 @@ class DynamicRiskEngine:
 
         )
     
+
+    def get_risk_for_trade(self) -> float:
+        return self.max_risk_per_trade
+
+    
     def get_position_size(self, stop_loss_distance: float) -> float:
         """
         Get optimal position size based on current edge and risk conditions.

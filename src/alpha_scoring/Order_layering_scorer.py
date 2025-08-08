@@ -44,10 +44,16 @@ class LayeringScoring:
         self.last_score_by_side = {'ask': 0.0, 'bid': 0.0}
         self.last_time = None
 
-    def register_events(self, timestamp: int, event_type: str, price: float, size: float,distance_from_best:int, side: str):
+    def register_events(self, timestamp: int, event_type: str, price: float, size: float,distance_from_best:int, side: str) -> None:
         """
         Unified event ingestion for layering-related flags.
         Automatically dispatches based  on event type
+        :param timestamp:
+        :param event_type:
+        :param price:
+        :param size:
+        :param distance_from best:
+        :param side:
         """
         if event_type in ['LAYER_CANCEL_ONLY', 'LADDER_CANCEL_ONLY', 'LAYER_WIPE', 'MULTILEVEL_LADDERING']:
             self.register_cancel(timestamp,event_type, price, size, distance_from_best, side)
@@ -59,10 +65,16 @@ class LayeringScoring:
             #For now Layering will be scored with Laddering, but phase 2 we need to develop separate scorers
             pass
 
-    def register_cancel(self, timestamp: int,event_type: str, price: float, size: float,distance_from_best:int, side: str):
+    def register_cancel(self, timestamp: int,event_type: str, price: float, size: float,distance_from_best:int, side: str) -> None:
         #Track Cancelled Orders for reposting detection
         """
         Track LAYERING and LADDERING CANCEL and WIPE ORDERS
+        :param timestamp:
+        :param event_type:
+        :param price:
+        :param size:
+        :param distance_from_best:
+        :pram side:
         """
         self.layering_detector.register_cancel(timestamp, event_type, price, size, distance_from_best, side)
         self.recent_cancels.append({
@@ -74,10 +86,18 @@ class LayeringScoring:
             'side': side,
         })
 
-    def register_fill(self, timestamp: int,event_type: str, price: float, size: float,distance_from_best: int, side: str):
+    def register_fill(self, timestamp: int,event_type: str, price: float, size: float,distance_from_best: int, side: str) -> None:
         #Track filled orders
         """
         Track LAYERING and LADDERING  TRUE and PARTIAL FILLS
+        :param timestamp:
+        :param event_type:
+        :param price:
+        :param size:
+        :param distance_from_best:
+        :param side:
+
+        :returns: None
         """
         self.layering_detector.register_fill(timestamp, event_type, price, size, distance_from_best, side)
         self.recent_orders.append({
@@ -92,6 +112,10 @@ class LayeringScoring:
     def compute_score(self, current_time: int) -> Dict[str, float]:
         """
         Compute alpha scores per side based on layering clusters, skew, and decay.
+        :param current_time:
+
+        :returns:
+                Dict[str, float]
         """
         suspicious_clusters = self.layering_detector.detect_layering()
         score_by_side = {'ask': 0.0, 'bid': 0.0}

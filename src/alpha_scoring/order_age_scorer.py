@@ -43,9 +43,14 @@ class OrderAgeDistributionScorer:
 
         self.history_by_side = {'ask': [], 'bid':[]} # For z-score
 
-    def register_events(self, timestamp:int, event_type: str, size: float, distance_from_best: int, side:str='ask'):
+    def register_events(self, timestamp:int, event_type: str, size: float, distance_from_best: int, side:str='ask') -> None:
         """
         Register all raw order lifecylce time based orders
+        :param timestamp:
+        :param event_type:
+        :param size:
+        :param distance_from_best:
+        :param side:
         """
         if event_type in ['TRUE_FILL', 'PARTIAL_FILL', 'LAYER_TRUE_FILL','LADDER_TRUE_FILL']:
             self.fill_order(timestamp, event_type, size, distance_from_best, side)
@@ -56,10 +61,31 @@ class OrderAgeDistributionScorer:
         else:
             pass
 
-    def cancel_order(self, timestamp: int, event_type: str, size: float, distance_from_best: int, side: str='ask'):
+    def cancel_order(self, timestamp: int, event_type: str, size: float, distance_from_best: int, side: str='ask') -> None:
+        """
+        Cancel_Order
+        :param  timestamp:
+        :param event_type:
+        :param size:
+        :param distance_from_best:
+        :param side:
+
+        :return: None
+        """
         self.tracker.cancel_order(timestamp, event_type, size, distance_from_best, side)
 
-    def fill_order(self, timestamp: int, event_type: str, price, size: float, distance_from_best: int, side:str='ask'):
+    def fill_order(self, timestamp: int, event_type: str, price, size: float, distance_from_best: int, side:str='ask') -> None:
+        """
+        Fill_Order
+        :param timestamp:
+        :param event_type:
+        :param price:
+        :param size:
+        :param distance_from_best:
+        :param side:
+
+        :return: None
+        """
         self.tracker.fill_order(timestamp, event_type, price, size, distance_from_best, side)
 
 

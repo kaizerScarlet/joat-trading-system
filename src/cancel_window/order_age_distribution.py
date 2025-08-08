@@ -25,7 +25,7 @@ class OrderAgeDistribution:
         self.cancelled_orders: List[Dict]    = []  # List of cancelled orders with their ages
         self.filled_orders: List[Dict]  = []  # List of filled orders with their ages
 
-    def register_event(self, timestamp: int, price: float, size: float, side: str):
+    def register_event(self, timestamp: int, price: float, size: float, side: str)-> None:
         """
         Place a new order and record its creation time.
         :param order_id: Unique identifier for the order
@@ -33,6 +33,8 @@ class OrderAgeDistribution:
         :param price: Order price
         :param size: Order size
         :param side: 'a' for ask, 'b' for bid
+
+        :return: None
         """
         self.active_orders.append({
             'timestamp': timestamp,
@@ -41,11 +43,13 @@ class OrderAgeDistribution:
             'side': side,
         })
 
-    def cancel_order(self, timestamp: int, event_type:str, price: float, size: float,distance_from_best:int, side: str):
+    def cancel_order(self, timestamp: int, event_type:str, price: float, size: float,distance_from_best:int, side: str) -> None:
         """
         Cancel an order and record its age and side/price context.
         :param timestamp: Cancellation timestamp in milliseconds
         :param price:
+        
+        :return : None
         """
         for order in reversed(self.active_orders):
             if(order['price'] == price and order['side'] == side and order['size'] == size):
@@ -63,11 +67,13 @@ class OrderAgeDistribution:
                 break
        
     
-    def fill_order(self, timestamp: int, event_type:str, price: float, size: float,distance_from_best:int, side: str):
+    def fill_order(self, timestamp: int, event_type:str, price: float, size: float,distance_from_best:int, side: str) -> None:
         """
         Fill an order and record its age and side/price context
         :param order_id: Unique identifier for the order
         :param timestamp: Fill timestamp in milliseconds
+
+        :return : None
         """
         for order in reversed(self.active_orders):
             if (order['price'] == price and order['side'] == side and order['size'] == size):

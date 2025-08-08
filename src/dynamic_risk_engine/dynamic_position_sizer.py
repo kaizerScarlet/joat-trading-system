@@ -34,5 +34,5 @@ class DynamicPositionSizer:
         Reset the position sizer to initial state.
         """
         self.max_risk_per_trade = 0.01
-        self.account_balance = 100000
+        self.account_balance = 100000 #Need to fetch this information using binance, for now these are place holders
 
