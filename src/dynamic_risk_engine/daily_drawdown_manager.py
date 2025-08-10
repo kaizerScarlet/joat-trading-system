@@ -24,6 +24,10 @@ class DailyDrawdownManager:
             return timestamp #Already a day string
         return timestamp.strftime('%Y-%m-%d')
     
+    def get_daily_drawdown_limit(self):
+        daily_drawdown_limit = self.daily_drawdown_limit
+        return daily_drawdown_limit
+    
 
     def record_pnl(self, timestamp: datetime, pnl: float):
         """

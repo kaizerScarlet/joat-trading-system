@@ -252,6 +252,7 @@ class ThrottleCooldownManager:
     
     def is_throttled(self) -> bool:
         """
+        Binance rules
         Check if the system is currently throttled based on all rule types.
         Returns:
             bool: True if any throttle condition is violated

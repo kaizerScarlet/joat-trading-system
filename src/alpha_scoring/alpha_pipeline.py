@@ -85,7 +85,7 @@ class AlphaSignalPipeline:
             }, side=side)
 
 
-    def get_alpha_signal(self, timestamp: int) -> Dict[str,float]:
+    def get_alpha_signal(self) -> Dict[str,float]:
         """
         Get the current alpha signal per side.
         Args:
@@ -93,7 +93,7 @@ class AlphaSignalPipeline:
         Returns:
             Dict[str, float]: {'ask': score, 'bid': score}
         """
-        return self.blender.compute_alpha_score(timestamp)
+        return self.blender.compute_alpha_score()
     
 
     def trade_feedback(self, signal_dict: Dict[str, float], pnl: float, side: str) -> None:

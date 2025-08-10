@@ -4,7 +4,7 @@ import asyncio
 import time
 import hmac
 import hashlib
-import urllib.parse
+from urllib.parse import urlencode
 from typing import Optional, Callable, Dict, Any
 import aiohttp
 
@@ -66,6 +66,7 @@ class BinanceExecutionAdapter:
     
     def _now_ms(self) -> int:
         return int(time.time() * 1000)
+    
     
     async def _signed_request(self, method: str, path: str, params: Optional[Dict] =  None) -> Dict:
         """
@@ -187,7 +188,7 @@ class BinanceExecutionAdapter:
 
     #---------------------------User -data events --------------------
 
-    async def hnadle_user_event(self, event: Dict[str, Any]):
+    async def handle_user_event(self, event: Dict[str, Any]):
         """
         Call this when your Binance user-data ws (listenkey) receives an ORDER_TRADE_UPDATE or execution report.
         The adapter will call on_fill_callback when an actual trade fill occurs.

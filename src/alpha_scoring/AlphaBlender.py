@@ -29,15 +29,21 @@ class AlphaBlender:
             'bid': weights.copy()
         }
 
-    def update_signals(self, timestamp: int, signal_scores: Dict[str, float], side: str = 'bid'):
+    def update_signals(self, timestamp: int, signal_scores: Dict[str, float], side: str = 'bid') -> None:
         """
         Store latest signal values per side.
+        Args:
+            :param timestamp: int
+            :param signal_scores: Dict[str, float]
+            :param side: str
         """
         self.latest_signals_by_side[side] = signal_scores
 
     def compute_alpha_score(self, timestamp: Optional[int] = None) -> Dict[str, float]:
         """
         Compute alpha Score per side using selected blending strategy
+        Args:
+            :param timestamp: Optional[int]
         :return: Dict[str, float]: {'ask': score, 'bid': score}
         """
 
@@ -69,8 +75,11 @@ class AlphaBlender:
         """
         After a trade completes, call this method to update signal performance.
 
-        :param signal_score: signals used for this trade
-        :param pnl: Profit/Loss from trade
+        Args:
+            :param signal_score: Dict[str, float] - signals used for this trade Dict
+            :param pnl: float - Profit/Loss from trade
+        Returns :
+            None: Although it does record the performance by sid ()  
         """
         perf = self.signal_performance_by_side[side]
 
@@ -85,6 +94,10 @@ class AlphaBlender:
     def _recalculate_dynamic_weights(self, side: str):
         """
         Recalculate per-side dynamic weights using average return contribution
+        Args:
+            :param side:str
+
+            Changes the weight according to profitability
         """
         perf = self.signal_performance_by_side[side]
         total_return = sum(
