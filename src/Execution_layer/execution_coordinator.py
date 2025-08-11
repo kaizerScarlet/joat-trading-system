@@ -1,4 +1,4 @@
-import time
+import time, datetime
 from typing import Dict, Optional
 import logging
 from alpha_scoring.alpha_pipeline import AlphaSignalPipeline
@@ -10,7 +10,8 @@ from Execution_layer.mock_adapter import MockExchangeAdapter #For testing and dr
 from dynamic_risk_engine.signal_confidence_calibrator import SignalConfidenceCalibrator
 from dynamic_risk_engine.dynamic_position_sizer import DynamicPositionSizer
 from market_data.orderbook import OrderBook
-
+from dynamic_risk_engine.daily_drawdown_manager import DailyDrawdownManager
+from market_data.adaptive_sl_tp import AdaptiveSLTP
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +42,13 @@ class ExecutionCoordinator:
         self.alpha_pipeline = AlphaSignalPipeline()
         self.risk_engine = DynamicRiskEngine()
         self.throttle_manager = ThrottleCooldownManager()
+        self.drawdown_manager = DailyDrawdownManager()
         self.exchange_client = BinanceExecutionAdapter()
         self.performance_tracker = PerformanceTracker()
         self.confidence = SignalConfidenceCalibrator()
         self.dynamic_position_sizer = DynamicPositionSizer()
         self.orderbook = OrderBook()
+        self.sl_and_tp = AdaptiveSLTP()
 
 
         self.config = config or {
@@ -75,9 +78,10 @@ class ExecutionCoordinator:
         if side is None:
             return # No trade opportunity
             
-        #Risk + Throttle checks
+        #Risk + Throttle checks + Daily Drawdown Check
         if not self._check_pre_trade_conditions():
             return 
+        
             
         #Determine size
         order_size = self._compute_order_size()
@@ -89,11 +93,12 @@ class ExecutionCoordinator:
         order_type, price = self._choose_order_type_and_price(side)
 
         #Determine the SL and TP
+        stop_loss , take_profit = self.sl_and_tp.get_adaptive_sl_tp(side)
 
 
 
         #Send Order
-        self._execute_order(side, order_size, order_type, price, ts)
+        self._execute_order(side, order_size, order_type, price, ts, stop_loss, take_profit)
 
 
     def _decide_trade_side(self):
@@ -115,6 +120,7 @@ class ExecutionCoordinator:
             return None
 
     def _check_pre_trade_conditions(self) -> bool:
+            
             """
             Run all checks before placing an order
             Args: 
@@ -130,8 +136,10 @@ class ExecutionCoordinator:
             
             if self.throttle_manager.is_throttled():
                 return False
+            
             if not self.risk_engine.can_trade():
                 return False 
+    
             return True
             
     def _compute_order_size(self) -> float:
@@ -170,7 +178,7 @@ class ExecutionCoordinator:
 
          best_bid = self.orderbook.get_best_price('bid')
          best_ask = self.orderbook.get_best_price('ask')
-         spread = self.orderbook.get_best_price("spread", best_ask - best_bid)
+         spread = best_ask - best_bid
 
 
          if self.config["order_type_preference"] == "market":

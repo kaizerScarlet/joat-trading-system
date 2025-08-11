@@ -5,6 +5,9 @@ from datetime import datetime
 import time 
 import math 
 
+
+from market_data.orderbook import OrderBook
+
 # ====== adaptive_density_tuner.py
 class AdaptiveDensityWindow:
     def __init__(self, initial_window_ms: int = 100, decay: float = 0.1):
@@ -125,7 +128,7 @@ class SimpleCancelWindow(CancelWindow):
         self.cancel_events = []
         self.fill_events = []
         self.midprice = None    #injected externally by orderbook
-        self.orderbook = None   # to be injected/ set externally
+        self.orderbook = OrderBook()   # to be injected/ set externally
         #---------------------------------------------------------------------------#
 
         #Add Iceberg Cancel Buffer

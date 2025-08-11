@@ -7,6 +7,7 @@ import hashlib
 from urllib.parse import urlencode
 from typing import Optional, Callable, Dict, Any
 import aiohttp
+from dynamic_risk_engine.throttle_cooldown_manager import ThrottleCooldownManager
 
 DEFAULT_RECV_WINDOW = 5000 #ms
 
@@ -29,7 +30,6 @@ class BinanceExecutionAdapter:
             api_secret: str,
             base_url: str = "https://api.binance.com",
             session: Optional[aiohttp.ClientSession] = None,
-            throttle_manager: Optional[Any] = None,
             default_recv_window: int = DEFAULT_RECV_WINDOW,
             default_symbol: Optional[str] = None,
     ):
@@ -42,7 +42,7 @@ class BinanceExecutionAdapter:
 
 
         #Optional integration objects
-        self.throttle = throttle_manager
+        self.throttle = ThrottleCooldownManager()
         self.on_fill_callback = Optional[Callable[[Dict[str, Any]], None]] = None
 
         self.recv_window = default_recv_window
@@ -88,7 +88,7 @@ class BinanceExecutionAdapter:
             #If throttle manager disallows, raise or wait - here we check and raise
             if self.throttle.is_throttled():
                 raise RuntimeError("Throttle manager prevents REST request (would exceed limit).")
-            self.throttle.record(volume=0.0, weight=weight)
+            self.throttle.record_order(volume=0.0, weight=weight)
 
         
         headers = {"X-MBX-APIKEY": self.api_key}
@@ -106,10 +106,13 @@ class BinanceExecutionAdapter:
             self,
             symbol: Optional[str] = None,
             side: str = "BUY",
+            size: float = None,
             type: str = "MARKET",
             quantity: Optional[float] = None,
             price: Optional[float] = None,
             time_in_force: str = "GTC",
+            stoploss: Optional[float] = None,
+            takeprofit: Optional[float] = None,
             new_client_order_id: Optional[str] = None,
             **extra
     ) -> Dict[str, Any]:
@@ -126,6 +129,10 @@ class BinanceExecutionAdapter:
             "symbol": (symbol or self.default_symbol).upper(),
             "side": side,
             "type": type,
+            "size": size,
+            "price": price,
+            "sl": stoploss,
+            "tp": takeprofit,
         }
 
         if new_client_order_id:
@@ -231,7 +238,7 @@ class BinanceExecutionAdapter:
 
                     #record trade volume in throttle manager
                     if self.throttle:
-                        self.throttle.record_trade(volume=last_qty)
+                        self.throttle.record_order(volume=last_qty)
 
 
                     #callback to execution coordinator

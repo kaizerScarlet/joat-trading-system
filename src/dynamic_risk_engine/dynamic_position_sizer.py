@@ -20,6 +20,8 @@ class DynamicPositionSizer:
         self.volatility = OrderBook()
         self.drawdown = DailyDrawdownManager()
         self.stop_loss = BinanceExecutionAdapter()
+
+        self.max_risk_per_trade = (self.win_rate.win_rate()) - ((1 - self.win_rate.win_rate()) / self.win_rate.average_rrr())
     
     def calculate_position_size(self, stop_loss_distance):
         """
@@ -32,7 +34,7 @@ class DynamicPositionSizer:
         """
         drawdown = self.drawdown.get_daily_drawdown_limit()
         volatility = self.volatility.get_volatility_estimate()
-        max_risk_per_trade = (self.win_rate.win_rate()) - ((1- self.win_rate.win_rate()) / self.win_rate.average_rrr())
+        max_risk_per_trade = self.max_risk_per_trade
         risk_amount = self.account_balance.get_account()* max_risk_per_trade
         adjusted_risk = risk_amount * self.confidence.get_current_confidence()*(0.5 + self.win_rate.win_rate())*volatility  * drawdown   #Scale with confidence and win rate
 
@@ -52,6 +54,6 @@ class DynamicPositionSizer:
         """
         Reset the position sizer to initial state.
         """
-        self.max_risk_per_trade = 0.01
+        self.max_risk_per_trade = (self.win_rate.win_rate()) - ((1 - self.win_rate.win_rate()) / self.win_rate.average_rrr())
         self.account_balance =  self.account_balance.get_account()        #Need to fetch this information using binance, for now these are place holders
 
