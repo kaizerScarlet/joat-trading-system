@@ -1,5 +1,5 @@
 import time, datetime
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 import logging
 from alpha_scoring.alpha_pipeline import AlphaSignalPipeline
 from dynamic_risk_engine.dynamic_risk_engine import DynamicRiskEngine
@@ -11,7 +11,7 @@ from dynamic_risk_engine.signal_confidence_calibrator import SignalConfidenceCal
 from dynamic_risk_engine.dynamic_position_sizer import DynamicPositionSizer
 from market_data.orderbook import OrderBook
 from dynamic_risk_engine.daily_drawdown_manager import DailyDrawdownManager
-from market_data.adaptive_sl_tp import AdaptiveSLTP
+from Execution_layer.adaptive_sl_tp import AdaptiveSLTP
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,15 @@ class ExecutionCoordinator:
         self.confidence = SignalConfidenceCalibrator()
         self.dynamic_position_sizer = DynamicPositionSizer()
         self.orderbook = OrderBook()
-        self.sl_and_tp = AdaptiveSLTP()
+
+
+        #Instantiate adaptive SL/TP and give it the orderbook so it can fetch microstructure score
+        self.sl_and_tp = AdaptiveSLTP(
+             orderbook=self.orderbook,
+             atr_window = 14,
+             base_atr_multiplier=1.5,
+             vol_multiplier=2.0
+        )
 
 
         self.config = config or {
@@ -82,26 +90,39 @@ class ExecutionCoordinator:
         if not self._check_pre_trade_conditions():
             return 
         
-            
-        #Determine size
-        order_size = self._compute_order_size()
+
+
+        #Estimate initial SL/TP distances so position sizer can compute size.
+        #We compute base_distance similarly to AdaptiveSLTP.start_trade so sizing uses same assumptions
+        side_for_sl = 'bid' if side == 'BUY' else 'ask'
+        base_sl, base_tp = self._estimate_initial_sl_tp(side_for_sl)
+
+        if base_sl is None or base_tp is None:
+             logger.debug("Unable to estimate initial SL/TP; aborting trade.")
+
+        
+        stop_loss_distance = abs(self.orderbook.get_midprice() - base_sl)
+
+
+        #Determine size using dyanamic position sizer (expects risk / stop loss)
+        order_size = self._compute_order_size(stop_loss_distance)
         if order_size <= 0:
+            logger.debug("Calculated order_size <= 0; aborting trade.")
             return
         
             
         #Select order type and price
         order_type, price = self._choose_order_type_and_price(side)
 
-        #Determine the SL and TP
-        stop_loss , take_profit = self.sl_and_tp.get_adaptive_sl_tp(side)
-
 
 
         #Send Order
-        self._execute_order(side, order_size, order_type, price, ts, stop_loss, take_profit)
+        self._execute_order(side, order_size, order_type, price, ts, base_sl, base_tp, side_for_sl)
 
 
-    def _decide_trade_side(self):
+       
+
+    def _decide_trade_side(self) -> Optional[str]:
             """
             Decide trade direction based on bid/ask scores.
             Args:
@@ -142,7 +163,7 @@ class ExecutionCoordinator:
     
             return True
             
-    def _compute_order_size(self) -> float:
+    def _compute_order_size(self, stop_loss_distance: float) -> float:
             """
             Convert confidence into a position size in base asset
             Args:
@@ -171,7 +192,7 @@ class ExecutionCoordinator:
             return order_size
     
 
-    def _choose_order_type_and_price(self, side: str):
+    def _choose_order_type_and_price(self, side: str) -> Tuple[str, Optional[float]]:
          """
          Select order type adaptively based on spread and volatility
          """
@@ -194,7 +215,7 @@ class ExecutionCoordinator:
                    price = best_ask if side == "BUY" else best_bid
                    return "LIMIT", price
     
-    def _execute_order(self, side:str, size:float, order_type: str, price: Optional[float], ts: float, stop_loss: float, take_profit: float):
+    def _execute_order(self, side:str, size:float, order_type: str, price: Optional[float], ts: float, base_sl: float, base_tp: float, side_for_sl:str):
          """
          Send the order via exchange client
          """
@@ -204,9 +225,13 @@ class ExecutionCoordinator:
               size = size,
               order_type = order_type,
               price = price,
-              stop_loss = stop_loss,
-              take_profit = take_profit
+              stop_loss = base_sl,
+              take_profit = base_tp,
          )
+
+         if not order_id:
+              logger.warning("Order Placement failed.")
+              return
 
          if order_id:
               self.performance_tracker.record_trade(
@@ -217,7 +242,102 @@ class ExecutionCoordinator:
                         "side": side,
                         "order_type": order_type,
                         "timestamp": ts,
-                        "sl": stop_loss,
-                        "tp": take_profit,
+                        "sl": base_sl,
+                        "tp": base_tp,
                    }
               )
+              #Initialize SL/TP manager state for the new trade
+              # AdaptiveSLTP expects 'bid' (long) 
+              try:
+                    self.sl_and_tp.start_trade(side_for_sl)
+                
+              except Exception as e:
+                logger.exception("Failed to initialize AdaptiveSLTP start_trade(): %s", e)
+
+              logger.info("Placed order %s side=%s type=%s price=%s sl=%s tp=%s", 
+                    order_id, side, size, order_type, price, base_sl, base_tp)
+    
+
+    # -----------------------
+    # Market tick handling
+    # -------------------------
+    def on_market_tick(self, high: Optional[float] = None, low: Optional[float] = None, close: Optional[float]=None):
+         """
+            Called on every new tick or each book snapshot update
+            Responsibilities:
+                -Feed candlesticks data (if available) to the SL/TP manager for ATR
+                -Ask AdaptiveSLTP to monitor and adjust SL/TP (tick by tick)
+                -Propagate changes by modifying SL/TP orders on open positions
+
+         """
+
+         # Update candle history if we receive OHLC (runner may supply these)
+         if high is not None and low is not None and close is not None:
+              try:
+                   self.sl_and_tp.update_candlestick(high, low, close)
+              except Exception:
+                   logger.debug("Error updating candlestick to AdaptiveSLTP", exc_info=True)
+
+        #The SL/TP manager updates internal SL/TP based on microstructure and volatility
+         try:
+              self.sl_and_tp.monitor_and_adjust()
+         except Exception:
+              logger.exception("Error running AdaptiveSLTP.monitor_and_adjust()")
+
+
+        #Push updated SL/TP to exchange for open positions
+         self.monitor_open_positions()
+
+
+    # ----------------------
+    # Open positions syncing
+    # -----------------------
+
+    def monitor_open_positions(self):
+         """
+         Retrieve open positions from the exchange and update stop-loss / take-profit
+         levels if AdaptiveSLTP produced new SL/TP.
+         """
+         try:
+              open_positions = self.exchange_client.get_open_positions(symbol=self.config['symbol'])
+         except Exception:
+              logger.exception("Failed to fetch open positions from Exchange")
+         
+         #Get SL/TP from our manager
+         sl, tp = self.sl_and_tp.get_sl_tp()
+
+
+         for pos in open_positions:
+              #Example pos dict expected: {'id', 'side', 'entry_price', 'stop_loss', 'take_profit'}
+              pos_id = pos.get('id')
+              pos_side = pos.get('side')    #Buy or sell
+              #Compare and update only if different
+              try:
+                   #Map sides consistently
+                   if sl is None or tp is None:
+                        continue
+                   #Current on-exchange SL/TP
+                   pos_sl = pos.get('stop_loss')
+                   pos_tp = pos.get('take_profit')
+
+
+                   #Only match if different (avoid excessive modify calls)
+                   if (pos_sl != sl) or (pos_tp != tp):
+                        self.exchange_client.modify_order_sl_tp(
+                             position_id = pos_id,
+                             stop_loss = sl,
+                             take_profit = tp
+                        )
+                        logger.debug("Modified position %s SL/TP -> sl=%s tp=%s", pos_id, sl, tp)
+
+              except Exception:
+                   logger.exception("Failed to modify SL/TP for Position %s", pos_id)
+
+
+    def _estimate_initial_sl_tp(self, side_for_sl: str) -> Tuple[Optional[float], Optional[float]]:
+         """
+         Estimate initial SL/TP before actually starting the trade.
+         Mirrors the adaptiveSLTP.start_trade initial calculation so sizing uses same base distance
+         side_for_sl: 'bid' or 'ask'
+         """
+         
