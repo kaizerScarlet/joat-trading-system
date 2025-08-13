@@ -3,6 +3,7 @@ from dynamic_risk_engine.daily_drawdown_manager import DailyDrawdownManager
 from dynamic_risk_engine.signal_confidence_calibrator import SignalConfidenceCalibrator
 from dynamic_risk_engine.dynamic_position_sizer import DynamicPositionSizer
 from dynamic_risk_engine.throttle_cooldown_manager import ThrottleCooldownManager
+from Execution_layer.binance_adapter import BinanceExecutionAdapter
 from datetime import datetime 
 
 
@@ -13,7 +14,7 @@ class DynamicRiskEngine:
     Governs whether trades can proceed based on how large they should be
     """
 
-    def __init__(self, initial_balance: float, max_risk_per_trade: float, daily_drawdown_limit: float):
+    def __init__(self, initial_balance: float, max_risk_per_trade: float, daily_drawdown_limit: float, binance_adapter: BinanceExecutionAdapter):
 
         """
         :param initial_balance: Starting balance for the risk engine
@@ -26,8 +27,8 @@ class DynamicRiskEngine:
         self.throttle_cooldown_manager = ThrottleCooldownManager()
 
 
-        self.initial_balance = initial_balance
-        self.max_risk_per_trade = max_risk_per_trade
+        self.initial_balance = binance_adapter.get_account_balance()
+        self.max_risk_per_trade = self.performance_tracker.win_rate() - ((1 - self.performance_tracker.win_rate() / self.performance_tracker.win_rate()))
 
 
     def can_trade(self) -> bool:
@@ -82,7 +83,7 @@ class DynamicRiskEngine:
             signal_id=signal_id,
             was_correct=was_correct
         )
-        self.throttle_cooldown_manager.register_trade(pnl)
+        self.throttle_cooldown_manager.register_trade_result(pnl)
 
     
     def reset(self):

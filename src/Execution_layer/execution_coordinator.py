@@ -1,5 +1,5 @@
 import time, datetime
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Any
 import logging
 from alpha_scoring.alpha_pipeline import AlphaSignalPipeline
 from dynamic_risk_engine.dynamic_risk_engine import DynamicRiskEngine
@@ -69,6 +69,33 @@ class ExecutionCoordinator:
 
         }
 
+        self.sl_order_id = None
+        self.tp_order_id = None
+        self.position_size = 0.0
+        self.entry_price = 0.0
+
+        #Assign on_fill callback to adapter
+        self.exchange_client.on_fill_callback = self._on_fill
+
+   
+         
+
+    # Startup reconciliation (loaction: ExecutionCoordiantor)
+    async def reconcile_open_orders(self):
+         """
+         Fetch open orders from adapter and reconcile with local state/cache.
+         """
+         try:
+              all_open = await self.exchange_client.get_open_orders()
+              logger.info("coordinator reconciliation found %d open orders", len(all_open))
+         except Exception:
+              logger.exception("Failed to reconcile open orders on startup")
+         
+    def now_ms(self) -> int:
+         """
+         Return Monotonic current time in ms adjusted by server offset if available
+         """
+         return int(time.time() * 1000 + getattr(self, "time_offset_ms", 0))
 
     def on_new_alpha(self, alpha: Dict[str, float], market_snapshot: Dict):
         """
@@ -95,7 +122,7 @@ class ExecutionCoordinator:
         #Estimate initial SL/TP distances so position sizer can compute size.
         #We compute base_distance similarly to AdaptiveSLTP.start_trade so sizing uses same assumptions
         side_for_sl = 'bid' if side == 'BUY' else 'ask'
-        base_sl, base_tp = self._estimate_initial_sl_tp(side_for_sl)
+        base_sl, base_tp = self.sl_and_tp.start_trade(side_for_sl)
 
         if base_sl is None or base_tp is None:
              logger.debug("Unable to estimate initial SL/TP; aborting trade.")
@@ -120,7 +147,83 @@ class ExecutionCoordinator:
         self._execute_order(side, order_size, order_type, price, ts, base_sl, base_tp, side_for_sl)
 
 
-       
+    async def _on_fill(self, fill: Dict[str, Any]):
+         """
+         Called by adapter when any order fills.
+         We check if it is entry, SL or TP order and act accordingly.
+
+         """
+         order_id = fill.get("order_id")
+         side = fill.get("side")
+         qty = fill.get("qty")
+         price = fill.get("price")
+         symbol = fill.get("symbol")
+
+
+         #For simplicity, assume your entry is first filled with No SL/TP orders placed
+         if self.position_size == 0 and qty > 0:
+              #Entry fill happened
+              self.position_size = qty if side == "BUY" else -qty
+              self.entry_price = price 
+
+              #Calculate SL and TP initial
+              sl_price, tp_price = self.sl_and_tp.start_trade()
+
+              #Place SL and TP orders async
+              if side == "BUY":
+                   #SL: Sell stop-limit below entry price
+                   sl_resp = await self.exchange_client.place_stop_loss_order(
+                        symbol = symbol,
+                        side="SELL",
+                        stop_price=sl_price,
+                        quantity=qty,
+                   )
+                   self.sl_order_id = sl_resp.get("orderId")
+
+                   
+                   #TP : SELL stop-limit above entry
+                   tp_resp = await self.exchange_client.place_take_profit_order(
+                        symbol = symbol,
+                        side = "SELL",
+                        take_profit_price=tp_price,
+                        quantity=qty,
+                   )
+                   self.tp_order_id = tp_resp.get("orderId")
+                
+              else: # Side == SELL (Short Position)
+                   #SL : Buy stop limit above entry
+                   sl_resp = await self.exchange_client.place_stop_loss_order(
+                        symbol =symbol,
+                        side = "BUY",
+                        stop_price = sl_price,
+                        quantity=qty,
+                   )
+                   self.sl_order_id = sl_resp.get("orderId")
+
+                   #TP: Buy limit below entry
+                   tp_resp = await self.exchange_client.place_take_profit_order(
+                        symbol = symbol,
+                        side = "BUY",
+                        take_profit_price=tp_price,
+                        quantity=qty,
+                   )
+                   self.tp_order_id = tp_resp("orderId")
+
+         else:
+              #Check if SL or TP order filled
+              if order_id == self.sl_order_id:
+                   #SL hit: cancel TP order and reset position
+                   if self.tp_order_id:
+                        await self.exchange_client.cancel_order_by_id(symbol, self.tp_order_id)
+                   self._reset_position_state()
+                   print("Stop loss hit. Position closed")
+              elif order_id == self.tp_order_id:
+                   #TP hit; cancel SL order and reset position
+                   if self.sl_order_id:
+                        await self.exchange_client.cancel_order_by_id(symbol, self.sl_order_id)
+                   self._reset_position_state()
+                   print("Take profit hit. Position closed")
+
 
     def _decide_trade_side(self) -> Optional[str]:
             """
@@ -225,8 +328,6 @@ class ExecutionCoordinator:
               size = size,
               order_type = order_type,
               price = price,
-              stop_loss = base_sl,
-              take_profit = base_tp,
          )
 
          if not order_id:
@@ -333,11 +434,8 @@ class ExecutionCoordinator:
               except Exception:
                    logger.exception("Failed to modify SL/TP for Position %s", pos_id)
 
-
-    def _estimate_initial_sl_tp(self, side_for_sl: str) -> Tuple[Optional[float], Optional[float]]:
-         """
-         Estimate initial SL/TP before actually starting the trade.
-         Mirrors the adaptiveSLTP.start_trade initial calculation so sizing uses same base distance
-         side_for_sl: 'bid' or 'ask'
-         """
-         
+    def _reset_position_state(self):
+         self.position_size = 0.0
+         self.entry_price = 0.0
+         self.sl_order_id = None
+         self.tp_order_id = None

@@ -4,6 +4,7 @@ import asyncio
 import time
 import hmac
 import hashlib
+import urllib.parse
 from urllib.parse import urlencode
 from typing import Optional, Callable, Dict, Any
 import aiohttp
@@ -34,7 +35,7 @@ class BinanceExecutionAdapter:
             default_symbol: Optional[str] = None,
     ):
         self.api_key = api_key
-        self.api_secret = api_secret("utf-8")
+        self.api_secret = api_secret.encode("utf-8")
         self.base_url = base_url.rstrip("/")
         self.session = session or aiohttp.ClientSession()
         self._closed = False
@@ -64,6 +65,25 @@ class BinanceExecutionAdapter:
         sig = hmac.new(self.api_secret, data.encode("utf-8"), hashlib.sha256).hexdigest()
         return sig 
     
+     # Add time sync helpers for binance server time (Location: BinanceExecutionAdapter)
+    async def sync_server_time(self) -> int:
+         """
+         Query Binance server time and compute local offset in milliseconds.
+         Stores offset in self.time_offset_ms and returns it.
+
+         """
+         try:
+              resp = await self._request('GET', "/api/v3/time", signed = False)
+              server_ts = int(resp.get('serverTime') or resp.get('server_time') or 0)
+              local_ms = int(time.time()* 1000)
+              offset = server_ts - local_ms
+              self.time_offset_ms = offset
+              return offset
+         except Exception:
+              #Do not raise; preserve existing offset if present
+              self.time_offset_ms = getattr(self, 'time_offset_ms', 0)
+              return self.time_offset_ms
+
     def _now_ms(self) -> int:
         return int(time.time() * 1000)
     
@@ -111,8 +131,6 @@ class BinanceExecutionAdapter:
             quantity: Optional[float] = None,
             price: Optional[float] = None,
             time_in_force: str = "GTC",
-            stoploss: Optional[float] = None,
-            takeprofit: Optional[float] = None,
             new_client_order_id: Optional[str] = None,
             **extra
     ) -> Dict[str, Any]:
@@ -131,8 +149,6 @@ class BinanceExecutionAdapter:
             "type": type,
             "size": size,
             "price": price,
-            "sl": stoploss,
-            "tp": takeprofit,
         }
 
         if new_client_order_id:
@@ -146,12 +162,124 @@ class BinanceExecutionAdapter:
             payload["price"] = price
             payload["quantity"] = quantity
 
-
+        
         #Use signed REST endpoint
+        # Ensure futures-specific saftey params can be passed via extra kwargs.
+        # Support reduceOnly, closePosition, positionSide and workingType for Binance Futures
+        for k in ("reduceOnly", "closePosition", "positionSide", "workingType"):
+            if k in extra:
+                payload[k] = extra.get(k)
         resp = await self._signed_request("POST", "/api/v3/order", payload)
         #Record trade/order activity in throttle manager if adapter received immediate maker fill later via WS
         return resp 
     
+
+    #SL/TP Placement and cancellation
+    async def place_stop_loss_order(
+            self, 
+            symbol: str,
+            side: str,
+            stop_price: float,
+            quantity: float,
+
+    ) -> Dict:
+        """
+        Place a stop limit order acting as a stop loss.
+        Binance spot supports stop limit orders
+        """
+        params = {
+            "symbol": symbol.upper(),
+            "side": side,
+            "type": "STOP_LOSS_LIMIT",
+            "quantity": quantity,
+            "price": f"{stop_price:.8f}",   #Limit price when stop triggers
+            "stopPrice": f"{stop_price:.8f}", #Trigger price
+            "timeInForce": "GTC",
+        }
+        return await self._signed_request("POST", "/api/v3/order", params)
+
+
+    async def place_take_profit_order(
+            self,
+            symbol:str,
+            side: str,
+            take_profit_price: float,
+            quantity: float,
+    ) -> Dict:
+        """
+        Place a limit order acting as take profit
+        """
+        assert side in ("BUY", "SELL")
+        params = {
+            "symbol": symbol.upper(),
+            "side": side,
+            "type": "LIMIT",
+            "price": f"{take_profit_price:.8f}",
+            "quantity": quantity,
+            "timeInForce": "GTC",
+        }
+        return await self._signed_request("POST", "/api/v3/order", params)
+    
+    async def cancel_order_by_id(self, symbol: str, order_id: int) -> Dict:
+        return await self.cancel_order(symbol=symbol, orderId=order_id)
+
+    #Add modify_order helper(cancel + Replace) 
+    async def modify_order(self, symbol: str, orig_order_id: Optional[int] = None, orig_client_order_id: Optional[str] = None,
+                           new_price: Optional[float] = None, new_qty: Optional[float] = None,
+                           new_client_order_id: Optional[str] = None, max_wait_ms: int = 2000) -> Dict[str, Any]:
+        
+        """
+        Attempt to modify an existing order by cancelling it and placing a replacement.
+        This is required on Binance (no single modify endpoint). Returns a dict summarizing the result
+
+        """
+        # 1) Cancel original (best-effort)
+        try:
+            await self.cancel_order(symbol=symbol, orderId=orig_order_id, origClientOrderId=orig_client_order_id)
+        except Exception:
+            pass
+
+        #2) Poll order status briefly to detect fills or cancellation
+        poll_start = int(time.time()*1000)
+        last_status = None
+        while int(time.time()*1000) - poll_start < max_wait_ms:
+            try:
+                if orig_order_id:
+                    st = await self.get_order_status(symbol=symbol, orderId=orig_order_id)
+                elif orig_client_order_id:
+                    st = await self.get_order_status(symbol=symbol, origClientOrderId= orig_client_order_id)
+
+                else:
+                    st = None
+                last_status = st
+                if st:
+                    s = str(st.get('status','')).lower()
+                    if s in ('filled','partially_filled','partial_filled'):
+                        return {'status':'filled','order':st}
+                    if s in ('canceled', 'cancelled','rejected', 'expired'):
+                        break
+            
+            except Exception:
+                pass
+            await asyncio.sleep(0.15)
+        #3) Place replacement order if symbol is not filled
+        place_payload = {'symbol':symbol, 'type':'LIMIT'}
+        if new_qty is not None:
+            place_payload['quantity'] = new_qty
+        
+        if new_price is not None:
+            place_payload['price'] = new_price
+            place_payload['timeInForce'] = 'GTC'
+
+        if new_client_order_id:
+            place_payload['newClientOrderId'] = new_client_order_id
+
+        try:
+            new_order = await self.place_order(**place_payload)
+            return {'status':'replaced','new_order':new_order, 'last_status': last_status}
+        except Exception as e:
+            return {'status': 'failed', 'reason':str(e), 'last_status': last_status}
+
 
     async def cancel_order(self, symbol: Optional[str] = None, orderId: Optional[int] = None, origClientOrderId: Optional[str] = None) -> Dict:
         """
@@ -185,6 +313,16 @@ class BinanceExecutionAdapter:
         resp = await self._signed_request("GET", "/api/v3/account",{})
         return resp
     
+    async def get_account_balance(self) -> float:
+        """
+        Get Free balance for given asset symbol (e.g 'USDT', "BTC")
+        Return float balance or 0.0 if not found.
+        """
+        account = await self.get_account()
+        for b in account.get("balances", []):
+            if b["asset"] == "USDT":
+                return float(b.get("free", 0.0))
+        return 0.0
 
     async def close(self):
         """Close internal session"""

@@ -2,6 +2,8 @@
 
 from typing import Tuple, Optional
 import numpy as np
+from alpha_scoring.AlphaBlender import AlphaBlender
+from market_data.orderbook import OrderBook
 
 
 class AdaptiveSLTP:
@@ -26,11 +28,9 @@ class AdaptiveSLTP:
 
     def __init__(
         self,
-        orderbook,
         atr_window: int = 14,
         base_atr_multiplier: float = 1.5,
         vol_multiplier: float = 2.0,
-        weights: Tuple[float, float, float] = (0.4, 0.3, 0.3),
         min_gap_ticks: float = 0.01,
         max_gap_multiplier: float = 5.0,
         tp_extension_factor: float = 1.5,
@@ -45,11 +45,11 @@ class AdaptiveSLTP:
         :param max_gap_multiplier: maximum multiple of base distance allowed for gap.
         :param tp_extension_factor: TP distance = current SL distance * tp_extension_factor (keeps asymmetry).
         """
-        self.ob = orderbook
+        self.alpha_score = AlphaBlender()
+        self.ob = OrderBook()
         self.atr_window = atr_window
         self.base_atr_multiplier = base_atr_multiplier
         self.vol_multiplier = vol_multiplier
-        self.w_age, self.w_cancel, self.w_layering = weights
 
         # gap bounds & tp factor
         self.min_gap_ticks = min_gap_ticks
@@ -105,23 +105,17 @@ class AdaptiveSLTP:
         Each underlying metric MUST be normalized 0..1 by the orderbook implementation.
         Returns value in [0,1].
         """
-        # These methods must be implemented on orderbook
-        age = float(self.ob.get_order_age_score())
-        cancel = float(self.ob.get_cancel_activity_score())
-        layering = float(self.ob.get_layering_score())
 
-        # clamp inputs
-        age = max(0.0, min(1.0, age))
-        cancel = max(0.0, min(1.0, cancel))
-        layering = max(0.0, min(1.0, layering))
+        alpha = self.alpha_score.compute_alpha_score()
+        score = alpha.get(self.side, 0.0)
 
-        composite = (self.w_age * age) + (self.w_cancel * cancel) + (self.w_layering * layering)
-        return max(0.0, min(1.0, composite))
+        return score
+    
 
     # --------------------------
     # Start / stop trade flow
     # --------------------------
-    def start_trade(self, side: str) -> None:
+    def start_trade(self, side: str) -> Tuple[Optional[float], Optional[float]]:
         """
         Enter trade: set entry price, initial SL and TP using the original ATR+vol distance logic.
         :param side: 'bid' for long, 'ask' for short.
@@ -152,6 +146,8 @@ class AdaptiveSLTP:
             raise ValueError("Side must be 'bid' or 'ask'")
 
         self.original_risk = abs(self.entry_price - self.stop_loss)
+
+        return self.stop_loss, self.take_profit
 
     def stop_trade(self) -> None:
         """Clear current trade state."""
@@ -187,7 +183,7 @@ class AdaptiveSLTP:
         #   composite ~1 -> stable/supportive -> allow wider gap (less choke)
         #   composite ~0 -> unstable -> gap should be tighter (protect quickly)
         # We'll map composite -> factor in range [0.5, 1.5] (tunable)
-        composite_factor = 0.5 + composite_score  # [0.5, 1.5]
+        composite_factor = 0.5 + self._compute_composite_score()         # [0.5, 1.5]
 
         # Profit factor: how far price is from entry relative to original risk.
         profit_distance = 0.0
