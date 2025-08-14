@@ -12,6 +12,8 @@ from dynamic_risk_engine.dynamic_position_sizer import DynamicPositionSizer
 from market_data.orderbook import OrderBook
 from dynamic_risk_engine.daily_drawdown_manager import DailyDrawdownManager
 from Execution_layer.adaptive_sl_tp import AdaptiveSLTP
+from Execution_layer.stealth_router import StealthRouter
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +78,15 @@ class ExecutionCoordinator:
         #Assign on_fill callback to adapter
         self.exchange_client.on_fill_callback = self._on_fill
 
-   
+        #Stealth router
+        self.stealth_router = StealthRouter(
+             exchange_client=self.exchange_client,
+             symbol=(config or {}).get("symbol", "BTCUSDT"),
+             min_slice_usd=50,
+             max_slice_usd=500,
+             random_delay_range=(0.3, 1.5),
+             tick_size=0.01
+        )
          
 
     # Startup reconciliation (loaction: ExecutionCoordiantor)
@@ -144,39 +154,74 @@ class ExecutionCoordinator:
 
         #Send Order
         self._execute_order(side, order_size, order_type, price, ts, base_sl, base_tp, side_for_sl)
+     
     async def _on_fill(self, fill: Dict[str, Any]):
-          """
-          Called by adapter when any order fills.
-          We check if it is entry, SL, or TP order and act accordingly.
-          """
-          order_id = fill.get("order_id")
-          side = fill.get("side")
-          qty = fill.get("qty")
-          price = fill.get("price")
-          symbol = fill.get("symbol")
+         """
+         Called by adapter when any order fills.
+         Handles SL/TP hits, entry fills, and stealth slice fills.
+         """
+         order_id = fill.get("order_id")
+         side = fill.get("side")
+         qty = fill.get("qty", 0)
+         price = fill.get("price", 0.0)
+         symbol = fill.get("symbol")
 
-          # Stop-loss hit
-          if order_id == self.sl_order_id:
-               await self.exchange_client.cancel_order_by_id(self.tp_order_id)
-               self._reset_position_state()
-               return
+         # ------Stop loss hit -------
+         if order_id == self.sl_order_id:
+              await self.exchange_client.cancel_order_by_id(self.tp_order_id)
+              self._reset_position_state()
+              return
+         # -------Take Profit hit ------
+         if order_id == self.tp_order_id:
+              await self.exchange_client.cancel_order_by_id(self.sl_order_id)
+              self._reset_position_state()
+              return
+         
+         # -----Entry fill (first fill) ----
+         if self.position_size == 0 and qty > 0:
+              #Track position from first fill
+              self.position_size = qty if side == "BUY" else -qty
+              self.entry_price = price 
 
-          # Take-profit hit
-          if order_id == self.tp_order_id:
-               await self.exchange_client.cancel_order_by_id(self.sl_order_id)
-               self._reset_position_state()
-               return
+              #Get SL/TP from AdaptiveSLTP at fill time
+              sl_price, tp_price = self.sl_and_tp.start_trade(side.lower() if side else None)
+              self.sl_order_id = await self.exchange_client.place_stop_loss_order(symbol, side, sl_price, qty)
+              self.tp_order_id = await self.exchange_client.place_take_profit_order(symbol, side, tp_price, qty)
 
-          # Entry fill
-          if self.position_size == 0 and qty > 0:
-               self.position_size = qty if side == "BUY" else -qty
-               self.entry_price = price
-
-               # Get SL/TP levels
-               sl_price, tp_price = self.sl_and_tp.start_trade()
-               self.sl_order_id = await self.exchange_client.place_stop_loss_order(symbol, sl_price, qty)
-               self.tp_order_id = await self.exchange_client.place_take_profit_order(symbol, tp_price, qty)
-
+         # ----- Stealth slice awareness ------
+         if hasattr(self, "active_entry_order_ids") and order_id in self.active_entry_order_ids:
+              #This fill is part of our stealth parent order
+              logger.debug(f"stealth slice filled: order_id={order_id}, qty={qty}, price={price}")
+    
+              #If we already have an open position, adjust SL/TP dynamically
+              if self.position_size != 0:
+                   self._update_sl_tp_after_slice(qty, side)
+                   
+    def _update_sl_tp_after_slice(self, qty: float, side: str):
+         """
+         Dynamically adjust SL/TP after an additional stealth slice fills
+         Keeps position risk parameters in sync with new size.
+         """
+         sl_price, tp_price = self.sl_and_tp.get_sl_tp()
+         if self.sl_order_id:
+              asyncio.create_task(
+                   self.exchange_client.modify_order(
+                        symbol=self.config["symbol"],
+                        orig_order_id=self.sl_order_id,
+                        new_qty=abs(self.position_size) + qty,
+                        new_price = sl_price
+                   )
+              )
+         if self.tp_order_id:
+              asyncio.create_task(
+                   self.exchange_client.modify_order(
+                        symbol=self.config["symbol"],
+                        orig_order_id=self.tp_order_id,
+                        new_qty=abs(self.position_size) + qty,
+                        new_price = tp_price
+                   )
+              )
+         logger.info(f"Adjusted SL/TP after stealth slice fill: SL={sl_price}, TP={tp_price}")
 
     def _decide_trade_side(self) -> Optional[str]:
                """
@@ -273,22 +318,22 @@ class ExecutionCoordinator:
     
     def _execute_order(self, side:str, size:float, order_type: str, price: Optional[float], ts: float, base_sl: float, base_tp: float, side_for_sl:str):
          """
-         Send the order via exchange client
+         Send the order via StealthRouter for stealth execution
          """
-         order_id = self.exchange_client.place_order(
-              symbol = self.config["symbol"],
-              side = side,
-              size = size,
-              order_type = order_type,
-              price = price,
-         )
-
-         if not order_id:
-              logger.warning("Order Placement failed.")
+         try:
+               order_id = self.stealth_router.execute_parent_order(
+                        side=side,
+                        total_qty=size,
+                        order_type=order_type,
+                        limit_price=price,
+                   )
+               self.active_entry_order_ids = order_id
+         except Exception as e:
+              logger.exception("StealthRouter execution failed: %s", e)
               return
+         
 
-         if order_id:
-              self.performance_tracker.record_trade(
+         self.performance_tracker.record_trade(
                    pnl=0.0, #real PnL computed on fill
                    risk = size,
                    reward = 0.0,
@@ -302,14 +347,14 @@ class ExecutionCoordinator:
               )
               #Initialize SL/TP manager state for the new trade
               # AdaptiveSLTP expects 'bid' (long) 
-              try:
-                    self.sl_and_tp.start_trade(side_for_sl)
+         try:
+             self.sl_and_tp.start_trade(side_for_sl)
                 
-              except Exception as e:
-                logger.exception("Failed to initialize AdaptiveSLTP start_trade(): %s", e)
+         except Exception as e:
+             logger.exception("Failed to initialize AdaptiveSLTP start_trade(): %s", e)
 
-              logger.info("Placed order %s side=%s type=%s price=%s sl=%s tp=%s", 
-                    order_id, side, size, order_type, price, base_sl, base_tp)
+         logger.info("Placed order %s side=%s type=%s price=%s sl=%s tp=%s", self.active_entry_order_ids,
+                     side, size, order_type, price, base_sl, base_tp)
     
 
     # -----------------------

@@ -5,7 +5,7 @@ from alpha_scoring.AlphaBlender import AlphaBlender
 def test_weighted_average_static():
     blender = AlphaBlender(
         weights = {'cance_activity': 0.5, 'layering': 0.3, 'order_age': 0.2},
-        blending_method = 'weighted_average',
+        blending_method = 'weighted average',
         adaptive = False
     )
 
