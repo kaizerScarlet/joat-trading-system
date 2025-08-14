@@ -11,6 +11,7 @@ import aiohttp
 from dynamic_risk_engine.throttle_cooldown_manager import ThrottleCooldownManager
 
 DEFAULT_RECV_WINDOW = 5000 #ms
+DEFAULT_SYMBOL = "BTCUSDT"
 
 class BinanceExecutionAdapter:
     """
@@ -27,27 +28,27 @@ class BinanceExecutionAdapter:
 
     def __init__(
             self,
-            api_key: str,
-            api_secret: str,
+            symbol: str = "BTCUSDT",
+            api_key: str = None,
+            api_secret: str = None,
             base_url: str = "https://api.binance.com",
             session: Optional[aiohttp.ClientSession] = None,
-            default_recv_window: int = DEFAULT_RECV_WINDOW,
-            default_symbol: Optional[str] = None,
+            **kwargs
     ):
         self.api_key = api_key
-        self.api_secret = api_secret.encode("utf-8")
+        self.api_secret = api_secret
         self.base_url = base_url.rstrip("/")
-        self.session = session or aiohttp.ClientSession()
+        self.session = session #May be none at init
         self._closed = False
         self._lock =asyncio.Lock() #serialize signed request creation if needed
 
 
         #Optional integration objects
         self.throttle = ThrottleCooldownManager()
-        self.on_fill_callback = Optional[Callable[[Dict[str, Any]], None]] = None
+        self.on_fill_callback: Optional[Callable[[Dict[str, Any]], None]] = None
 
-        self.recv_window = default_recv_window
-        self.default_symbol = default_symbol
+        self.recv_window = kwargs.get("default_recv_window", DEFAULT_RECV_WINDOW)
+        self.default_symbol = symbol
 
 
         # Approximate weight cost mapping (for our throttle manager)
@@ -62,8 +63,16 @@ class BinanceExecutionAdapter:
 
     # ------------------ Low-Level helpers --------------------------
     def _sign(self, data: str) -> str:
-        sig = hmac.new(self.api_secret, data.encode("utf-8"), hashlib.sha256).hexdigest()
+        """Create a Binance HMAC SHA256 signature"""
+        sig = hmac.new(self.api_secret.encode("utf-8"), data.encode("utf-8"), hashlib.sha256).hexdigest()
         return sig 
+    
+    def _sign_params(self, params: dict) -> str:
+        """
+        Takes a dict of params, URL-encodes it and returns HMAC-SHA256 signature
+        """
+        query_string = "&".join([f"{k} = {v}" for k, v in params.items()])
+        return self._sign(query_string)
     
      # Add time sync helpers for binance server time (Location: BinanceExecutionAdapter)
     async def sync_server_time(self) -> int:
@@ -87,14 +96,16 @@ class BinanceExecutionAdapter:
     def _now_ms(self) -> int:
         return int(time.time() * 1000)
     
-    
-    async def _signed_request(self, method: str, path: str, params: Optional[Dict] =  None) -> Dict:
-        """
-        Make a signed request to Binance. Uses recvWindow and timestamp automatically.
-        Method should be 'GET', 'POST', 'DELETE' etc.
-        """
+    async def _get_session(self):
+        """Ensure we have a running ClientSession"""
+        if self.session is None or self.session.closed:
+            self.session = aiohttp.ClientSession()
+        return self.session
+
+    async def _signed_request(self, method: str, path: str, params: Optional[Dict] = None, max_retries: int = 3) -> Dict:
+        session = await self._get_session()
         params = params.copy() if params else {}
-        params["timeestamp"] = self._now_ms()
+        params["timestamp"] = self._now_ms()
         params["recvWindow"] = self.recv_window
 
         query = urllib.parse.urlencode(params, doseq=True)
@@ -102,23 +113,27 @@ class BinanceExecutionAdapter:
         query = f"{query}&signature={signature}"
         url = f"{self.base_url}{path}?{query}"
 
-        #throttle weight accounting
         weight = self._endpoint_weight.get(path, 1)
         if self.throttle:
-            #If throttle manager disallows, raise or wait - here we check and raise
             if self.throttle.is_throttled():
-                raise RuntimeError("Throttle manager prevents REST request (would exceed limit).")
+                raise RuntimeError("Request throttled: would exceed limit")
             self.throttle.record_order(volume=0.0, weight=weight)
 
-        
         headers = {"X-MBX-APIKEY": self.api_key}
-        async with self._lock: #Ensure query string created atomically (not strictly required)
-            async with self.session.request(method, url, headers=headers) as resp:
-                text = await resp.text()
-                if resp.status >= 400:
-                    raise RuntimeError(f"Binance API Error {resp.status}: {text}")
-                return await resp.json()
-            
+
+        for attempt in range(max_retries):
+            async with self._lock:
+                async with session.request(method, url, headers=headers) as resp:
+                    text = await resp.text()
+                    if resp.status in (429, 418):
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(2 ** attempt)  # exponential backoff
+                            continue
+                    if resp.status >= 400:
+                        raise RuntimeError(f"Binance API Error {resp.status}: {text}")
+                    return await resp.json()
+
+        raise RuntimeError(f"Binance API Error: exceeded retries for {path}")
 
 
     # -----------------------Public API -------------------------------

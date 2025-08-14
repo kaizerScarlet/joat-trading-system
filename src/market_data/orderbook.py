@@ -6,11 +6,11 @@ class OrderBook:
     Tracks bid/ask level and provides midprice, volatility,
     and liquidity metrics
     """
-    def __init__(self, symbol):
+    def __init__(self):
         """
         Initialize the OrderBook for a specific trading symbol.
         """
-        self.symbol = symbol
+        self.symbol = "BTCUSDT"
         self.bids = {} # Bid side: {price-> size} 
         self.asks = {} # Ask side: {price -> size}
         self.last_midprice = None

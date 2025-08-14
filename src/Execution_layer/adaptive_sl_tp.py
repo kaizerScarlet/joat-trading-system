@@ -45,7 +45,7 @@ class AdaptiveSLTP:
         :param max_gap_multiplier: maximum multiple of base distance allowed for gap.
         :param tp_extension_factor: TP distance = current SL distance * tp_extension_factor (keeps asymmetry).
         """
-        self.alpha_score = AlphaBlender()
+        self.alpha_score = AlphaBlender
         self.ob = OrderBook()
         self.atr_window = atr_window
         self.base_atr_multiplier = base_atr_multiplier
@@ -133,7 +133,7 @@ class AdaptiveSLTP:
 
         atr_distance = atr * self.base_atr_multiplier
         vol_distance = mid * vol_est * self.vol_multiplier
-        base_distance = max(atr_distance, vol_distance)
+        base_distance = max(atr_distance, vol_distance, self.min_gap_ticks)
 
         # initial stop and tp
         if side == "bid":

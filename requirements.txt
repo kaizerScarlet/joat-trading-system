@@ -8,3 +8,5 @@ setuptools
 websockets==11.0
 pytest-asyncio>=0.23
 scikit-learn
+numpy
+python-dotenv

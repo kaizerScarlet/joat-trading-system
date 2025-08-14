@@ -39,20 +39,19 @@ class ExecutionCoordinator:
             performance_tracker: PerformanceTracker instance
             config: Optional dict with execution settings
         """
-        self.alpha_pipeline = AlphaSignalPipeline()
-        self.risk_engine = DynamicRiskEngine()
-        self.throttle_manager = ThrottleCooldownManager()
-        self.drawdown_manager = DailyDrawdownManager()
-        self.exchange_client = BinanceExecutionAdapter()
-        self.performance_tracker = PerformanceTracker()
-        self.confidence = SignalConfidenceCalibrator()
-        self.dynamic_position_sizer = DynamicPositionSizer()
-        self.orderbook = OrderBook()
+        self.alpha_pipeline = AlphaSignalPipeline
+        self.risk_engine = DynamicRiskEngine
+        self.throttle_manager = ThrottleCooldownManager
+        self.drawdown_manager = DailyDrawdownManager
+        self.exchange_client = BinanceExecutionAdapter
+        self.performance_tracker = PerformanceTracker
+        self.confidence = SignalConfidenceCalibrator
+        self.dynamic_position_sizer = DynamicPositionSizer
+        self.orderbook = OrderBook
 
 
         #Instantiate adaptive SL/TP and give it the orderbook so it can fetch microstructure score
         self.sl_and_tp = AdaptiveSLTP(
-             orderbook=self.orderbook,
              atr_window = 14,
              base_atr_multiplier=1.5,
              vol_multiplier=2.0
@@ -145,103 +144,57 @@ class ExecutionCoordinator:
 
         #Send Order
         self._execute_order(side, order_size, order_type, price, ts, base_sl, base_tp, side_for_sl)
-
-
     async def _on_fill(self, fill: Dict[str, Any]):
-         """
-         Called by adapter when any order fills.
-         We check if it is entry, SL or TP order and act accordingly.
+          """
+          Called by adapter when any order fills.
+          We check if it is entry, SL, or TP order and act accordingly.
+          """
+          order_id = fill.get("order_id")
+          side = fill.get("side")
+          qty = fill.get("qty")
+          price = fill.get("price")
+          symbol = fill.get("symbol")
 
-         """
-         order_id = fill.get("order_id")
-         side = fill.get("side")
-         qty = fill.get("qty")
-         price = fill.get("price")
-         symbol = fill.get("symbol")
+          # Stop-loss hit
+          if order_id == self.sl_order_id:
+               await self.exchange_client.cancel_order_by_id(self.tp_order_id)
+               self._reset_position_state()
+               return
 
+          # Take-profit hit
+          if order_id == self.tp_order_id:
+               await self.exchange_client.cancel_order_by_id(self.sl_order_id)
+               self._reset_position_state()
+               return
 
-         #For simplicity, assume your entry is first filled with No SL/TP orders placed
-         if self.position_size == 0 and qty > 0:
-              #Entry fill happened
-              self.position_size = qty if side == "BUY" else -qty
-              self.entry_price = price 
+          # Entry fill
+          if self.position_size == 0 and qty > 0:
+               self.position_size = qty if side == "BUY" else -qty
+               self.entry_price = price
 
-              #Calculate SL and TP initial
-              sl_price, tp_price = self.sl_and_tp.start_trade()
-
-              #Place SL and TP orders async
-              if side == "BUY":
-                   #SL: Sell stop-limit below entry price
-                   sl_resp = await self.exchange_client.place_stop_loss_order(
-                        symbol = symbol,
-                        side="SELL",
-                        stop_price=sl_price,
-                        quantity=qty,
-                   )
-                   self.sl_order_id = sl_resp.get("orderId")
-
-                   
-                   #TP : SELL stop-limit above entry
-                   tp_resp = await self.exchange_client.place_take_profit_order(
-                        symbol = symbol,
-                        side = "SELL",
-                        take_profit_price=tp_price,
-                        quantity=qty,
-                   )
-                   self.tp_order_id = tp_resp.get("orderId")
-                
-              else: # Side == SELL (Short Position)
-                   #SL : Buy stop limit above entry
-                   sl_resp = await self.exchange_client.place_stop_loss_order(
-                        symbol =symbol,
-                        side = "BUY",
-                        stop_price = sl_price,
-                        quantity=qty,
-                   )
-                   self.sl_order_id = sl_resp.get("orderId")
-
-                   #TP: Buy limit below entry
-                   tp_resp = await self.exchange_client.place_take_profit_order(
-                        symbol = symbol,
-                        side = "BUY",
-                        take_profit_price=tp_price,
-                        quantity=qty,
-                   )
-                   self.tp_order_id = tp_resp("orderId")
-
-         else:
-              #Check if SL or TP order filled
-              if order_id == self.sl_order_id:
-                   #SL hit: cancel TP order and reset position
-                   if self.tp_order_id:
-                        await self.exchange_client.cancel_order_by_id(symbol, self.tp_order_id)
-                   self._reset_position_state()
-                   print("Stop loss hit. Position closed")
-              elif order_id == self.tp_order_id:
-                   #TP hit; cancel SL order and reset position
-                   if self.sl_order_id:
-                        await self.exchange_client.cancel_order_by_id(symbol, self.sl_order_id)
-                   self._reset_position_state()
-                   print("Take profit hit. Position closed")
+               # Get SL/TP levels
+               sl_price, tp_price = self.sl_and_tp.start_trade()
+               self.sl_order_id = await self.exchange_client.place_stop_loss_order(symbol, sl_price, qty)
+               self.tp_order_id = await self.exchange_client.place_take_profit_order(symbol, tp_price, qty)
 
 
     def _decide_trade_side(self) -> Optional[str]:
-            """
-            Decide trade direction based on bid/ask scores.
-            Args:
-                :param alpha: Dict {'bid": score, 'Ask': score}
-            """
-            alpha = self.alpha_pipeline.get_alpha_signal()
-            bid_score = alpha.get("bid", 0.0)
-            ask_score = alpha.get("ask", 0.0)
+               """
+               Decide trade direction based on bid/ask scores.
+               Args:
+                    :param alpha: Dict {'bid": score, 'Ask': score}
+               """
+               alpha = self.alpha_pipeline.get_alpha_signal()
+               bid_score = alpha.get("bid", 0.0)
+               ask_score = alpha.get("ask", 0.0)
 
-            if bid_score >= self.config["min_confidence_to_trade"] and bid_score > ask_score:
-                return "BUY"
-                
-            elif ask_score >= self.config["min_confidence_to_trade"] and ask_score > bid_score:
-                return "SELL"
-                
-            return None
+               if bid_score >= self.config["min_confidence_to_trade"] and bid_score > ask_score:
+                    return "BUY"
+                    
+               elif ask_score >= self.config["min_confidence_to_trade"] and ask_score > bid_score:
+                    return "SELL"
+                    
+               return None
 
     def _check_pre_trade_conditions(self) -> bool:
             
