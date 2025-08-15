@@ -1,6 +1,9 @@
 import asyncio
 import random
 from typing import Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 class StealthRouter:
     """
@@ -12,7 +15,10 @@ class StealthRouter:
                  min_slice_usd: float = 50,
                  max_slice_usd: float = 500,
                  random_delay_range: tuple = (0.3, 1.5),
-                 tick_size: float = 0.01
+                 tick_size: float = 0.01,
+                 qty_precison: int = 6,
+                 max_slices: int = 20,
+                 slippage_bps: float = 5.0 #max slippage per slice (optional)
                  
                  ):
         """
@@ -22,6 +28,9 @@ class StealthRouter:
         :param max_slice_usd: Maximum USD value of a slice.
         :param random_delay_range: min and max seconds between slices.
         :param tick_size: Price tick size for rounding.
+        :param qty_precison: precision for quantity rounding
+        :param max_slices: maximum number of slices per parent order.
+        :param slippage_bps: max allowed slippage in basis points per slice
         """
 
         self.exchange_client = exchange_client
@@ -30,37 +39,58 @@ class StealthRouter:
         self.max_slice_usd = max_slice_usd
         self.random_delay_range = random_delay_range
         self.tick_size = tick_size
+        self.qty_precision = qty_precison
+        self.max_slices = max_slices
+        self.slippage_bps = slippage_bps / 10000.0 #convert bps to fraction
 
 
     async def execute_parent_order(self, side:str, total_qty: float,
                                    order_type: str, limit_price: Optional[float]=None):
         """
-        Executes a parent order in slices.
+        Executes a parent order in multiple stealthy slices.
         """
+        order_type = order_type.upper()
+        if order_type not in ("LIMIT","MARKET"):
+            raise ValueError(f"Unsupported order_type: {order_type}")
+
         remaining_qty = total_qty
         placed_order_ids = []
+        slice_count = 0
 
-        while remaining_qty > 0:
+        while remaining_qty > 0 and slice_count < self.max_slices:
             slice_qty = self._choose_slice_size(remaining_qty)
             slice_price = self._choose_slice_price(side, limit_price, order_type)
 
+            #Retry Logic for robustness
+            for attempt in range(3):
+                try:
+                    resp =   await self.exchange_client.place_order(
+                    symbol = self.symbol,
+                    side = side,
+                    size = slice_qty,
+                    type = order_type,
+                    price = slice_price,
+                    quantity = round(slice_qty, self.qty_precision)
+                )
 
-            resp =   await self.exchange_client.place_order(
-                symbol = self.symbol,
-                side = side,
-                size = slice_qty,
-                type = order_type,
-                price = slice_price,
-                quantity = slice_qty
-            )
+                    if resp and "orderId" in resp:
+                        placed_order_ids.append(resp["orderId"])
+                        logger.debug(f"Placed slice {slice_count + 1} / {self.max_slices}: "
+                                     f"{slice_qty} {side} @ {slice_price} (Remaining: {remaining_qty - slice_qty})")
+                        break
+                except Exception as e:
+                    logger.warning(f"Retry {attempt + 1} failed placing slice: {e}")
+                    await asyncio.sleep(1.0 + attempt)
 
-            if resp and "orderId" in resp:
-                placed_order_ids.append(resp["orderId"])
-
+            #Decrement remaining qty and advance
             remaining_qty = max(0, remaining_qty - slice_qty)
+            slice_count += 1
 
             if remaining_qty > 0:
                 await self._random_delay()
+
+        if slice_count >= self.max_slices:
+            logger.warning(f"Reached max slices limit ({self.max_slices}) before completing parent order") 
         
         return placed_order_ids
 
@@ -75,25 +105,45 @@ class StealthRouter:
         
         slice_usd = random.uniform(self.min_slice_usd, self.max_slice_usd)
         slice_qty = min(remaining_qty, slice_usd / mid_price)
-        return round(slice_qty, 6) #Binance lot size precision
+        return round(slice_qty, self.qty_precision) #Binance lot size precision
     
 
 
     def _choose_slice_price(self, side: str, limit_price: Optional[float], order_type: str):
-        """Random price adjustment for limit orders"""
+        """Random price adjustment for limit orders using tick_size"""
         if order_type.upper() == "MARKET":
             return None 
-        jitter = self.tick_size * random.randint(-2, 2)
-        if side.upper() == "BUY":
-            return round(limit_price + jitter, 2)
-        else:
-            return round(limit_price - jitter, 2)
+        
 
+        mid_price = getattr(self.exchange_client, "get_midprice", lambda *_: None)(self.symbol)
+        if not mid_price:
+            mid_price = limit_price or 1.0 #Fallback
+
+        base_price = limit_price or mid_price
+
+        #Optional jitter range in ticks (e.g. [-2, 2])
+        tick_jitter = random.randint(-2, 2)
+        jitter = self.tick_size * tick_jitter
+
+        #Optional slippage control
+        max_slip = mid_price * self.slippage_bps
+        jitter = max(min(jitter, max_slip), -max_slip)
+
+        #Apply jitter with directionality logic
+        if side.upper() == "BUY":
+            adjusted_price = base_price + jitter # Slightly aggressive or passive
+        else:
+            adjusted_price = base_price - jitter
+
+        #Snap to tick size
+        adjusted_price = round(adjusted_price / self.tick_size) * self.tick_size
+        return adjusted_price
 
     async def _random_delay(self):
         """
         Random pause between slices.
         """
         delay = random.uniform(*self.random_delay_range)
+        logger.debug(f"Sleeping for {delay:.2f}s before next slice")
         await asyncio.sleep(delay)
         
