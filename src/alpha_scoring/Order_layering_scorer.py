@@ -44,6 +44,9 @@ class LayeringScoring:
         self.last_score_by_side = {'ask': 0.0, 'bid': 0.0}
         self.last_time = None
 
+        self.min_score_by_side = {'ask': float('inf'), 'bid': float('inf')}
+        self.max_score_by_side = {'ask': float('-inf'), 'bid': float('-inf')}
+
     def register_events(self, timestamp: int, event_type: str, price: float, size: float,distance_from_best:int, side: str) -> None:
         """
         Unified event ingestion for layering-related flags.
@@ -167,6 +170,21 @@ class LayeringScoring:
 
         for side in ['ask', 'bid']:
             score_by_side[side] = score_by_side[side] * decay + self.last_score_by_side[side] * (1 - decay)
+
+
+            #Track min/max
+            self.min_score_by_side[side] = min(self.min_score_by_side[side], score_by_side[side])
+            self.max_score_by_side[side] = max(self.max_score_by_side[side], score_by_side[side])
+
+            #Normalize to 0-1
+            if self.max_score_by_side[side] == self.min_score_by_side[side]:
+                norm = 0.5
+            else:
+                norm = (score_by_side[side] - self.min_score_by_side[side]) / \
+                        (self.max_score_by_side[side] - self.min_score_by_side[side])
+                
+            score_by_side[side] = max(0.0, min(1.0, norm))
+        
 
         self.last_score_by_side = score_by_side
         self.last_time = current_time

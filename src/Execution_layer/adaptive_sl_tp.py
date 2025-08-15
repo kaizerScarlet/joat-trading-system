@@ -45,7 +45,7 @@ class AdaptiveSLTP:
         :param max_gap_multiplier: maximum multiple of base distance allowed for gap.
         :param tp_extension_factor: TP distance = current SL distance * tp_extension_factor (keeps asymmetry).
         """
-        self.alpha_score = AlphaBlender
+        self.alpha_score = AlphaBlender()
         self.ob = OrderBook()
         self.atr_window = atr_window
         self.base_atr_multiplier = base_atr_multiplier

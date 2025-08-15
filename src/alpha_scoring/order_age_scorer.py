@@ -43,6 +43,9 @@ class OrderAgeDistributionScorer:
 
         self.history_by_side = {'ask': [], 'bid':[]} # For z-score
 
+        self.min_score_by_side = {'ask': float('inf'), 'bid': float('inf')}
+        self.max_score_by_side = {'ask': float('-inf'), 'bid': float('-inf')}
+
     def register_events(self, timestamp:int, event_type: str, size: float, distance_from_best: int, side:str='ask') -> None:
         """
         Register all raw order lifecylce time based orders
@@ -89,75 +92,70 @@ class OrderAgeDistributionScorer:
         self.tracker.fill_order(timestamp, event_type, price, size, distance_from_best, side)
 
 
-    def compute_score(self) -> Dict[str,float]:
+    def compute_score(self) -> Dict[str, float]:
         """
-        Compute alpha score based on burst of short-lived orders for both ask and bid side (or unified if side score is disabled)
-
-        :return: {'a': score, 'b': score} if enable_side_scoring = True
-                {'combine': score} otherwise
-        Can handle volume-adjusted, time-decayed, and anomaly-sensitive scoring
+        Compute normalized alpha score (0.0–1.0) based on burst of short-lived orders
+        for both ask and bid side (or combined if side scoring is disabled).
         """
         current_time = int(time.time() * 1000)
         scores = {}
 
         for side in ['ask', 'bid']:
-            # Merge Cancelled + filled by side
             recent_orders = [
                 o for o in self.tracker.cancelled_orders + self.tracker.filled_orders
-                if o.get('side') == side 
-
+                if o.get('side') == side
             ]
 
             if not recent_orders:
-                scores[side] = 0.0
-                continue
-
-
-            # Identify short-lived orders with optional decay + volume
-            short_lived = []
-            for o in recent_orders:
-                age = o['age']
-                if age <= self.short_lived_threshold:
-                    #Apply exponential decay
-                    decay = 0.5 ** ((current_time - o['timestamp'] / self.decay_half_life_ms))
-                    #Size weighting if enabled
-                    weight = o.get('size', 1.0) if self.enable_volume_weighting else 1.0
-                    adjusted_score = weight * decay 
-                    short_lived.append(adjusted_score)
-            
-            if not short_lived:
-                scores[side] = 0.0
-                continue
-
-            short_score_sum = sum(short_lived)
-            total_score_sum = sum(
-                o.get('size', 1.0)
-                for o in recent_orders
-            )if self.enable_volume_weighting else len(recent_orders)
-
-
-            burst_ratio = short_score_sum / max(total_score_sum, 1e-6)
-            #Optional: Anolmaly detection using z-score
-            if self.enable_zscore_detection:
-                self.history_by_side[side].append(burst_ratio)
-                if len(self.history_by_side[side]) > self.zscore_history_window:
-                    self.history_by_side[side] = self.history_by_side[side][-self.zscore_history_window:]
-                hist = self.history_by_side['side']
-                if len(hist) > 1:
-                    z = (burst_ratio - np.mean(hist)) / (np.std(hist) + 1e-6)
-                    scores[side] = self.base_score * max(z, 0)
-                    continue #Use z-score based score
-            
-            #Fallback: standard burst ratio logic
-            if burst_ratio >= self.burst_ratio_threshold:
-                scores[side] = self.base_score * burst_ratio
+                raw_score = 0.0
             else:
-                scores[side] = 0.0
-        
-        # Output foramt
+                short_lived = []
+                for o in recent_orders:
+                    age = o['age']
+                    if age <= self.short_lived_threshold:
+                        # Apply exponential decay
+                        decay = 0.5 ** ((current_time - o['timestamp']) / self.decay_half_life_ms)
+                        weight = o.get('size', 1.0) if self.enable_volume_weighting else 1.0
+                        short_lived.append(weight * decay)
+
+                if short_lived:
+                    short_score_sum = sum(short_lived)
+                    total_score_sum = (
+                        sum(o.get('size', 1.0) for o in recent_orders)
+                        if self.enable_volume_weighting else len(recent_orders)
+                    )
+                    burst_ratio = short_score_sum / max(total_score_sum, 1e-6)
+
+                    if self.enable_zscore_detection:
+                        self.history_by_side[side].append(burst_ratio)
+                        if len(self.history_by_side[side]) > self.zscore_history_window:
+                            self.history_by_side[side] = self.history_by_side[side][-self.zscore_history_window:]
+                        hist = self.history_by_side[side]
+                        if len(hist) > 1:
+                            z = (burst_ratio - np.mean(hist)) / (np.std(hist) + 1e-6)
+                            raw_score = self.base_score * max(z, 0)
+                        else:
+                            raw_score = 0.0
+                    else:
+                        raw_score = self.base_score * burst_ratio if burst_ratio >= self.burst_ratio_threshold else 0.0
+                else:
+                    raw_score = 0.0
+
+            # Track min/max for normalization
+            self.min_score_by_side[side] = min(self.min_score_by_side[side], raw_score)
+            self.max_score_by_side[side] = max(self.max_score_by_side[side], raw_score)
+
+            # Normalize to [0, 1]
+            if self.max_score_by_side[side] == self.min_score_by_side[side]:
+                norm_score = 0.5  # Neutral until variation exists
+            else:
+                norm_score = (raw_score - self.min_score_by_side[side]) / \
+                         (self.max_score_by_side[side] - self.min_score_by_side[side])
+
+            scores[side] = max(0.0, min(1.0, norm_score))
+
         if self.enable_side_scoring:
             return scores
-
         else:
             return {'combined': sum(scores.values()) / 2}
 

@@ -44,6 +44,9 @@ class CancelActivityScorer:
 
         }
 
+        self.min_score_by_side = {'ask': float('inf'), 'bid': float('inf')}
+        self.max_score_by_side = {'ask': float('-inf'), 'bid': float('-inf')}
+
     def register_events(self, timestamp: int, event_type: str, price: float, size: float, distance_from_best: int, side: str = 'ask'):
         """
         Register an order-related event
@@ -96,6 +99,7 @@ class CancelActivityScorer:
 
             raw_score = score / max(event_count, 1)
 
+            #Ema smoothing
             if self.alpha_ema_by_side[side] is None:
                 self.alpha_ema_by_side[side] = raw_score
         
@@ -104,7 +108,20 @@ class CancelActivityScorer:
                     self.ema_decay * raw_score + (1 - self.ema_decay) * self.alpha_ema_by_side[side]
             )
                 
-            scores[side] = round(self.alpha_ema_by_side[side], 4)
+            raw = self.alpha_ema_by_side[side]
+
+            #Track min/max for normalization
+            self.min_score_by_side[side] = min(self.min_score_by_side[side], raw)
+            self.max_score_by_side[side] = max(self.max_score_by_side[side], raw)
+
+            #Normalize to [0, 1]
+            if self.max_score_by_side[side] == self.min_score_by_side[side]:
+                norm = 0.5 #Neutral until variation appears
+            else:
+                norm = (raw - self.min_score_by_side[side]) / \
+                        (self.max_score_by_side[side] - self.min_score_by_side[side])
+                
+            scores[side] = max(0.0, min(1.0, norm))
         return scores
 
     def reset(self):

@@ -114,7 +114,7 @@ class AlphaBlender:
 
         #Normalize weights
         total = sum(new_weights.values())
-        self.dynamic_weights_by_side['side'] = {
+        self.dynamic_weights_by_side[side] = {
             k: v / total if total > 0 else 0.0 
             for k, v in new_weights.items()
             }
