@@ -383,6 +383,24 @@ class ExecutionCoordinator:
          except Exception:
               logger.exception("Error running AdaptiveSLTP.monitor_and_adjust()")
 
+         #Emergency tighten on bad alpha
+         try:
+               debug_info = self.sl_and_tp.debug_state()
+               composite_score = debug_info.get("composite_score", 1.0)
+               if composite_score < 0.55:
+                    logger.warning("Low composite score detected(%.3f) - tighten SL aggressively.", composite_score)
+                    # Re-run monitor with awareness (we could also set a flag inside AdaptiveSLTP to force gap gap min)
+                    self.sl_and_tp.monitor_and_adjust()
+         except Exception:
+              logger.exception("Emergency SL tigthen logic failed")
+     
+         #Log current SL/TP state for traceability
+         try:
+               debug_snapshot = self.sl_and_tp.debug_state()
+               logger.debug("SLTP Debug State: %s", debug_snapshot)
+         except Exception:
+              logger.exception("failed to log AdaptiveSLTP debug state")
+
 
         #Push updated SL/TP to exchange for open positions
          self.monitor_open_positions()

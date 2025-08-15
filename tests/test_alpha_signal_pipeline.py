@@ -43,7 +43,7 @@ class TestAlphaSignalPipeline(unittest.TestCase):
         timestamp = 1700000000
         self.pipeline.blender.compute_alpha_score.return_value = 0.72
         
-        score = self.pipeline.get_alpha_signal(timestamp)
+        score = self.pipeline.get_alpha_signal()
 
         self.pipeline.blender.compute_alpha_score.assert_called_once_with(timestamp)
         self.assertEqual(score, 0.72)

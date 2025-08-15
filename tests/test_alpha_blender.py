@@ -4,7 +4,7 @@ from alpha_scoring.AlphaBlender import AlphaBlender
 
 def test_weighted_average_static():
     blender = AlphaBlender(
-        weights = {'cance_activity': 0.5, 'layering': 0.3, 'order_age': 0.2},
+        weights = {'cancel_activity': 0.5, 'layering': 0.3, 'order_age': 0.2},
         blending_method = 'weighted average',
         adaptive = False
     )
@@ -17,7 +17,7 @@ def test_weighted_average_static():
 
     score = blender.compute_alpha_score()
     expected = (0.6 * 0.5) + (0.4*0.3) + (0.2*0.2)
-    assert abs(score - expected) < 1e-6
+    assert abs(score["bid"] - expected) < 1e-6
 
 
 def test_min_blending():
@@ -33,7 +33,7 @@ def test_min_blending():
         'order_age': 0.3
     })
 
-    assert blender.compute_alpha_score() == 0.3
+    assert blender.compute_alpha_score()['bid']  == 0.3
 
 def test_max_blending():
     blender = AlphaBlender(
@@ -48,12 +48,12 @@ def test_max_blending():
         'order_age': 0.3
     })
 
-    assert blender.compute_alpha_score() == 0.9
+    assert blender.compute_alpha_score()['bid']  == 0.9
 
 def test_adaptive_weights_update():
     blender = AlphaBlender(
         weights = {'cancel_activity': 0.4, 'layering': 0.3, 'order_age': 0.3},
-        blending_method = 'weighted_average',
+        blending_method = 'weighted average',
         adaptive = True
     )
 
@@ -65,7 +65,7 @@ def test_adaptive_weights_update():
         _ = blender.compute_alpha_score()
         blender.update_trade_feedback(signals, pnl)
 
-    weights = blender.dynamic_weights
+    weights = blender.dynamic_weights_by_side['ask']
     assert abs(sum(weights.values()) -1.0) < 1e-6
     assert all(w >= 0 for w in weights.values())
 
@@ -80,5 +80,6 @@ def test_reset():
     blender.update_trade_feedback({'cancel_activity': 0.9}, 50)
     blender.reset()
 
-    assert blender.signal_performance['cancel_activity']['hits'] == 0
-    assert blender.latest_signals == {}
+    for side in ['ask', 'bid']:
+        assert blender.signal_performance_by_side[side]['cancel_activity']['hits'] == 0
+        assert blender.latest_signals_by_side  == {'ask': {}, 'bid': {}}
