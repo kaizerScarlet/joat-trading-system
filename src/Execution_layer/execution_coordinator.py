@@ -15,6 +15,115 @@ from Execution_layer.adaptive_sl_tp import AdaptiveSLTP
 from Execution_layer.stealth_router import StealthRouter
 import asyncio
 
+
+# ---- Execution frictions models (lightweight, pluggable) ----
+import random
+import math
+
+class FeeSchedule:
+    """
+    Store fees in basis points (bps). Keep venue truth here but apply in the coordinator.
+    """
+    def __init__(self, maker_bps: float = 8.0, taker_bps: float = 10.0):
+        self.maker_bps = maker_bps
+        self.taker_bps = taker_bps
+
+    def maker_rate(self) -> float:
+        return self.maker_bps / 1e4
+
+    def taker_rate(self) -> float:
+        return self.taker_bps / 1e4
+
+
+class LatencyModel:
+    """
+    End-to-end one-way latency (decision->exchange). Milliseconds.
+    Use lognormal-ish distribution for rare heavier tails.
+    """
+    def __init__(self, base_ms: float = 20.0, jitter_ms: float = 15.0, p_tail: float = 0.05, tail_multiplier: float = 3.0):
+        self.base_ms = base_ms
+        self.jitter_ms = jitter_ms
+        self.p_tail = p_tail
+        self.tail_multiplier = tail_multiplier
+
+    def sample_ms(self) -> int:
+        draw = random.uniform(-self.jitter_ms, self.jitter_ms)
+        ms = max(0.0, self.base_ms + draw)
+        if random.random() < self.p_tail:
+            ms *= self.tail_multiplier
+        return int(ms)
+
+
+class SlippageModel:
+    """
+    Very simple impact model:
+    - Market orders pay spread/2 + impact proportional to qty vs top-of-book liquidity.
+    - Limit orders: expected fill price nudged toward mid by a tiny mean-reversion term.
+    Hook into your OrderBook for better depth-aware modelling later.
+    """
+    def __init__(self, impact_coeff: float = 0.5):
+        self.impact_coeff = impact_coeff  # multiplier on qty/liquidity
+
+    def expected_market_slip(self, side: str, mid: float, spread: float, qty: float, top_liquidity: float) -> float:
+        half_spread = spread * 0.5
+        impact = 0.0 if top_liquidity <= 0 else self.impact_coeff * (qty / top_liquidity) * spread
+        # BUY moves up, SELL moves down (cost is positive)
+        return half_spread + impact
+
+    def expected_limit_price(self, side: str, base_price: float, mid: float, micro_revert_bps: float = 0.5) -> float:
+        # Small pull toward mid to avoid needlessly crossing
+        k = micro_revert_bps / 1e4
+        if side == "BUY":
+            return max(base_price - k * (base_price - mid), 0.0)
+        else:
+            return max(mid - k * (mid - base_price), 0.0)
+
+
+class QueuePositionModel:
+    """
+    Naive queue estimate: compare our qty to visible top-of-book size.
+    Returns (queue_fraction, approx_fill_prob_per_second)
+    """
+    def __init__(self, base_trade_rate: float = 1.0):
+         #fallback if book doesnt provide activity
+         self.base_trade_rate = base_trade_rate
+
+    def estimate(self, side: str, our_qty: float, tob_qty: float, orderbook = OrderBook) -> tuple[float, float]:
+        """
+        :param side: "BUY" or "SELL"
+        :param our_qty: how much we want to post
+        :param tob_qty: visible top-of-book liquidity
+        :param orderbook: optional Orderbook object
+        :return: (queue_fraction, approx_fill_prob_per_second)
+        """
+
+        if tob_qty <= 0 or our_qty <= 0:
+            return 1.0, 0.0  # unknown -> assume back of queue, no info on fill rate
+        
+        #Fraction of top-of-book we represent
+        qfrac = min(1.0, our_qty / (tob_qty + 1e-9))
+
+        # Activity-based fill intensity ---
+        fill_rate = self.base_trade_rate
+        if orderbook is not None:
+             #Use observed update rate as proxy for consumption
+             upd_rate = orderbook.get_update_rate() #Updates/sec
+             imb = orderbook.get_order_imbalance() #0..1
+             vol = orderbook.get_volatility_estimate()
+
+             #crude heuristic: higher update rate + higher vol -> faster fills
+             #imbalance tilt: if we're on the favoured side, more fills
+             side_factor = imb if side.upper() == "SELL" else (1.0 - imb)
+
+             fill_rate = max(0.1, upd_rate * (1 + 5 * vol) * (1 + side_factor))
+
+        # Scale by our share of the queue
+        p = min(1.0, qfrac * fill_rate)
+        return qfrac, p
+
+
+
+
 logger = logging.getLogger(__name__)
 
 class ExecutionCoordinator:
@@ -66,6 +175,13 @@ class ExecutionCoordinator:
             "max_position_usd": 1000,
             "default_risk_per_trade": 0.01,
             "min_confidence_to_trade": 0.55,
+            "maker_bps": 8.0,
+            "taker_bps": 10.0,
+            "latency_jitter_ms": 20.0,
+            "queue_horizon_sec": 5,
+            "latency_tail_p": 0.05,
+            "latency_tail_mult": 3.0,
+            "impact_coeff": 0.5,        # higher => more market impact assumed
             "order_type_preference": "adaptive" #'market' ,'limit' or adaptive
 
         }
@@ -87,6 +203,25 @@ class ExecutionCoordinator:
              random_delay_range=(0.3, 1.5),
              tick_size=0.01
         )
+
+        # -----Execution Frictions config --------
+        self.fees = FeeSchedule(
+             maker_bps=(self.config.get("maker_bps", 8.0)),
+             taker_bps=(self.config.get("taker_bps", 10.0)),
+        )
+
+        self.latency = LatencyModel(
+             base_ms=self.config.get("latency_base_ms", 20.0),
+             jitter_ms=self.config.get("latency_jitter_ms", 15.0),
+             p_tail=self.config.get("latency_tail_p", 0.05),
+             tail_multiplier=self.config.get("latency_tail_mult", 3.0),
+        )
+
+        self.slippage_model = SlippageModel(
+             impact_coeff=self.config.get("impact_coeff", 0.5)
+        )
+
+        self.queue_model = QueuePositionModel()
          
 
     # Startup reconciliation (loaction: ExecutionCoordiantor)
@@ -148,7 +283,7 @@ class ExecutionCoordinator:
         
             
         #Select order type and price
-        order_type, price = self._choose_order_type_and_price(side)
+        order_type, price = self._choose_order_type_and_price(side, order_size)
 
 
 
@@ -165,6 +300,19 @@ class ExecutionCoordinator:
          qty = fill.get("qty", 0)
          price = fill.get("price", 0.0)
          symbol = fill.get("symbol")
+
+         # --- Fee attribution (NEW) ---
+         liquidity = fill.get("liquidity", None) #"Maker" / "Taker" / None
+         fee_rate = (self.fees.maker_rate() if liquidity == "MAKER" else self.fees.taker_rate())
+
+         notional = abs(qty * price)
+         fee = notional * fee_rate
+
+         try:
+              self.performance_tracker.record_fee(fee) # if your tracker supports it
+     
+         except Exception:
+              pass
 
          # ------Stop loss hit -------
          if order_id == self.sl_order_id:
@@ -295,47 +443,98 @@ class ExecutionCoordinator:
             return order_size
     
 
-    def _choose_order_type_and_price(self, side: str) -> Tuple[str, Optional[float]]:
+    def _choose_order_type_and_price(self, side: str, order_size: float) -> Tuple[str, Optional[float]]:
          """
          Select order type adaptively based on spread and volatility
          """
 
          best_bid = self.orderbook.get_best_price('bid')
          best_ask = self.orderbook.get_best_price('ask')
-         spread = best_ask - best_bid
+         mid = (best_bid + best_ask) * 0.5 if best_bid and best_ask else None
+         spread = (best_ask - best_bid) if best_bid and best_ask else 0.0
 
-
-         if self.config["order_type_preference"] == "market":
+         #if explicit preference, keep it
+         pref = self.config.get("order_type_preference", "adaptive")
+         if pref == "market":
               return "MARKET", None
+         if pref == "limit":
+              return "LIMIT", (best_ask if side == "BUY" else best_bid)
          
-         elif self.config["order_type_preference"] == "limit":
-              return "LIMIT", best_ask if side == "BUY" else best_bid
+         #Adaptive: Compare expected cost (fees + slippage)
+         #Need top of book liquidity if available; if your OrderBook exposes it, use it else fallback
+         top_liq = getattr(self.orderbook, "get_top_liquidity", lambda *_: 0.0)(side)
+         if mid:
+              # rough market slippage for 1 unit, size-aware tweak is applied at execution time
+              exp_slip = self.slippage_model.expected_market_slip(side, mid, spread, qty=1.0, top_liquidity=max(1.0, top_liq))
          else:
-              # Adaptive: if spread small, take with market; if large, place passive
-              if spread / best_ask < 0.0002:    # < 2 bps
-                   return "MARKET", None
-              else:
-                   price = best_ask if side == "BUY" else best_bid
-                   return "LIMIT", price
-    
+              exp_slip = spread * 0.5
+
+         #Fees (bps -> fraction)
+         taker_fee = self.fees.taker_rate()
+         maker_fee = self.fees.maker_rate()
+
+         #Cost if we cross now (market): spread / 2 +impact + taker fee
+         market_cost_bps_equiv = (exp_slip / (mid or best_ask or 1.0)) * 1e4 + taker_fee * 1e4
+
+         #Cost if we rest: maker fee (maybe rebate) but risk of not filling
+         #Crude: if spread is wide, prefer resting; if very tight, prefer taking.
+         rest_cost_bps_equiv = maker_fee * 1e4
+
+         #Queue-Position penalty (bps)
+         if top_liq > 0 and mid:
+              #Estimate queue fraction & per second fill prob
+              qfrac, fill_prob_per_s = self.queue_model.estimate(
+               side=side, 
+               our_qty=order_size,   #actual order size(or slice size)
+               tob_qty=top_liq, 
+               orderbook=self.orderbook #New: inject live activity
+               )
+
+              #Suppose we want at least 80% chance of fill within horizon_h(sec)
+              horizon_s = self.config.get("queue_horizon_sec", 5)
+              exp_fill_prob = 1 -( 1 - fill_prob_per_s) ** horizon_s
+
+              #If probability is low, assign penalty proportional to spread
+              #e.g if only 20% chnace of fill -> 80% of spread is effectively "risk"
+              penalty_bps = (1.0 - exp_fill_prob) * (spread / (mid or 1.0)) * 1e4
+              rest_cost_bps_equiv += penalty_bps
+
+         if market_cost_bps_equiv <= rest_cost_bps_equiv:
+              #cheaper (or safer to cross now)
+              return "MARKET", None
+         else:
+              #cheaper  to rest -> place passive at best, nudge toward mid
+              base = (best_ask if side == "BUY" else best_bid)
+              price = self.slippage_model.expected_limit_price(side, base, mid or base, micro_revert_bps=0.5)
+              return "LIMIT", price
+         
+
     def _execute_order(self, side:str, size:float, order_type: str, price: Optional[float], ts: float, base_sl: float, base_tp: float, side_for_sl:str):
          """
-         Send the order via StealthRouter for stealth execution
+         Send the order via StealthRouter for stealth execution with latency/ fees / slippage awareness
          """
-         try:
-               order_id = self.stealth_router.execute_parent_order(
+         async def _run():
+               try:
+                    # ----latency simulation before first child Leaves the house ---
+                    await asyncio.sleep(self.latency.sample_ms() / 1000.0)
+                    result = self.stealth_router.execute_parent_order(
                         side=side,
                         total_qty=size,
                         order_type=order_type,
                         limit_price=price,
+                        fee_schedule = self.fees,                #New
+                        slippage_model = self.slippage_model,    #New (for per-slice adjustments)
+                        orderbook = self.orderbook     #New (for queue/top-liq)
                    )
-               self.active_entry_order_ids = order_id
-         except Exception as e:
-              logger.exception("StealthRouter execution failed: %s", e)
-              return
-         
+                    #Result = list of slice records; store IDs for later reconciliation
+                    self.active_entry_order_ids = [r["orderId"] for r in result if "orderId" in r]
 
-         self.performance_tracker.record_trade(
+               except Exception as e:
+                    logger.exception("StealthRouter execution failed: %s", e)
+                    return
+         
+               # Record metadata (You can aggregate expected cost here if you like)
+               self.performance_tracker.record_trade(
                    pnl=0.0, #real PnL computed on fill
                    risk = size,
                    reward = 0.0,
@@ -346,17 +545,18 @@ class ExecutionCoordinator:
                         "sl": base_sl,
                         "tp": base_tp,
                    }
-              )
-              #Initialize SL/TP manager state for the new trade
-              # AdaptiveSLTP expects 'bid' (long) 
-         try:
-             self.sl_and_tp.start_trade(side_for_sl)
+               )
+               #Initialize SL/TP manager state for the new trade
+               # AdaptiveSLTP expects 'bid' (long) 
+               try:
+                    self.sl_and_tp.start_trade(side_for_sl)
                 
-         except Exception as e:
-             logger.exception("Failed to initialize AdaptiveSLTP start_trade(): %s", e)
+               except Exception as e:
+                    logger.exception("Failed to initialize AdaptiveSLTP start_trade(): %s", e)
 
-         logger.info("Placed order %s side=%s type=%s price=%s sl=%s tp=%s", self.active_entry_order_ids,
-                     side, size, order_type, price, base_sl, base_tp)
+               logger.info("Placed parent order with %d slices; type=%s price=%s sl=%s tp=%s", len(self.active_entry_order_ids or []),
+                      order_type, price, base_sl, base_tp)
+         asyncio.create_task(_run())
     
 
     # -----------------------

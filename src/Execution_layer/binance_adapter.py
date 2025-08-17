@@ -61,6 +61,12 @@ class BinanceExecutionAdapter:
 
         }
 
+        #Optional: Carry venue fee truth here; applied in coordiantor
+        self.fee_schedule = {
+            "maker_bps": kwargs.get("maker_bps", 8.0),
+            "taker_bps": kwargs.get("taker_bps", 10.0)
+        }
+
     # ------------------ Low-Level helpers --------------------------
     def _sign(self, data: str) -> str:
         """Create a Binance HMAC SHA256 signature"""
@@ -95,6 +101,9 @@ class BinanceExecutionAdapter:
 
     def _now_ms(self) -> int:
         return int(time.time() * 1000)
+    
+    def get_fee_schedule(self) -> Dict[str, float]:
+        return dict(self.fee_schedule)
     
     async def _get_session(self):
         """Ensure we have a running ClientSession"""
@@ -141,7 +150,6 @@ class BinanceExecutionAdapter:
             self,
             symbol: Optional[str] = None,
             side: str = "BUY",
-            size: float = None,
             type: str = "MARKET",
             quantity: Optional[float] = None,
             price: Optional[float] = None,
@@ -162,7 +170,6 @@ class BinanceExecutionAdapter:
             "symbol": (symbol or self.default_symbol).upper(),
             "side": side,
             "type": type,
-            "size": size,
             "price": price,
         }
 

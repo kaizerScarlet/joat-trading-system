@@ -46,7 +46,7 @@ class OrderAgeDistributionScorer:
         self.min_score_by_side = {'ask': float('inf'), 'bid': float('inf')}
         self.max_score_by_side = {'ask': float('-inf'), 'bid': float('-inf')}
 
-    def register_events(self, timestamp:int, event_type: str, size: float, side:str='ask') -> None:
+    def register_events(self, timestamp:int, event_type: str, price:float, size: float, side:str='ask') -> None:
         """
         Register all raw order lifecylce time based orders
         :param timestamp:
@@ -56,28 +56,29 @@ class OrderAgeDistributionScorer:
         :param side:
         """
         if event_type in ['TRUE_FILL', 'PARTIAL_FILL', 'LAYER_TRUE_FILL','LADDER_TRUE_FILL']:
-            self.fill_order(timestamp, event_type, size, side)
+            self.fill_order(timestamp, event_type, price, size, side)
 
         elif event_type in ['CANCEL_SPOOF','BURST_CANCEL', 'PING_CANCEL','LAYER_CANCEL_ONLY', 'LADDER_CANCEL_ONLY','MULTILEVEL_LADDERING']:
-            self.cancel_order(timestamp, event_type, size,side)
+            self.cancel_order(timestamp, event_type, price,  size,side)
 
         else:
             pass
 
-    def cancel_order(self, timestamp: int, event_type: str, size: float, side: str='ask') -> None:
+    def cancel_order(self, timestamp: int, event_type: str,price: float, size: float, side: str='ask') -> None:
         """
         Cancel_Order
         :param  timestamp:
         :param event_type:
+        :param price:
         :param size:
         :param distance_from_best:
         :param side:
 
         :return: None
         """
-        self.tracker.cancel_order(timestamp, event_type, size, side)
+        self.tracker.cancel_order(timestamp, event_type, price, size, side)
 
-    def fill_order(self, timestamp: int, event_type: str, size: float, side:str='ask') -> None:
+    def fill_order(self, timestamp: int, event_type: str, price:float, size: float, side:str='ask') -> None:
         """
         Fill_Order
         :param timestamp:
@@ -89,7 +90,7 @@ class OrderAgeDistributionScorer:
 
         :return: None
         """
-        self.tracker.fill_order(timestamp, event_type, size, side)
+        self.tracker.fill_order(timestamp, event_type, price, size, side)
 
 
     def compute_score(self, side:str) -> Dict[str, float]:

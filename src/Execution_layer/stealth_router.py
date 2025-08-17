@@ -2,6 +2,8 @@ import asyncio
 import random
 from typing import Optional
 import logging
+from market_data.orderbook import OrderBook
+from Execution_layer.execution_coordinator import SlippageModel
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +47,11 @@ class StealthRouter:
 
 
     async def execute_parent_order(self, side:str, total_qty: float,
-                                   order_type: str, limit_price: Optional[float]=None):
+                                   order_type: str, limit_price: Optional[float]=None,
+                                   fee_schedule = None, #New: FeeSchedule (Optional)
+                                   slippage_model = SlippageModel, #New: SlippageModel (Optional)
+                                   orderbook = OrderBook, #New: OrderBook (Optional)
+                                   ):
         """
         Executes a parent order in multiple stealthy slices.
         """
@@ -57,11 +63,57 @@ class StealthRouter:
         placed_order_ids = []
         slice_count = 0
 
+        #helpers from orderbook if available
+        def _best(side_):
+            if hasattr(orderbook, "get_best_price"):
+                if side_.upper() == "BUY":
+                    return orderbook.get_best_price("ask")
+                else:
+                    return orderbook.get_best_price("bid")
+            return None 
+        
+        def _mid():
+            if hasattr(orderbook, "get_best_price"):
+                b = orderbook.get_best_price("bid")
+                a = orderbook.get_best_price('ask')
+                return (a + b) * 0.5 if a and b else None
+            return None
+        
+        def _top_liq(side_):
+            if hasattr(orderbook, "get_top_liquidity"):
+                return orderbook.get_top_liquidity(side_)
+            return 0.0
+
         while remaining_qty > 0 and slice_count < self.max_slices:
             slice_qty = self._choose_slice_size(remaining_qty)
+
+            #Base price from caller / mid
             slice_price = self._choose_slice_price(side, limit_price, order_type)
 
-            #Retry Logic for robustness
+            m = _mid()
+            if order_type == "LIMIT" and slippage_model and m:
+                #Pull slightly toward mid to reduce crossing; final snap is done in _choose_slice_price
+                slice_price = slippage_model.expected_limit_price(side, slice_price, m, micro_revert_bps=0.5)
+            
+            #if MARKET, price stays None (Adapter will send a market)
+            #If LIMIT and price ends up crossing current opposite best, we'll be taker.
+            opp_best = _best(side)
+            liquidity = "MAKER"
+            if order_type == "MARKET":
+                liquidity = "TAKER"
+            elif opp_best is not None:
+                if (side.upper() == "BUY" and slice_price >= opp_best) or (side.upper() == "SELL" and slice_price <= opp_best):
+                    liquidity = "TAKER"
+
+            #Optional: if MARKET, annotate expected slippage for visibility (no price update here)
+            if order_type == "MARKET" and slippage_model and m is not None and opp_best is not None:
+                spread = abs(_best("BUY") - _best("SELL")) if _best("BUY") and _best("SELL") else abs(opp_best - m) * 2
+                exp_slip = slippage_model.expected_market_slip(side, m, spread, qty=slice_qty, top_liquidity= max(1.0, _top_liq(side)))
+                #You can log exp_slip or attach to metadata if you want to collect expected vs realized
+
+
+
+            # ---- Place slice (retry aware) ------
             for attempt in range(3):
                 try:
                     resp =   await self.exchange_client.place_order(
@@ -74,7 +126,13 @@ class StealthRouter:
                 )
 
                     if resp and "orderId" in resp:
-                        placed_order_ids.append(resp["orderId"])
+                        rec = {
+                            "orderId": resp["orderId"],
+                            "qty": slice_qty,
+                            "price": slice_price,
+                            "liquidity": liquidity, # <------ tag for fee attribution upstream
+                        }
+                        placed_order_ids.append(rec)
                         logger.debug(f"Placed slice {slice_count + 1} / {self.max_slices}: "
                                      f"{slice_qty} {side} @ {slice_price} (Remaining: {remaining_qty - slice_qty})")
                         break
@@ -82,7 +140,7 @@ class StealthRouter:
                     logger.warning(f"Retry {attempt + 1} failed placing slice: {e}")
                     await asyncio.sleep(1.0 + attempt)
 
-            #Decrement remaining qty and advance
+            #Decrement remaining qty and advance-
             remaining_qty = max(0, remaining_qty - slice_qty)
             slice_count += 1
 
