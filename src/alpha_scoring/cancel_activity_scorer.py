@@ -47,7 +47,7 @@ class CancelActivityScorer:
         self.min_score_by_side = {'ask': float('inf'), 'bid': float('inf')}
         self.max_score_by_side = {'ask': float('-inf'), 'bid': float('-inf')}
 
-    def register_events(self, timestamp: int, event_type: str, price: float, size: float, distance_from_best: int, side: str = 'ask'):
+    def register_events(self, timestamp: int, event_type: str, price: float, size: float, side: str = 'ask'):
         """
         Register an order-related event
 
@@ -63,10 +63,9 @@ class CancelActivityScorer:
             'type': event_type,
             'price': price,
             'size': size,
-            'distance': distance_from_best,
             })
 
-    def compute_score(self, current_time: int) -> Dict[str, float]:
+    def compute_score(self, current_time: int, side: str) -> Dict[str, float]:
         """
         Compute and return alpha score per side based on recent activity.
 

@@ -45,7 +45,6 @@ class AlphaSignalPipeline:
                     event_type=flag['type'],
                     price = flag['price'],
                     size=flag.get('size', 1.0),
-                    distance_from_best=flag.get('distance', 0),
                     side=flag.get('side', 'ask') #Default to 'ask' if missing
                 )
 
@@ -55,7 +54,6 @@ class AlphaSignalPipeline:
                     event_type = flag['type'],
                     price = flag['price'],
                     size = flag.get('size', 1.0),
-                    distance_from_best=flag.get('distance', 0),
                     side = flag.get('side', 'ask') #Default to 'ask' if missing
                 )
 
@@ -65,16 +63,15 @@ class AlphaSignalPipeline:
                     event_type = flag['type'],
                     price = flag['price'],
                     size = flag.get('size', 1.0),
-                    distance_from_best=flag.get('distance', 0),
                     side = flag.get('side', 'ask')#Default to 'ask' if missing
                 )
 
 
 
         #Compute Scores
-        cancel_score_by_side = self.cancel_scorer.compute_score(timestamp)  #{'a': ...., 'b': ...}
-        layering_score_by_side = self.layering_scorer.compute_score(timestamp)  #{'a': ...., 'b': ...}
-        age_score_by_side = self.age_scorer.compute_score()     #{'a': ...., 'b': ...}
+        cancel_score_by_side = self.cancel_scorer.compute_score(timestamp, side)  #{'a': ...., 'b': ...}
+        layering_score_by_side = self.layering_scorer.compute_score(timestamp, side)  #{'a': ...., 'b': ...}
+        age_score_by_side = self.age_scorer.compute_score(side)     #{'a': ...., 'b': ...}
 
         #Update AlphaBlender for each side separately
         for side in ['ask', 'bid']:

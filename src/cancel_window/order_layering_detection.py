@@ -68,13 +68,12 @@ class OrderLayeringDetection:
             'status': 'active'  # initially active
         })
 
-    def register_cancel(self, timestamp: int, event_type:str, price: float, size: float,distance_from_best:int, side: str):
+    def register_cancel(self, timestamp: int, event_type:str, price: float, size: float, side: str):
         self.cancel_log.append({
             'timestamp': timestamp,
             'event_type': event_type,
             'price': price,
             'size': size,
-            'distance_from_best': distance_from_best,
             'side': side,
         })
 
@@ -85,13 +84,12 @@ class OrderLayeringDetection:
                 order['status'] = 'canceled'
                 break
 
-    def register_fill(self, timestamp: int, event_type: str, price: float,size: float, distance_from_best:int, side: str):
+    def register_fill(self, timestamp: int, event_type: str, price: float,size: float, side: str):
         self.fills_log.append({
             'timestamp': timestamp,
             'event_type': event_type,
             'price': price,
             'size': size,
-            'distance_from_best': distance_from_best,
             'side': side,
 
         })

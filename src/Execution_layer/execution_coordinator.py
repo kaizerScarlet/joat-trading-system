@@ -234,10 +234,12 @@ class ExecutionCoordinator:
                ask_score = alpha.get("ask", 0.0)
 
                if bid_score >= self.config["min_confidence_to_trade"] and bid_score > ask_score:
-                    return "BUY"
+                    #Fade the side with high score
+                    return "SELL"
                     
                elif ask_score >= self.config["min_confidence_to_trade"] and ask_score > bid_score:
-                    return "SELL"
+                    #Fade the side with the high score
+                    return "BUY"
                     
                return None
 

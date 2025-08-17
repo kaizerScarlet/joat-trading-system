@@ -186,6 +186,7 @@ class SimpleCancelWindow(CancelWindow):
                                 'type': 'MULTILEVEL_LADDERING',
                                 'side': side,
                                 'size': size,
+                                'price': price,
                                 'prices': sorted(set(recent_levels)),
                                 'timestamp': ts,
                                 'context': {
@@ -195,6 +196,7 @@ class SimpleCancelWindow(CancelWindow):
                             })
                             self.active_ladder = {
                                 'side': side,
+                                'price': price,
                                 'prices': set(recent_levels),
                                 'timestamp': ts,
                                 'size': size,
