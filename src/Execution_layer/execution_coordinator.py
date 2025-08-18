@@ -150,15 +150,15 @@ class ExecutionCoordinator:
             performance_tracker: PerformanceTracker instance
             config: Optional dict with execution settings
         """
-        self.alpha_pipeline = AlphaSignalPipeline
-        self.risk_engine = DynamicRiskEngine
-        self.throttle_manager = ThrottleCooldownManager
-        self.drawdown_manager = DailyDrawdownManager
-        self.exchange_client = BinanceExecutionAdapter
-        self.performance_tracker = PerformanceTracker
-        self.confidence = SignalConfidenceCalibrator
-        self.dynamic_position_sizer = DynamicPositionSizer
-        self.orderbook = OrderBook
+        self.alpha_pipeline = AlphaSignalPipeline()
+        self.risk_engine = DynamicRiskEngine()
+        self.throttle_manager = ThrottleCooldownManager()
+        self.drawdown_manager = DailyDrawdownManager()
+        self.exchange_client = BinanceExecutionAdapter()
+        self.performance_tracker = PerformanceTracker()
+        self.confidence = SignalConfidenceCalibrator()
+        self.dynamic_position_sizer = DynamicPositionSizer()
+        self.orderbook = OrderBook()
 
 
         #Instantiate adaptive SL/TP and give it the orderbook so it can fetch microstructure score
@@ -445,7 +445,12 @@ class ExecutionCoordinator:
 
     def _choose_order_type_and_price(self, side: str, order_size: float) -> Tuple[str, Optional[float]]:
          """
-         Select order type adaptively based on spread and volatility
+         Select order type adaptively based on spread, volatility, fee, slippage, and Queue-position fill probability
+
+         Hybrid mode:
+               -Start passive (LIMIT) if cost advantage is clear.
+               -Auto-upgrade to MARKET (cross) if queue-fill probability drops below threshold
+               within configured horizon
          """
 
          best_bid = self.orderbook.get_best_price('bid')
@@ -465,7 +470,7 @@ class ExecutionCoordinator:
          top_liq = getattr(self.orderbook, "get_top_liquidity", lambda *_: 0.0)(side)
          if mid:
               # rough market slippage for 1 unit, size-aware tweak is applied at execution time
-              exp_slip = self.slippage_model.expected_market_slip(side, mid, spread, qty=1.0, top_liquidity=max(1.0, top_liq))
+              exp_slip = self.slippage_model.expected_market_slip(side, mid, spread, qty=order_size, top_liquidity=max(1.0, top_liq))
          else:
               exp_slip = spread * 0.5
 
@@ -481,6 +486,7 @@ class ExecutionCoordinator:
          rest_cost_bps_equiv = maker_fee * 1e4
 
          #Queue-Position penalty (bps)
+         exp_fill_prob = 1.0
          if top_liq > 0 and mid:
               #Estimate queue fraction & per second fill prob
               qfrac, fill_prob_per_s = self.queue_model.estimate(
@@ -492,6 +498,8 @@ class ExecutionCoordinator:
 
               #Suppose we want at least 80% chance of fill within horizon_h(sec)
               horizon_s = self.config.get("queue_horizon_sec", 5)
+
+              #Probability of filling within horizon
               exp_fill_prob = 1 -( 1 - fill_prob_per_s) ** horizon_s
 
               #If probability is low, assign penalty proportional to spread
@@ -499,13 +507,21 @@ class ExecutionCoordinator:
               penalty_bps = (1.0 - exp_fill_prob) * (spread / (mid or 1.0)) * 1e4
               rest_cost_bps_equiv += penalty_bps
 
+
+         # ------- Hybrid Decision Logic ------------
+         #if Market is cheaper or safer, take immediately
          if market_cost_bps_equiv <= rest_cost_bps_equiv:
               #cheaper (or safer to cross now)
               return "MARKET", None
          else:
+              #Otherwise, start as Limit, but watch fill probability
+              #Hybrid upgrade path is handled in StealthRouter mid-trade
               #cheaper  to rest -> place passive at best, nudge toward mid
               base = (best_ask if side == "BUY" else best_bid)
               price = self.slippage_model.expected_limit_price(side, base, mid or base, micro_revert_bps=0.5)
+
+              #Store inital expectation for hybrid mode monitoring
+              self.last_expected_fill_prob = exp_fill_prob
               return "LIMIT", price
          
 
