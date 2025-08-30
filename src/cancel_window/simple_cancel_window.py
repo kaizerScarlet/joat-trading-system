@@ -775,7 +775,7 @@ class SimpleCancelWindow(CancelWindow):
         """
         # Base score: bigger reduction and shorter dt -> higher score
         size_score = min(1.0, total_size / 10.0) #Scale by typical level size
-        dt_score = max(0.0, 1.0 - dt /max(1, self.get_window_ms()))
+        dt_score = max(0.0, 1.0 - dt / max(1, self.get_window_ms()))
         #Distance from midprice: cancels closer to mid are more impactful
         if self.midprice is not None:
             dist = abs(price - self.midprice) / max(1e-9, self.midprice)
