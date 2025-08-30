@@ -3,7 +3,7 @@ from cancel_window.order_layering_detection import OrderLayeringDetection
 
 
 def test_minimal_layering():
-    detector = OrderLayeringDetection(time_window_ms=500, price_tick=0.1, cluster_depth=3, min_orders=3)
+    detector = OrderLayeringDetection()
     detector.register_order(1000, 100.0, 5, 'a')
     detector.register_order(1100, 100.1, 5, 'a')
     detector.register_order(1200, 100.2, 5, 'a')
@@ -11,7 +11,7 @@ def test_minimal_layering():
     assert len(clusters) == 1
 
 def test_order_layering_detection():
-    detector = OrderLayeringDetection(time_window_ms=500, price_tick=0.1, cluster_depth=3, min_orders=3)
+    detector = OrderLayeringDetection()
 
     # Register some orders
     detector.register_order(1000, 100.0, 5, 'a')  # Ask
@@ -30,7 +30,7 @@ def test_order_layering_detection():
 
 
 def test_no_layering():
-    detector = OrderLayeringDetection(time_window_ms=500, price_tick=0.1, cluster_depth=3, min_orders=3)
+    detector = OrderLayeringDetection()
 
     # Register some orders that do not form a layering pattern
     detector.register_order(1000, 100.0, 5, 'a')  # Ask

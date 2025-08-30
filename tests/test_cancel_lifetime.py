@@ -221,7 +221,7 @@ def test_no_iceberg_if_cancel_outside_window_ask():
     #3. reduce to 2.0
     cw.process_l2_update({"E": base_ts + 20, "a": [["30090", "2.0"]], "b": []})
     #4. Cancel (set at 0)
-    cw.process_l2_update({"E": base_ts + 30, "a": [["30090", "0"]], "b": []})
+    cw.process_l2_update({"E": base_ts + 100, "a": [["30090", "0"]], "b": []})
     
     flags = cw.flush_flags()
     #No iceberg or spoof because outside window
@@ -239,7 +239,7 @@ def test_no_iceberg_if_cancel_outside_window_bid():
     #3. reduce to 2.0
     cw.process_l2_update({"E": base_ts + 20, "b": [["30090", "2.0"]], "a": []})
     #4. Cancel (set at 0)
-    cw.process_l2_update({"E": base_ts + 30, "b": [["30090", "0"]], "a": []})
+    cw.process_l2_update({"E": base_ts + 100, "b": [["30090", "0"]], "a": []})
     
     flags = cw.flush_flags()
     #No iceberg or spoof because outside window
@@ -371,7 +371,7 @@ class MockOrderBook:
 #@pytest.mark.skip(reason="UPDATE_BOOK, COMPUTE_IMPACT_SCORE not implemented yet, also has incorrect parameters for REGISTER_CANCEL")
 def test_high_impact_cancel():
     cw = SimpleCancelWindow()
-    cw.update_book(mid_price=100.0)
+    cw.update_midprice(mid_price=100.0)
     cw.orderbook = MockOrderBook() #Inject Mock dependency
     cw.fill_events = [{'price': 101.0, 'side':'ask'}] * 3
     cw.register_cancel(price=100.1, side='ask',timestamp=0 ,size=5)
@@ -386,7 +386,7 @@ def test_high_impact_cancel():
 #@pytest.mark.skip(reason="UPDATE_BOOK, COMPUTE_CANCEL_IMPACT_SCORE npt implemented yet, aslo has incorrect parameters for REGISTER_CANCEL")
 def test_low_impact_cancel():
     cw = SimpleCancelWindow()
-    cw.update_book(mid_price=100.0)
+    cw.update_midprice(mid_price=100.0)
     
     cw.orderbook = MockOrderBook() #Inject Mock dependency
     cw.fill_events = [{'price': 101.0, 'side':'ask'}] * 3
@@ -401,13 +401,13 @@ def test_low_impact_cancel():
 #@pytest.mark.skip(reason="UPDATE_BOOK, COMPUTE_CANCEL_IMPACT_SCORE not implemented yet, also has incorrect parameters for REGISTER_CANCEL")
 def test_score_changes_with_book():
     cw = SimpleCancelWindow()
-    cw.update_book(mid_price=100.0)
+    cw.update_midprice(mid_price=100.0)
     cw.orderbook = MockOrderBook() #Inject Mock dependency
     cw.fill_events = [{'price': 101.0, 'side':'ask'}] * 3
     cw.register_cancel(price=101.0, side='ask',timestamp=123456789, size=1)
     score1 = cw.compute_cancel_impact_score(101.0, 'ask')
 
-    cw.update_book(mid_price=100.5) #Price Moves away from cancel
+    cw.update_midprice(mid_price=100.5) #Price Moves away from cancel
     score2 = cw.compute_cancel_impact_score(100.2, 'ask')
 
     assert score2 < score1 # Cancel less relevant now

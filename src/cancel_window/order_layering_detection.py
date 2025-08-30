@@ -52,7 +52,7 @@ class OrderLayeringDetection:
         self.fills_log = [] #Optional: fills for evalution
 
 
-    def register_order(self, timestamp: int,event_type:str, price: float, size: float, side: str):
+    def register_order(self, timestamp: int, price: float, size: float, side: str):
         """
         Register a new order in the system.
         :param timestamp: Order timestamp in milliseconds
@@ -62,7 +62,6 @@ class OrderLayeringDetection:
         """
         self.orders_log.append({
             'timestamp': timestamp,
-            'event_type': event_type,
             'price': price,
             'size': size,
             'side': side,

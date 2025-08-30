@@ -3,6 +3,7 @@ import random
 from typing import Optional
 import logging
 from market_data.orderbook import OrderBook
+from Execution_layer.execution_coordinator import FeeSchedule
 from Execution_layer.execution_coordinator import SlippageModel
 from Execution_layer.execution_coordinator import QueuePositionModel
 from Execution_layer.execution_coordinator import ExecutionCoordinator

@@ -5,8 +5,8 @@ def test_order_age_distribution():
     tracker = OrderAgeDistribution()
 
     # Register some active orders
-    tracker.place_order('order1', 150, 1000, 5, 'a')
-    tracker.place_order('order2', 150, 2000, 10, 'b')
+    tracker.register_event('order1', 150, 1000, 5, 'a')
+    tracker.register_event('order2', 150, 2000, 10, 'b')
 
     # Cancel an order
     tracker.cancel_order('order1', 3000)

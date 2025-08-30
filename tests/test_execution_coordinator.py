@@ -2,6 +2,8 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from Execution_layer.execution_coordinator import ExecutionCoordinator
+from Execution_layer.execution_coordinator import FeeSchedule
+
 
 @pytest.fixture
 def coordinator():

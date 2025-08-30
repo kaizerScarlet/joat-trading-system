@@ -1,4 +1,4 @@
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 from .interface import CancelWindow #samefolder
 from collections import defaultdict
 from datetime import datetime
@@ -70,7 +70,7 @@ class CancelWindowTuner:
         self.ema_latency = max(self.min_ms, min(self.ema_latency, self.max_ms))
     
     def current_window_ms(self) -> int :
-        return int(self.ema_latency or 75)
+        return int(self.ema_latency or self.min_ms)
     
 # ===== Main Class ======
 
@@ -120,15 +120,21 @@ class SimpleCancelWindow(CancelWindow):
         #Track timestamps of cancels per level
         self.cancel_timestamps: Dict[Tuple[str, float], List[int]] = {}
 
-        #Dynamic cancel Density Thresholds
-        self.cancel_density_threshold = AdaptiveThreshold(initial_threshold=3) #Example: 3 cancels in the last 100ms
+        #New: track per-redution timestamps
+        self.reduction_timestamps: Dict[Tuple[str, float], List[int]] = {}
+
+        #Dynamic cancel Density Thresholds per side
+        self.cancel_density_threshold_bid = AdaptiveThreshold(initial_threshold=3) #Example: 3 cancels in the last 100ms
+        self.cancel_density_threshold_ask = AdaptiveThreshold(initial_threshold=3)
+
         self.cancel_density_window_ms = AdaptiveDensityWindow(initial_window_ms=75) #Timewindow to evaluate density 
 
         #----------------------------NOT YET SEEN WHAT IT DOES-----------------------#
         self.cancel_events = []
         self.fill_events = []
-        self.midprice = None    #injected externally by orderbook
+       
         self.orderbook = OrderBook()   # to be injected/ set externally
+        self.midprice = self.orderbook.get_midprice()    #injected externally by orderbook
         #---------------------------------------------------------------------------#
 
         #Add Iceberg Cancel Buffer
@@ -137,6 +143,8 @@ class SimpleCancelWindow(CancelWindow):
         # For detecting multilevel laddering
         self.laddering_buffer = [] #For detecting multilevel laddering
         self.active_ladder = None
+
+
 
 
 
@@ -167,7 +175,9 @@ class SimpleCancelWindow(CancelWindow):
                         if prev_size is not None:
                             reduction = prev_size - size
                             if reduction > 0:
+                                #Tracks if there was a reduction for the iceberg detection
                                 self.reduction_history.setdefault(key,[]).append(reduction)
+                                self.reduction_timestamps.setdefault(key,[]).append(ts)
                     
                     #Update book
                     book[price] = size
@@ -208,7 +218,9 @@ class SimpleCancelWindow(CancelWindow):
                 else:
                     if price in book:
                         removed_size = book[price]
-                        dt = ts - self.add_ts.get(key, ts)
+                        #Use last reduction timestamp instead of first add_ts
+                        last_reduction_ts = self.reduction_timestamps.get(key, [self.add_ts.get(key)])[-1]
+                        dt = ts - last_reduction_ts
 
                         #---Adaptive tuner update -------
                         if self.adaptive and dt >= 0:
@@ -223,21 +235,30 @@ class SimpleCancelWindow(CancelWindow):
                         #Iceberg detection: multiple reductions before cancel
                         reductions = self.reduction_history.get(key, [])
                         if len(reductions) >= 2 and dt < self.get_window_ms():    #Iceberg flag
-                            self._flags.append({
-                                "timestamp": ts,
-                                "type": "ICEBERG_CANCEL",
-                                "side": side,
-                                "price": price,
-                                "size": size,
-                                "reductions": reductions,
-                                "latency_ms": dt,
-                                "context": {
-                                    "window_ms": self.get_window_ms(),
-                                    "cancel_density": self.get_cancel_density(side),
-                                }
-                            })
+                            # Quantitative iceberg scoring
+                            total_reduction = sum(reductions)
+                            iceberg_score = self._quantitative_iceberg_spoof(
+                                side, price, dt, total_reduction, ts
+                            )
+                            if iceberg_score > 0.5: #Threshold for flag
+                                self._flags.append({
+                                    "timestamp": ts,
+                                    "type": "ICEBERG_CANCEL",
+                                    "side": side,
+                                    "price": price,
+                                    "size": size,
+                                    "reductions": reductions,
+                                    "latency_ms": dt,
+                                    "score": round(iceberg_score, 3),
+                                    "context": {
+                                        "window_ms": self.get_window_ms(),
+                                        "cancel_density": self.get_cancel_density(side),
+                                    }
+                                })
 
-                        elif dt < self.get_window_ms(): #spoof flag
+                        elif dt < self.get_window_ms(): 
+                            spoof_score = self._quantitative_iceberg_spoof(side, price, dt, removed_size, ts)
+                            #Short-lived order -> spoof cancel
                             self._flags.append({
                                 "timestamp": ts,
                                 "type": "CANCEL_SPOOF",
@@ -245,12 +266,14 @@ class SimpleCancelWindow(CancelWindow):
                                 'size': size,
                                 "price": price,
                                 "latency_ms": dt,
+                                "score": round(spoof_score, 3),
                                 "context": {
                                     "window_ms": self.get_window_ms(),
                                     "cancel_density": self.get_cancel_density(side)
                                 }
                                 
                             })
+                       
                         # Record cancel timestamp
                         self.cancel_timestamps.setdefault(key, []).append(ts)
                         #check for high cancel density
@@ -264,10 +287,11 @@ class SimpleCancelWindow(CancelWindow):
 
                         vol = self.orderbook.get_estimated_volume(side)
                         volty = self.orderbook.get_volatility_estimate()
-                        self.cancel_density_threshold.update(vol, volty)
+                        threshold = self.cancel_density_threshold_bid if side == "bid" else self.cancel_density_threshold_ask
+                        threshold.update(vol, volty)
 
 
-                        if len(recent_cancels) >= self.cancel_density_threshold.get_threshold():
+                        if len(recent_cancels) >= threshold.get_threshold():
                             self._flags.append({
                                 "timestamp": ts,
                                 "type": "HIGH_CANCEL_DENSITY",
@@ -300,6 +324,7 @@ class SimpleCancelWindow(CancelWindow):
                         book.pop(price, None)
                         self.add_ts.pop(key, None)
                         self.reduction_history.pop(key, None)
+                        self.reduction_timestamps.pop(key, None)
 
         _handle("bid", self.bids, bid_updates)
         _handle("ask", self.asks, asks_updates)
@@ -311,7 +336,13 @@ class SimpleCancelWindow(CancelWindow):
         #Detect excessive cancel density
         density = self.compute_cancel_density()  #you can parameterize this too
         for (side, price), count in density.items():
-            if count >= self.cancel_density_threshold.get_threshold(): #Set a meaningful threshold
+            
+            vol = self.orderbook.get_estimated_volume(side)
+            volty = self.orderbook.get_volatility_estimate()
+            threshold = self.cancel_density_threshold_bid if side == "bid" else self.cancel_density_threshold_ask
+            threshold.update(vol, volty)
+
+            if count >= threshold.get_threshold(): #Set a meaningful threshold
                 self._flags.append({
                     "timestamp": msg["E"],
                     "type": "CANCEL_DENSITY_SPIKE",
@@ -342,14 +373,14 @@ class SimpleCancelWindow(CancelWindow):
         
         #Did we see a cancel at this price recently?
         if key in self.cancel_cache:
-            cancel_ts, removed_size = self.cancel_cache.pop(key)
+            cancel_ts, removed_size = self.cancel_cache[key]
             dt = ts - cancel_ts
 
             if self.adaptive and dt >= 0:
                 self.tuner.update(dt)
                 self.window_ms = self.tuner.current_window_ms()
 
-            if dt < self.window_ms:
+            if dt < self.get_window_ms():
                 flag_type = "TRUE_FILL" if qty >= removed_size else "PARTIAL_FILL"
                 self._flags.append({
                     "timestamp": ts,
@@ -408,6 +439,7 @@ class SimpleCancelWindow(CancelWindow):
 
             self.add_ts.pop(key, None)  # cleanup
             self.reduction_history.pop(key, None)
+            #Keep cancel_cache until it ages out (> window), dont pop immediately
     # -----------------------------------------------------------------------------------------------
     # HELPER METHODS
     # -----------------------------------------------------------------------------------------------
@@ -464,7 +496,9 @@ class SimpleCancelWindow(CancelWindow):
         return cancel_density
     
     def set_cancel_density_params(self, initial_threshold: int, initial_window_ms: int) -> None:
-        self.cancel_density_threshold = AdaptiveThreshold(initial_threshold=3) #Example: 3 cancels in the last 100ms
+        self.cancel_density_threshold_bid = AdaptiveThreshold(initial_threshold=3) #Example: 3 cancels in the last 100ms
+        self.cancel_density_threshold_ask = AdaptiveThreshold(initial_threshold=3)
+
         self.cancel_density_window_ms = AdaptiveDensityWindow(initial_window_ms=75) #Timewindow to evaluate density 
 
 
@@ -508,7 +542,13 @@ class SimpleCancelWindow(CancelWindow):
         """Very rapid cancels across multiple levels (like a cancel sweep)"""
         window_ms = self.get_window_ms()      #Rolling burst window
         recent = [e for e in self.cancel_events if timestamp - e['timestamp'] <= window_ms]
-        if len(recent) >= self.cancel_density_threshold.get_threshold():
+
+        vol = self.orderbook.get_estimated_volume(side)
+        volty = self.orderbook.get_volatility_estimate()
+        threshold = self.cancel_density_threshold_bid if side == "bid" else self.cancel_density_threshold_ask
+        threshold.update(vol, volty)
+
+        if len(recent) >= threshold.get_threshold():
             self._flags.append({
                 'type': 'BURST_CANCEL',
                 'timestamp': timestamp,
@@ -525,7 +565,12 @@ class SimpleCancelWindow(CancelWindow):
         cancels_at_price = [
             e for e in self.cancel_events if e['price'] == price and e['side'] == side
         ]
-        if len(cancels_at_price) >= self.cancel_density_threshold.get_threshold():
+        vol = self.orderbook.get_estimated_volume(side)
+        volty = self.orderbook.get_volatility_estimate()
+        threshold = self.cancel_density_threshold_bid if side == "bid" else self.cancel_density_threshold_ask
+        threshold.update(vol, volty)
+
+        if len(cancels_at_price) >= threshold.get_threshold():
             deltas = [
                 cancels_at_price[i+1]['timestamp'] - cancels_at_price[i]['timestamp']
                 for i in range(len(cancels_at_price)-1)
@@ -560,7 +605,13 @@ class SimpleCancelWindow(CancelWindow):
         price_levels = self.bids.keys() if side == 'bid' else self.asks.keys()
         cancel_levels = [price for (s, price), _ in self.cancel_cache.items() if s == side]
         active_levels = set(price_levels).intersection(cancel_levels)
-        if len(active_levels) >= self.cancel_density_threshold.get_threshold(): #arbitary threshold
+
+        vol = self.orderbook.get_estimated_volume(side)
+        volty = self.orderbook.get_volatility_estimate()
+        threshold = self.cancel_density_threshold_bid if side == "bid" else self.cancel_density_threshold_ask
+        threshold.update(vol, volty)
+        
+        if len(active_levels) >= threshold.get_threshold(): #arbitary threshold
             self._flags.append({
                 'type': 'LAYER_WIPE',
                 'timestamp': timestamp,
@@ -573,12 +624,12 @@ class SimpleCancelWindow(CancelWindow):
 
     def _detect_iceberg_cancel(self, key: Tuple[float, str]) -> None:
         events = self.iceberg_buffer[key]
-        if len(events) <3:
+        if len(events) < 2:
             return
         total_size = sum(e['size'] for e in events)
         unique_ts = len(set(e['timestamp'] for e in events))
-
-        if total_size >= 10.0 and unique_ts > 1:
+        # icebreg if multiple reductions then final cancel, or many small cancels
+        if unique_ts > 1 and (len(events) >= 3 or sum(1 for e in events if e['size'] < total_size) >= 2):
             self._flags.append({
                 "type": "ICEBERG_CANCEL",
                 "price": key[0],
@@ -660,9 +711,17 @@ class SimpleCancelWindow(CancelWindow):
         self.fill_events.clear()
 
     #revist to ensure if this is complete
-    def update_midprice(self):
-        """Update mid price for cancel impact scoring """
-        self.mid_price = self.orderbook.get_midprice()
+    def update_midprice(self, mid_price: Optional[float] = None):
+
+        """Update mid price for cancel impact scoring 
+            If mid_price is provided (as tests do), use it, otherwise pull from the OrderBook.
+        """
+        if mid_price is not None:
+            self.mid_price = float(mid_price)
+        else:
+            if hasattr(self.orderbook, "get_midprice"):
+                self.mid_price = self.orderbook.get_midprice()
+            # fallback: return cached if mock orderbook has no method
         return self.mid_price
 
     
@@ -681,8 +740,10 @@ class SimpleCancelWindow(CancelWindow):
             dist_from_mid = 0.5 # Neutral
         else:
             max_rel_dist = 0.02 #2%
-            rel_dis = abs(price - self.update_midprice()) / self.update_midprice()
-            dist_from_mid = max(0.0, 1.0 - min(rel_dis / max_rel_dist)) # mapped to [0,1]
+            mp = self.update_midprice()
+            # Guard mp == 0 to avoid division warnings in synthetic tests.
+            rel_dis = abs(price - mp) / (mp if mp else 1e-9)
+            dist_from_mid = max(0.0, 1.0 - min(1.0, rel_dis / max_rel_dist)) # mapped to [0,1]
 
         # ------Step 3: Recent Fills at that Price ----
         recent_fills = [f for f in self.fill_events if f['price'] == price and f['side'] == side]
@@ -703,3 +764,23 @@ class SimpleCancelWindow(CancelWindow):
 
         )
         return round(score, 4)
+    
+    # -----------------------------
+    # Quantitative iceberg /spoof scoring helper
+    # --------------------------------------
+
+    def _quantitative_iceberg_spoof(self, side, price, dt, total_size, ts):
+        """
+        Score cancels probabilistically instead of binary flags
+        """
+        # Base score: bigger reduction and shorter dt -> higher score
+        size_score = min(1.0, total_size / 10.0) #Scale by typical level size
+        dt_score = max(0.0, 1.0 - dt /max(1, self.get_window_ms()))
+        #Distance from midprice: cancels closer to mid are more impactful
+        if self.midprice is not None:
+            dist = abs(price - self.midprice) / max(1e-9, self.midprice)
+            dist_score = max(0.0, 1.0 - dist / 0.02)
+        else:
+            dist_score = 0.5
+        score = 0.6 * size_score + 0.3 * dt_score + 0.1 * dist_score
+        return score
