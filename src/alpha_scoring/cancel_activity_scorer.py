@@ -47,7 +47,7 @@ class CancelActivityScorer:
         self.min_score_by_side = {'ask': float('inf'), 'bid': float('inf')}
         self.max_score_by_side = {'ask': float('-inf'), 'bid': float('-inf')}
 
-    def register_events(self, timestamp: int, event_type: str, price: float, size: float, side: str = 'ask'):
+    def register_events(self, timestamp: int, event_type: str, price: float, size: float, side: str):
         """
         Register an order-related event
 

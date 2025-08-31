@@ -240,7 +240,7 @@ class SimpleCancelWindow(CancelWindow):
                             iceberg_score = self._quantitative_iceberg_spoof(
                                 side, price, dt, total_reduction, ts
                             )
-                            if iceberg_score > 0.5: #Threshold for flag
+                            if iceberg_score >= 0.35: #Threshold for flag
                                 self._flags.append({
                                     "timestamp": ts,
                                     "type": "ICEBERG_CANCEL",
@@ -623,19 +623,38 @@ class SimpleCancelWindow(CancelWindow):
             })
 
     def _detect_iceberg_cancel(self, key: Tuple[float, str]) -> None:
+        """
+        Detect iceberg cancels: multiple reductions followed by full cancel.
+        Uses score gated flagging.
+        """
         events = self.iceberg_buffer[key]
-        if len(events) < 2:
+        if len(events) < 2: # need at least 2 reductions + final cancel
             return
+        
         total_size = sum(e['size'] for e in events)
-        unique_ts = len(set(e['timestamp'] for e in events))
+        first_ts = events[0]['timestamp']
+        last_ts = events[-1]['timestamp']
+        dt = last_ts - first_ts
+        side = events[-1]['side']
+        price= events[-1]['price']
+
+        iceberg_score = self._quantitative_iceberg_spoof(
+            side =side,
+            price =price,
+            dt =dt,
+            total_size = total_size,
+            ts = last_ts,
+        )
+
         # icebreg if multiple reductions then final cancel, or many small cancels
-        if unique_ts > 1 and (len(events) >= 3 or sum(1 for e in events if e['size'] < total_size) >= 2):
+        if iceberg_score >= 0.35: # Score gate
             self._flags.append({
                 "type": "ICEBERG_CANCEL",
                 "price": key[0],
                 "side": key[1],
                 "size": total_size,
                 "count": len(events),
+                "score": round(iceberg_score, 3),
                 "timestamp": events[-1]["timestamp"]
 
 
