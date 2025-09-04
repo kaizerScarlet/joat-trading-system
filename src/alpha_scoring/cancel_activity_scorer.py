@@ -1,4 +1,5 @@
 from typing import Dict, List
+import math
 from cancel_window.simple_cancel_window import SimpleCancelWindow
 
 
@@ -47,7 +48,7 @@ class CancelActivityScorer:
         self.min_score_by_side = {'ask': float('inf'), 'bid': float('inf')}
         self.max_score_by_side = {'ask': float('-inf'), 'bid': float('-inf')}
 
-    def register_events(self, timestamp: int, event_type: str, price: float, size: float, side: str):
+    def register_events(self, timestamp: int, event_type: str, price: float, size: float, side: str, distance: float):
         """
         Register an order-related event
 
@@ -63,11 +64,12 @@ class CancelActivityScorer:
             'type': event_type,
             'price': price,
             'size': size,
+            'distance': distance,
             })
 
     def compute_score(self, current_time: int, side: str) -> Dict[str, float]:
         """
-        Compute and return alpha score per side based on recent activity.
+         Compute and return alpha score per side based on recent activity.
 
         :param current_time: current time in ms
         :return: Dict like {'ask': score_a, 'bid': score_b}
@@ -75,10 +77,10 @@ class CancelActivityScorer:
         scores = {}
 
         for side in ['ask', 'bid']:
-            events = self.order_events_by_side[side]    
+            events = self.order_events_by_side[side]
             window_start = current_time - self.window_ms
 
-            #Prune Stale events
+            # prune stale events
             events = [e for e in events if e['timestamp'] >= window_start]
             self.order_events_by_side[side] = events
 
@@ -89,8 +91,8 @@ class CancelActivityScorer:
                 if event['timestamp'] < window_start:
                     continue
                 base = self.base_weights.get(event['type'], 0.0)
-                size_weight = event['size'] / self.reference_size
-                depth_penalty = max(1.0 - event['distance'] * self.tick_penalty, 0.0)
+                size_weight = event['size'] / math.log1p(self.reference_size) #shrinks abnormally large sizes
+                depth_penalty = max(1.0 - event.get('distance', 0) * self.tick_penalty, 0.0)
 
                 weighted_score = base * size_weight * depth_penalty
                 score += weighted_score
@@ -98,30 +100,38 @@ class CancelActivityScorer:
 
             raw_score = score / max(event_count, 1)
 
-            #Ema smoothing
+            # --- EMA smoothing ---
             if self.alpha_ema_by_side[side] is None:
                 self.alpha_ema_by_side[side] = raw_score
-        
+                raw = raw_score
+                # initialize min/max properly
+                self.min_score_by_side[side] = min(0.0, raw)
+                self.max_score_by_side[side] =max(0.0, raw)
             else:
-                self.alpha_ema_by_side[side]  = (
-                    self.ema_decay * raw_score + (1 - self.ema_decay) * self.alpha_ema_by_side[side]
-            )
-                
-            raw = self.alpha_ema_by_side[side]
+                self.alpha_ema_by_side[side] = (
+                    self.ema_decay * raw_score +
+                    (1 - self.ema_decay) * self.alpha_ema_by_side[side]
+                )
+                raw = self.alpha_ema_by_side[side]
+                self.min_score_by_side[side] = min(self.min_score_by_side[side], raw)
+                self.max_score_by_side[side] = max(self.max_score_by_side[side], raw)
 
-            #Track min/max for normalization
-            self.min_score_by_side[side] = min(self.min_score_by_side[side], raw)
-            self.max_score_by_side[side] = max(self.max_score_by_side[side], raw)
-
-            #Normalize to [0, 1]
-            if self.max_score_by_side[side] == self.min_score_by_side[side]:
-                norm = 0.5 #Neutral until variation appears
+            # --- asymmetric normalization ---
+            if raw >= 0:
+                # positives map into [0.5, 1.0]
+                #denom = max(abs(self.max_score_by_side[side]), 1e-9)
+                #scaled = raw / denom
+                norm = 0.5 + min(0.5, raw / self.reference_size)
             else:
-                norm = (raw - self.min_score_by_side[side]) / \
-                        (self.max_score_by_side[side] - self.min_score_by_side[side])
-                
-            scores[side] = max(0.0, min(1.0, norm))
+                # negatives only nudge into [0.5, 0.6]
+                #denom = max(abs(self.min_score_by_side[side]), 1e-9)
+                #scaled = abs(raw) / denom
+                norm = 0.5 + max(-0.1 , raw / (self.reference_size * 2))
+
+            scores[side] = max(0.5, min(1.0, norm))
+
         return scores
+
 
     def reset(self):
         """Clears all logged events and resets EMAs"""

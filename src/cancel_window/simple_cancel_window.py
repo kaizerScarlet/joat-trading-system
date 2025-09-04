@@ -784,7 +784,7 @@ class SimpleCancelWindow(CancelWindow):
         )
         return round(score, 4)
     
-    # -----------------------------
+    # ------------------------------------------
     # Quantitative iceberg /spoof scoring helper
     # --------------------------------------
 
