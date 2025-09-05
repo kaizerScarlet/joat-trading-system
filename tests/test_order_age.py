@@ -5,19 +5,19 @@ def test_order_age_distribution():
     tracker = OrderAgeDistribution()
 
     # Register some active orders
-    tracker.register_event('order1', 150, 1000, 5, 'a')
-    tracker.register_event('order2', 150, 2000, 10, 'b')
+    tracker.register_event(orderid="order_1", timestamp=150, price=1000, size=5, side='a')
+    tracker.register_event(orderid="order_2", timestamp=150, price=2000, size=10, side='b')
 
     # Cancel an order
-    tracker.cancel_order('order1', 3000)
+    tracker.cancel_order(orderid="order_1", timestamp=3000, event_type="CANCEL_SPOOF", price=100.1, size=2.0, distance_from_best=0.2, side="bid")
     assert len(tracker.cancelled_orders) == 1
-    assert tracker.cancelled_orders[0]['order_id'] == 'order1'
+    assert tracker.cancelled_orders[0]['orderid'] == "order_1"
     assert tracker.cancelled_orders[0]['age'] == 2850
 
     # Fill an order
-    tracker.fill_order('order2', 4000)
+    tracker.fill_order(orderid="order_2", timestamp=4000, event_type="TRUE_FILL", price=103.3, size=5.0, distance_from_best=0, side="bid")
     assert len(tracker.filled_orders) == 1
-    assert tracker.filled_orders[0]['order_id'] == 'order2'
+    assert tracker.filled_orders[0]['orderid'] == "order_2"
     assert tracker.filled_orders[0]['age'] == 3850
 
     # Get statistics

@@ -24,8 +24,17 @@ class OrderAgeDistribution:
         self.active_orders: List[Dict] = []  # Maps order_id to timestamp_created
         self.cancelled_orders: List[Dict]    = []  # List of cancelled orders with their ages
         self.filled_orders: List[Dict]  = []  # List of filled orders with their ages
+        self.retention_ms = 300_000
+        self.max_events = 10_000
 
-    def register_event(self, timestamp: int, price: float, size: float, side: str)-> None:
+    def _prune(self, current_time: int):
+        """Hybrid pruning: keep only recent events within retention window + cap max size"""
+        cutoff = current_time - self.retention_ms
+        self.cancelled_orders = [o for o in self.cancelled_orders if o['timestamp'] >= cutoff][-self.max_events:]
+        self.filled_orders = [o for o in self.filled_orders if o['timestamp'] >= cutoff][-self.max_events:]
+
+    
+    def register_event(self, orderid:str, timestamp: int, price: float, size: float, side: str)-> None:
         """
         Place a new order and record its creation time.
         :param order_id: Unique identifier for the order
@@ -36,14 +45,18 @@ class OrderAgeDistribution:
 
         :return: None
         """
+
+        
         self.active_orders.append({
+            'orderid': orderid,
             'timestamp': timestamp,
             'price': price,
             'size': size,
             'side': side,
         })
 
-    def cancel_order(self, timestamp: int, event_type:str, price: float, size: float,distance_from_best:int, side: str) -> None:
+
+    def cancel_order(self, orderid:str, timestamp: int, event_type:str, price: float, size: float,distance_from_best:float, side: str) -> None:
         """
         Cancel an order and record its age and side/price context.
         :param timestamp: Cancellation timestamp in milliseconds
@@ -52,9 +65,10 @@ class OrderAgeDistribution:
         :return : None
         """
         for order in reversed(self.active_orders):
-            if(order['price'] == price and order['side'] == side and order['size'] == size):
+            if order['orderid'] == orderid:
                 age = timestamp - order['timestamp']
                 self.cancelled_orders.append({
+                    'orderid': orderid,
                     'timestamp': timestamp,
                     'event_type': event_type,
                     'price': price,
@@ -67,7 +81,7 @@ class OrderAgeDistribution:
                 break
        
     
-    def fill_order(self, timestamp: int, event_type:str, price: float, size: float,distance_from_best:int, side: str) -> None:
+    def fill_order(self,orderid:str, timestamp: int, event_type:str, price: float, size: float,distance_from_best:int, side: str) -> None:
         """
         Fill an order and record its age and side/price context
         :param order_id: Unique identifier for the order
@@ -76,9 +90,10 @@ class OrderAgeDistribution:
         :return : None
         """
         for order in reversed(self.active_orders):
-            if (order['price'] == price and order['side'] == side and order['size'] == size):
+            if order['orderid'] == orderid:
                 age = timestamp - order['timestamp']
-                self.filled_orders({
+                self.filled_orders.append({
+                    'orderid': orderid,
                     'timestamp': timestamp,
                     'event_type': event_type,
                     'price': price,
@@ -90,7 +105,7 @@ class OrderAgeDistribution:
                 self.active_orders.remove(order)
                 break
 
-    def detect_bursts(self, age_threshold_ms: int = 200, burst_window_ms: int = 1000):
+    def detect_bursts(self, age_threshold_ms: int = 200, burst_window_ms: int = 500):
         """
         
         detects bursts of short-lived orders (potential manipulation or stress).
@@ -116,6 +131,8 @@ class OrderAgeDistribution:
             *(o['timestamp'] for o in self.filled_orders) 
         ], default=0)
 
+        self._prune(current_time)
+
         recent_cancel_burst = [
             o for o in self.cancelled_orders
             if o['age'] <= age_threshold_ms and (current_time - o['timestamp'] <= burst_window_ms)
@@ -126,13 +143,13 @@ class OrderAgeDistribution:
             if o['age'] <= age_threshold_ms and (current_time - o['timestamp'] <= burst_window_ms)
         ]
 
-        burst_by_side = {'a': 0, 'b': 0}
+        burst_by_side = {'ask': 0, 'bid': 0}
         for o in recent_cancel_burst + recent_fill_burst:
             burst_by_side[o['side']] += 1
 
         return {
-            'burst_detected_bid': burst_by_side['b'] >= 3, #Tweak threshold if needed
-            'burst_detected_ask': burst_by_side['a'] >= 3
+            'burst_detected_bid': burst_by_side['bid'] >= 3, #Tweak threshold if needed
+            'burst_detected_ask': burst_by_side['ask'] >= 3
         }
     def detect_short_lived_bursts(self, age_threshold_ms: int = 300, cluster_window_ms: int= 500) -> Dict[str, int]:
         """
@@ -149,9 +166,16 @@ class OrderAgeDistribution:
         :return: Dict with number of detected bursts per side
         """
         from collections import defaultdict
+
+        current_time = max([
+            *(o['timestamp'] for o in self.cancelled_orders),
+            *(o['timestamp'] for o in self.filled_orders)
+        ], default=0)
+
+        self._prune(current_time)
         
         bursts = defaultdict(int)
-        for side in ['a', 'b']:
+        for side in ['ask', 'bid']:
             #Combine filled and cancelled orders on the same side that were short-lived
             short_lived = [
                 o for o in self.cancelled_orders + self.filled_orders
@@ -183,6 +207,13 @@ class OrderAgeDistribution:
         """
         from numpy import mean, std, quantile
 
+        current_time = max([
+            *(o['timestamp'] for o in self.cancelled_orders),
+            *(o['timestamp'] for o in self.filled_orders)
+        ], default = 0)
+
+        self._prune(current_time)
+
         cancelled_ages = [order['age'] for order in self.cancelled_orders]
         filled_ages = [order['age'] for order in self.filled_orders]
 
@@ -196,7 +227,7 @@ class OrderAgeDistribution:
         }
 
         #Now add side-specific stats
-        for side in ['b', 'a']:
+        for side in ['bid', 'ask']:
             side_cancelled = [o['age'] for o in self.cancelled_orders if o.get('side') == side]
             side_filled = [o['age'] for o in self.filled_orders if o.get('side') == side]
 

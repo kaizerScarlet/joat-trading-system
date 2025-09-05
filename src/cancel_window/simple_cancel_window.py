@@ -4,9 +4,10 @@ from collections import defaultdict
 from datetime import datetime
 import time 
 import math 
-
+import uuid
 
 from market_data.orderbook import OrderBook
+from cancel_window.order_age_distribution import OrderAgeDistribution
 
 # ====== adaptive_density_tuner.py
 class AdaptiveDensityWindow:
@@ -100,6 +101,7 @@ class SimpleCancelWindow(CancelWindow):
         self.adaptive = True
         self.window_ms = None
         self.tuner = CancelWindowTuner() if self.adaptive else None
+        self.order_age_tracker = OrderAgeDistribution()
 
         self._flags: List[Dict[str,Any]] = []
 
@@ -145,7 +147,9 @@ class SimpleCancelWindow(CancelWindow):
         self.active_ladder = None
 
 
-
+    def _next_id(self) -> str:
+        """Generate Unique ID for orders"""
+        return str(uuid.uuid4())
 
 
 
@@ -192,8 +196,10 @@ class SimpleCancelWindow(CancelWindow):
                         self.laddering_buffer = [e for e in self.laddering_buffer if ts - e['timestamp'] <= self.get_window_ms()]
                         recent_levels =[e['price'] for e in self.laddering_buffer if e['side'] == side]
                         if len(set(recent_levels)) >= 3:
+                            orderid = self._next_id() #Auto generate
                             self._flags.append({
                                 'type': 'MULTILEVEL_LADDERING',
+                                'orderid': orderid,
                                 'side': side,
                                 'size': size,
                                 'price': price,
@@ -204,6 +210,9 @@ class SimpleCancelWindow(CancelWindow):
                                     "cancel_density": self.get_cancel_density(side),
                                 }
                             })
+                            #Pass along to OrderAgeDistribution to tag
+                            self.order_age_tracker.cancel_order(orderid=orderid, timestamp=ts, event_type='MULTILEVEL_LADDERING', price=price, size=size, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
+                            
                             self.active_ladder = {
                                 'side': side,
                                 'price': price,
@@ -241,8 +250,10 @@ class SimpleCancelWindow(CancelWindow):
                                 side, price, dt, total_reduction, ts
                             )
                             if iceberg_score >= 0.35: #Threshold for flag
+                                orderid = self._next_id() #Auto generate
                                 self._flags.append({
                                     "timestamp": ts,
+                                    'orderid': orderid,
                                     "type": "ICEBERG_CANCEL",
                                     "side": side,
                                     "price": price,
@@ -255,12 +266,16 @@ class SimpleCancelWindow(CancelWindow):
                                         "cancel_density": self.get_cancel_density(side),
                                     }
                                 })
+                                #Pass along to OrderAgeDistribution to tag
+                                self.order_age_tracker.cancel_order(orderid=orderid, timestamp=ts, event_type="ICEBERG_CANCEL", price=price, size=size, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
 
                         elif dt < self.get_window_ms(): 
                             spoof_score = self._quantitative_iceberg_spoof(side, price, dt, removed_size, ts)
                             #Short-lived order -> spoof cancel
+                            orderid = self._next_id() #Auto generate
                             self._flags.append({
                                 "timestamp": ts,
+                                'orderid': orderid,
                                 "type": "CANCEL_SPOOF",
                                 "side": side,
                                 'size': size,
@@ -273,6 +288,8 @@ class SimpleCancelWindow(CancelWindow):
                                 }
                                 
                             })
+                            #Pass along to OrderAgeDistribution to tag
+                            self.order_age_tracker.cancel_order(orderid=orderid, timestamp=ts, event_type="CANCEL_SPOOF", price=price, size=size, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
                        
                         # Record cancel timestamp
                         self.cancel_timestamps.setdefault(key, []).append(ts)
@@ -292,7 +309,9 @@ class SimpleCancelWindow(CancelWindow):
 
 
                         if len(recent_cancels) >= threshold.get_threshold():
+                            orderid = self._next_id() #Auto generate
                             self._flags.append({
+                                'orderid': orderid,
                                 "timestamp": ts,
                                 "type": "HIGH_CANCEL_DENSITY",
                                 "side": side,
@@ -308,7 +327,9 @@ class SimpleCancelWindow(CancelWindow):
 
                         #Check for ladder cancels
                         if self.active_ladder and key[0] == self.active_ladder['side'] and price in self.active_ladder['prices']:
+                            orderid = self._next_id() #Auto generate
                             self._flags.append({
+                                'orderid': orderid,
                                 'type': 'LADDER_CANCEL_ONLY',
                                 'side': side,
                                 'size': size,
@@ -319,6 +340,8 @@ class SimpleCancelWindow(CancelWindow):
                                     "Cancel Density": self.get_cancel_density(side)
                                 }
                             })
+                            #Pass along to OrderAgeDistribution to tag
+                            self.order_age_tracker.cancel_order(orderid=orderid, timestamp=ts, event_type='LADDER_CANCEL_ONLY', price=price, size=size, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
 
                         # Clean up
                         book.pop(price, None)
@@ -343,8 +366,10 @@ class SimpleCancelWindow(CancelWindow):
             threshold.update(vol, volty)
 
             if count >= threshold.get_threshold(): #Set a meaningful threshold
+                orderid = self._next_id() #Auto generate
                 self._flags.append({
                     "timestamp": msg["E"],
+                    'orderid': orderid,
                     "type": "CANCEL_DENSITY_SPIKE",
                     "side": side,
                     "price": price,
@@ -382,7 +407,9 @@ class SimpleCancelWindow(CancelWindow):
 
             if dt < self.get_window_ms():
                 flag_type = "TRUE_FILL" if qty >= removed_size else "PARTIAL_FILL"
+                orderid = self._next_id() #Auto generate
                 self._flags.append({
+                    'orderid': orderid,
                     "timestamp": ts,
                     "type": flag_type,
                     "side": side,
@@ -394,13 +421,17 @@ class SimpleCancelWindow(CancelWindow):
                                     "Cancel Density": self.get_cancel_density(side)
                                 }
                 })
+                #Pass along to OrderAgeDistribution to tag
+                self.order_age_tracker.fill_order(orderid=orderid, timestamp=ts, event_type=flag_type, price=price, size=qty, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
 
             else:
                 #Fallback detection: fill seen at meaningful price w/o cancel
                 best_price = self.orderbook.get_best_price('ask' if side == 'bid' else 'bid')
                 spread = abs(best_price - price)
                 if spread < 2 * self.orderbook.get_tick_size(): # Near top of book
+                    orderid = self._next_id() #Auto generate
                     self._flags.append({
+                        'orderid': orderid,
                         'timestamp': ts,
                         'type': 'FILL_NO_CANCEL_CACHE',
                         'side': side,
@@ -411,6 +442,9 @@ class SimpleCancelWindow(CancelWindow):
                                     "Cancel Density": self.get_cancel_density(side)
                                 }
                     })
+                    #Pass along to OrderAgeDistribution to tag
+                    self.order_age_tracker.fill_order(orderid=orderid, timestamp=ts, event_type='FILL_NO_CANCEL_CACHE', price=price, size=qty, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
+            
             self.fill_events.append({
                 'timestamp': ts,
                 'price': price,
@@ -422,7 +456,9 @@ class SimpleCancelWindow(CancelWindow):
             if self.active_ladder and price in self.active_ladder['prices'] and side == self.active_ladder['side']:
                 self.active_ladder['filled'] = True
                 fill_type = "LADDER_TRUE_FILL" if qty >= self.orderbook.get_level_size(price, side) else 'LADDER_PARTIAL_FILL'
+                orderid = self._next_id() #Auto generate
                 self._flags.append({
+                    'orderid': orderid,
                     'timestamp': ts,
                     'type': fill_type,
                     'side': side,
@@ -433,6 +469,8 @@ class SimpleCancelWindow(CancelWindow):
                                     "Cancel Density": self.get_cancel_density(side)
                                 }
                 })
+                #Pass along to OrderAgeDistribution to tag
+                self.order_age_tracker.fill_order(orderid=orderid, timestamp=ts, event_type=flag_type, price=price, size=qty, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
 
             if self.active_ladder and ts -self.active_ladder['timestamp'] > 300:
                 self.active_ladder =  None
@@ -549,7 +587,9 @@ class SimpleCancelWindow(CancelWindow):
         threshold.update(vol, volty)
 
         if len(recent) >= threshold.get_threshold():
+            orderid = self._next_id() #Auto generate
             self._flags.append({
+                'orderid': orderid,
                 'type': 'BURST_CANCEL',
                 'timestamp': timestamp,
                 'cancel_count': len(recent),
@@ -559,6 +599,8 @@ class SimpleCancelWindow(CancelWindow):
                 'window_ms': window_ms,
                
             })
+            #Pass along to OrderAgeDistribution to tag
+            self.order_age_tracker.cancel_order(orderid=orderid, timestamp=timestamp, event_type='BURST_CANCEL', price=price, size=size, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
 
     def detect_ping_cancel(self, timestamp: int, price: float, side: str, size: float):
         "Tracks orders placed for a very short time (ping for liquidity)"
@@ -576,7 +618,9 @@ class SimpleCancelWindow(CancelWindow):
                 for i in range(len(cancels_at_price)-1)
             ]
             if any(delta < self.get_window_ms() for delta in deltas): #Arbitary ping delta
+                orderid = self._next_id() #Auto generate
                 self._flags.append({
+                    'orderid': orderid,
                     'type': 'PING_CANCEL',
                     'timestamp': timestamp,
                     'cancel_count': len(cancels_at_price),
@@ -586,12 +630,16 @@ class SimpleCancelWindow(CancelWindow):
                     'window_ms': self.get_window_ms()
 
                 })
+                #Pass along to OrderAgeDistribution to tag
+                self.order_age_tracker.cancel_order(orderid=orderid, timestamp=timestamp, event_type='PING_CANCEL', price=price, size=size, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
 
     def detect_reposting_behavior(self, timestamp: int, price: float, side:str, size: float):
         """Tracks cancel at price and re-add at same/ nearby price (spoofing/layering)"""
         book = self.bids if side == 'bid' else self.asks
         if (side, price) in self.cancel_cache and price in book:
+            orderid = self._next_id() #Auto generate
             self._flags.append({
+                'orderid': orderid,
                 'type': 'REPOSTING_BEHAVIOUR',
                 'timestamp': timestamp,
                 'price': price,
@@ -599,6 +647,8 @@ class SimpleCancelWindow(CancelWindow):
                 'size': size,
                 'timestamp': timestamp
             })
+            #Pass along to OrderAgeDistribution to tag
+            self.order_age_tracker.cancel_order(orderid=orderid, timestamp=timestamp, event_type='REPOSTING_BEHAVIOUR', price=price, size=size, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
 
     def detect_layer_wipe(self, timestamp: int, price: float, side:str, size:float):
         """Cancelling several price at once in a single direction(layer wipe)"""
@@ -612,7 +662,9 @@ class SimpleCancelWindow(CancelWindow):
         threshold.update(vol, volty)
         
         if len(active_levels) >= threshold.get_threshold(): #arbitary threshold
+            orderid = self._next_id() #Auto generate
             self._flags.append({
+                'orderid': orderid,
                 'type': 'LAYER_WIPE',
                 'timestamp': timestamp,
                 'price': price,
@@ -621,6 +673,8 @@ class SimpleCancelWindow(CancelWindow):
                 'price_levels': list(active_levels),
                 'timestamp': int(time.time()*1000)
             })
+            #Pass along to OrderAgeDistribution to tag
+            self.order_age_tracker.cancel_order(orderid=orderid, timestamp=timestamp, event_type='LAYER_WIPE', price=price, size=size, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
 
     def _detect_iceberg_cancel(self, key: Tuple[float, str]) -> None:
         """
@@ -648,7 +702,9 @@ class SimpleCancelWindow(CancelWindow):
 
         # icebreg if multiple reductions then final cancel, or many small cancels
         if iceberg_score >= 0.35: # Score gate
+            orderid = self._next_id() #Auto generate
             self._flags.append({
+                'orderid': orderid,
                 "type": "ICEBERG_CANCEL",
                 "price": key[0],
                 "side": key[1],
@@ -659,6 +715,8 @@ class SimpleCancelWindow(CancelWindow):
 
 
             })
+            #Pass along to OrderAgeDistribution to tag
+            self.order_age_tracker.cancel_order(orderid=orderid, timestamp=dt, event_type='ICEBERG_CANCEL', price=key[0], size=total_size, distance_from_best=abs(self.orderbook.get_best_price(side) - key[0]), side=side)
 
             #Clear to avoid double reporting
             self.iceberg_buffer[key].clear()
