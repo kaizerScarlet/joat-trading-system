@@ -46,7 +46,7 @@ class OrderAgeDistributionScorer:
         self.min_score_by_side = {'ask': float('inf'), 'bid': float('inf')}
         self.max_score_by_side = {'ask': float('-inf'), 'bid': float('-inf')}
 
-    def register_events(self, timestamp:int, event_type: str, price:float, size: float, side:str='ask') -> None:
+    def register_events(self, orderid: str, timestamp:int, event_type: str, price:float, size: float, distance_from_best: float, side:str='ask') -> None:
         """
         Register all raw order lifecylce time based orders
         :param timestamp:
@@ -56,15 +56,15 @@ class OrderAgeDistributionScorer:
         :param side:
         """
         if event_type in ['TRUE_FILL', 'PARTIAL_FILL', 'LAYER_TRUE_FILL','LADDER_TRUE_FILL']:
-            self.fill_order(timestamp, event_type, price, size, side)
+            self.fill_order(orderid, timestamp, event_type, price, size, distance_from_best, side)
 
         elif event_type in ['CANCEL_SPOOF','BURST_CANCEL', 'PING_CANCEL','LAYER_CANCEL_ONLY', 'LADDER_CANCEL_ONLY','MULTILEVEL_LADDERING']:
-            self.cancel_order(timestamp, event_type, price,  size,side)
+            self.cancel_order(orderid, timestamp, event_type, price,  size,distance_from_best,side)
 
         else:
             pass
 
-    def cancel_order(self, timestamp: int, event_type: str,price: float, size: float, side: str='ask') -> None:
+    def cancel_order(self,orderid: str, timestamp: int, event_type: str,price: float, size: float, distance_from_best: float, side: str) -> None:
         """
         Cancel_Order
         :param  timestamp:
@@ -76,9 +76,9 @@ class OrderAgeDistributionScorer:
 
         :return: None
         """
-        self.tracker.cancel_order(timestamp, event_type, price, size, side)
+        self.tracker.cancel_order(orderid = orderid, timestamp= timestamp, event_type=event_type, price=price, size=size, distance_from_best=distance_from_best, side=side)
 
-    def fill_order(self, timestamp: int, event_type: str, price:float, size: float, side:str='ask') -> None:
+    def fill_order(self,orderid: str, timestamp: int, event_type: str, price:float, size: float, distance_from_best: float, side:str) -> None:
         """
         Fill_Order
         :param timestamp:
@@ -90,7 +90,7 @@ class OrderAgeDistributionScorer:
 
         :return: None
         """
-        self.tracker.fill_order(timestamp, event_type, price, size, side)
+        self.tracker.fill_order(orderid= orderid, timestamp=timestamp, event_type=event_type, price=price, size=size, distance_from_best=distance_from_best, side=side)
 
 
     def compute_score(self, side:str) -> Dict[str, float]:
