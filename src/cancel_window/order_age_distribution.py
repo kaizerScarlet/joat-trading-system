@@ -21,7 +21,7 @@ from typing import List, Dict
 
 class OrderAgeDistribution:
     def __init__(self):
-        self.active_orders: List[Dict] = []  # Maps order_id to timestamp_created
+        self.active_orders: Dict[str, Dict] = {}  # Maps order_id to timestamp_created
         self.cancelled_orders: List[Dict]    = []  # List of cancelled orders with their ages
         self.filled_orders: List[Dict]  = []  # List of filled orders with their ages
         self.retention_ms = 300_000
@@ -46,14 +46,14 @@ class OrderAgeDistribution:
         :return: None
         """
 
-        
-        self.active_orders.append({
+        """Add a new active order"""
+        self.active_orders[orderid] = {
             'orderid': orderid,
             'timestamp': timestamp,
             'price': price,
             'size': size,
             'side': side,
-        })
+        }
 
 
     def cancel_order(self, orderid:str, timestamp: int, event_type:str, price: float, size: float,distance_from_best:float, side: str) -> None:
@@ -64,21 +64,21 @@ class OrderAgeDistribution:
         
         :return : None
         """
-        for order in reversed(self.active_orders):
-            if order['orderid'] == orderid:
-                age = timestamp - order['timestamp']
-                self.cancelled_orders.append({
-                    'orderid': orderid,
-                    'timestamp': timestamp,
-                    'event_type': event_type,
-                    'price': price,
-                    'size': size,
-                    'distance_from_best': distance_from_best,
-                    'side': side,
-                    'age': age,
+        """Mark order as cancelled and compute its age"""
+        order = self.active_orders.pop(orderid, None)
+        if order:
+            age = timestamp - order['timestamp']
+            self.cancelled_orders.append({
+                'orderid': orderid,
+                'timestamp': timestamp,
+                'event_type': event_type,
+                'price': price,
+                'size': size,
+                'distance_from_best': distance_from_best,
+                'side': side,
+                'age': age,
                 })
-                self.active_orders.remove(order)
-                break
+                
        
     
     def fill_order(self,orderid:str, timestamp: int, event_type:str, price: float, size: float,distance_from_best:int, side: str) -> None:
@@ -89,21 +89,20 @@ class OrderAgeDistribution:
 
         :return : None
         """
-        for order in reversed(self.active_orders):
-            if order['orderid'] == orderid:
-                age = timestamp - order['timestamp']
-                self.filled_orders.append({
-                    'orderid': orderid,
-                    'timestamp': timestamp,
-                    'event_type': event_type,
-                    'price': price,
-                    'size': size,
-                    'distance_from_best': distance_from_best,
-                    'side': side,
-                    'age': age
-                })
-                self.active_orders.remove(order)
-                break
+        """Mark order as filled and compute its age"""
+        order = self.active_orders.pop(orderid, None)
+        if order:
+            age = timestamp - order['timestamp']
+            self.filled_orders.append({
+                'orderid': orderid,
+                'timestamp': timestamp,
+                'event_type': event_type,
+                'price': price,
+                'size': size,
+                'distance_from_best': distance_from_best,
+                'side': side,
+                'age': age
+            })
 
     def detect_bursts(self, age_threshold_ms: int = 200, burst_window_ms: int = 500):
         """
