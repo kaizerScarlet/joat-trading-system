@@ -53,6 +53,25 @@ class FillThresholdTuner:
     def get_ratio(self) -> float :
         return self.ratio
 
+class CancelWindowTunerForLayering:
+    def __init__(self, ema_alpha: float = 0.2, min_ms: int = 100, max_ms: int = 350):
+        self.ema_latency = None
+        self.ema_alpha = ema_alpha
+        self.min_ms = min_ms
+        self.max_ms = max_ms 
+
+    def update(self, latency_ms: float):
+        if self.ema_latency is None:
+            self.ema_latency = latency_ms
+        else:
+            self.ema_latency = (
+                self.ema_alpha * latency_ms + (1 - self.ema_alpha) * self.ema_latency
+            )
+        self.ema_latency = max(self.min_ms, min(self.ema_latency, self.max_ms))
+    
+    def current_window_ms(self) -> int :
+        return int(self.ema_latency or self.min_ms)
+
 # ===== CancelWindowTuner (inline) ========
 class CancelWindowTuner:
     def __init__(self, ema_alpha: float = 0.2, min_ms: int = 50, max_ms: int = 75):

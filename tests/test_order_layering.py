@@ -1,43 +1,116 @@
-import pytest 
+import pytest
+import time
 from cancel_window.order_layering_detection import OrderLayeringDetection
 
-
-def test_minimal_layering():
-    detector = OrderLayeringDetection()
-    detector.register_order(1000, 100.0, 5, 'a')
-    detector.register_order(1100, 100.1, 5, 'a')
-    detector.register_order(1200, 100.2, 5, 'a')
+def test_minimal_layering_detected():
+    detector = OrderLayeringDetection(
+        price_tick=0.1,
+        cluster_depth=2,
+        min_orders = 2,
+        min_size_per_order=0.0
+    )
+    now = int(time.time() * 1000)
+    detector.tuner.max_ms = 1000 # ✅ override default max
+    detector.tuner.min_ms = 1000
+    detector.tuner.update(1000)  # ✅ override default window
+    detector.register_order(orderid='o1', timestamp = now,price=100.0, size= 5, side = 'ask')
+    detector.register_order(orderid='o2', timestamp = now + 100,price=100.1, size= 5, side = 'ask')
+    detector.register_order(orderid='o3', timestamp= now + 200,price = 100.2, size = 5, side= 'ask')
     clusters = detector.detect_layering()
     assert len(clusters) == 1
+    assert clusters[0]['side'] == 'ask'
+    assert clusters[0]['cluster_size'] == 3
 
-def test_order_layering_detection():
-    detector = OrderLayeringDetection()
+def test_layering_with_cancels_and_fills():
+    detector = OrderLayeringDetection(price_tick=0.1,
+        cluster_depth=2,
+        min_orders = 2,
+        min_size_per_order=0.0
+        )
+    now = int(time.time() * 1000)
+    detector.tuner.update(1000)  # ✅ override default window
+    detector.register_order('o1', now, 100.0, 5, 'ask')
+    detector.register_order('o2', now + 20, 100.1, 5, 'ask')
+    detector.register_order('o3', now + 40, 100.2, 5, 'ask')
+    detector.register_cancel('o1', now + 60, 'CANCEL_SPOOF', 100.0, 5, 'ask')
+    detector.register_fill('o2', now + 80, 'TRUE_FILL', 100.1, 5, 'ask')
 
-    # Register some orders
-    detector.register_order(1000, 100.0, 5, 'a')  # Ask
-    detector.register_order(1020, 100.1, 5, 'a')  # Ask
-    detector.register_order(1200, 100.2, 1, 'b')  # Bid
-    detector.register_order(1220, 100.2, 0, 'b')  # Cancel bid
-    detector.register_order(1400, 100.3, 4, 'a')  # Ask
-    detector.register_order(1425, 100.3, 0, 'a')  # Cancel ask
-
-    # Detect layering
     clusters = detector.detect_layering()
+    assert len(clusters) == 1
+    assert clusters[0]['label'] in ['LAYER_TRUE_FILL', 'LAYER_PARTIAL_FILL']
+    assert clusters[0]['cluster_size'] == 3
 
-    assert len(clusters) == 2
-    assert clusters[0]['side'] == 'a'
-    assert len(clusters[0]['cluster']) >= 3
+def test_no_layering_due_to_price_gap():
+    detector = OrderLayeringDetection(  price_tick=0.1,
+        cluster_depth=2,
+        min_orders = 2,
+        min_size_per_order=0.0
+        )
+    now = int(time.time() * 1000)
+    detector.register_order('o1', now, 100.0, 5, 'ask')
+    detector.register_order('o2', now + 20, 100.5, 5, 'ask')
+    detector.register_order('o3', now + 40, 101.0, 5, 'ask')
 
-
-def test_no_layering():
-    detector = OrderLayeringDetection()
-
-    # Register some orders that do not form a layering pattern
-    detector.register_order(1000, 100.0, 5, 'a')  # Ask
-    detector.register_order(1020, 100.5, 5, 'a')  # Ask
-    detector.register_order(1200, 100.2, 1, 'b')  # Bid
-
-    # Detect layering
     clusters = detector.detect_layering()
-
     assert len(clusters) == 0
+
+def test_no_layering_due_to_time_gap():
+    detector = OrderLayeringDetection(
+          price_tick=0.1,
+        cluster_depth=2,
+        min_orders = 2,
+        min_size_per_order=0.0,
+        retention_ms=100)
+    now = int(time.time() * 1000)
+    detector.register_order('o1', now, 100.0, 5, 'ask')
+    detector.register_order('o2', now + 200, 100.1, 5, 'ask')
+    detector.register_order('o3', now + 400, 100.2, 5, 'ask')
+
+    clusters = detector.detect_layering()
+    assert len(clusters) == 0
+
+def test_layering_filtered_by_size():
+    now =int(time.time() * 1000)
+    detector = OrderLayeringDetection(min_size_per_order=5.0)
+    detector.register_order('o1', now, 100.0, 1.0, 'ask')
+    detector.register_order('o2', now + 10, 100.1, 1.0, 'ask')
+    detector.register_order('o3', now + 20, 100.2, 1.0, 'ask')
+
+    clusters = detector.detect_layering()
+    assert len(clusters) == 0
+
+def test_layering_detected_on_bid_side():
+    detector = OrderLayeringDetection()
+    now = int(time.time() * 1000)
+    detector.register_order('o1', now, 99.9, 5, 'bid')
+    detector.register_order('o2', now + 10, 99.8, 5, 'bid')
+    detector.register_order('o3', now + 20, 99.7, 5, 'bid')
+    detector.register_cancel('o1', now + 30, 'CANCEL_SPOOF', 99.9, 5, 'bid')
+
+    clusters = detector.detect_layering()
+    assert len(clusters) == 1
+    assert clusters[0]['side'] == 'bid'
+    assert clusters[0]['label'] == 'LAYER_CANCEL_ONLY'
+
+def test_overlapping_clusters_are_not_double_counted():
+    detector = OrderLayeringDetection()
+    now = int(time.time() * 1000)
+    detector.register_order('o1', now, 100.0, 5, 'ask')
+    detector.register_order('o2', now + 10, 100.01, 5, 'ask')
+    detector.register_order('o3', now + 20, 100.02, 5, 'ask')
+    detector.register_order('o4', now + 30, 100.03, 5, 'ask')
+    detector.register_order('o5', now + 40, 100.04, 5, 'ask')
+
+    clusters = detector.detect_layering()
+    assert len(clusters) == 1  # Should not double-count overlapping orders
+
+def test_reset_clears_all_logs():
+    detector = OrderLayeringDetection()
+    now = int(time.time() * 1000)
+    detector.register_order('o1', now, 100.0, 5, 'ask')
+    detector.register_cancel('o1', now + 50, 'CANCEL_SPOOF', 100.0, 5, 'ask')
+    assert len(detector.orders_log) == 1
+    detector.reset()
+    assert len(detector.orders_log) == 0
+    assert len(detector.cancel_log) == 0
+    assert len(detector.fills_log) == 0
