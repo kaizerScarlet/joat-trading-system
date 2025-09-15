@@ -7,13 +7,17 @@ class LayeringScoring:
                  min_orders_in_cluster: int = 3, min_order_density: float = 1.0, max_price_range_bps = 100.0,
                  skew_threshold: float = 1.0, repost_window_ms: int = 500, repost_price_tolerance: float = 1):
         """
-        Scoring module for order layering behaviour.
+        Initializes the behavioural scoring enigine for layering detection
 
-        :param reference_size: Normalizing size for order weighting
-        :param base_score: Base multiplier per cluster
-        :param skew_threshold: side Skew ratio threshold
-        :param repost_window_ms: Time window to detect reposting
-        :param repost_price_tolerance: Max price difference to consider repost
+        Parameters:
+
+        -reference_size: Normalizing factor for order size
+        -base_score: Base multiplier for scoring clusters
+        -decay_half_life: Time-based decay for behavioural memory
+        -cluster_window_ms: Time window for clustering orders
+        -skew_threshold: Volume imbalance threshold for side dominance
+        -repost_window_ms: Time window to detect reposting behaviour
+        -repost_price_tolerance: Price proximity threshold for repost detection
 
 
         :returns:
@@ -26,36 +30,60 @@ class LayeringScoring:
         self.reference_size = reference_size
         self.base_score = base_score
         self.layering_detector = OrderLayeringDetection()
-        self.last_score =  0.0
         self.decay_half_life = decay_half_life
         self.cluster_window_ms = cluster_window_ms
+
+        #Event buffers for behavioral analysis
         self.recent_orders = []
         self.recent_cancels = []
 
+        #Threshold for cluster filtering
         self.min_orders_in_cluster = min_orders_in_cluster
         self.min_order_density = min_order_density
-
         self.max_price_range_bps = max_price_range_bps
 
+        #Behavioral skew and repost detection
         self.skew_threshold = skew_threshold
         self.repost_window_ms = repost_window_ms
         self.repost_price_tolerance = repost_price_tolerance
 
+        #Score tracking and normalization
         self.last_score_by_side = {'ask': 0.0, 'bid': 0.0}
         self.last_time = None
-
         self.min_score_by_side = {'ask': float('inf'), 'bid': float('inf')}
         self.max_score_by_side = {'ask': float('-inf'), 'bid': float('-inf')}
+        self.score_volatility_by_side = {'ask': 0.0, 'bid': 0.0}
+        self.cluster_density_by_side = {'ask': 0, 'bid': 0}
+        self.debug = False # Toggle for diagnostic output
+    
+    @property
+    def adaptive_retention_ms(self) -> int:
+        """
+        Dynamically adjusts retention window based on market tempo.
+        faster tempo -> shorter memory, slower tempo -> longer memory
+        """
+        latency = self.layering_detector.tuner.ema_latency or 300
+        return max(5_000, min(int(latency * 10), 300_000))
+
+    def _prune(self, current_time: int):
+        """
+        Removes stale orders and cancels outside the adaptive rentention window
+        Ensures scoring is based on recent behavioral activity
+        """
+        cutoff = current_time - self.adaptive_retention_ms
+        self.recent_orders = [o for o in self.recent_orders if o['timestamp'] >= cutoff]
+        self.recent_cancels = [c for c in self.recent_cancels if c['timestamp'] >= cutoff]
+
 
     def register_events(self, timestamp: int, event_type: str, price: float, size: float, side: str) -> None:
         """
         Unified event ingestion for layering-related flags.
-        Automatically dispatches based  on event type
-        :param timestamp:
-        :param event_type:
-        :param price:
-        :param size:
-        :param side:
+        Routes fills and cancels to appropriate handlers.
+        -param timestamp:
+        -param event_type:
+        -param price:
+        -param size:
+        -param side:
         """
         if event_type in ['LAYER_CANCEL_ONLY', 'LADDER_CANCEL_ONLY', 'LAYER_WIPE', 'MULTILEVEL_LADDERING']:
             self.register_cancel(timestamp,event_type, price, size, side)
@@ -68,7 +96,7 @@ class LayeringScoring:
             pass
 
     def register_cancel(self, timestamp: int,event_type: str, price: float, size: float, side: str) -> None:
-        #Track Cancelled Orders for reposting detection
+        #Track Cancelled Orders for reposting detection and behavioural scoring
         """
         Track LAYERING and LADDERING CANCEL and WIPE ORDERS
         :param timestamp:
@@ -78,7 +106,7 @@ class LayeringScoring:
         :param distance_from_best:
         :pram side:
         """
-        self.layering_detector.register_cancel(timestamp, event_type, price, size, side)
+        #self.layering_detector.register_cancel(timestamp, event_type, price, size, side)
         self.recent_cancels.append({
             'timestamp': timestamp,
             'event_type': event_type,
@@ -88,7 +116,7 @@ class LayeringScoring:
         })
 
     def register_fill(self, timestamp: int,event_type: str, price: float, size: float, side: str) -> None:
-        #Track filled orders
+        #Track filled orders for behavioral scoring and repost correlation
         """
         Track LAYERING and LADDERING  TRUE and PARTIAL FILLS
         :param timestamp:
@@ -100,7 +128,7 @@ class LayeringScoring:
 
         :returns: None
         """
-        self.layering_detector.register_fill(timestamp, event_type, price, size, side)
+        #self.layering_detector.register_fill(timestamp, event_type, price, size, side)
         self.recent_orders.append({
             'timestamp': timestamp,
             'event_type': event_type,
@@ -109,48 +137,61 @@ class LayeringScoring:
             'side': side
         })
 
-    def compute_score(self, current_time: int, side: str) -> Dict[str, float]:
+    def compute_score(self, current_time: int) -> Dict[str, float]:
         """
-        Compute alpha scores per side based on layering clusters, skew, and decay.
-        :param current_time:
+        Computes normalized behavioural scores per side based on:
+        -Cluster aggression
+        -Fill behaviour
+        -Temporal decay
+        -Volume Skew
+        -Volatility and density tracking
 
         :returns:
                 Dict[str, float]
         """
+        self._prune(current_time)
         suspicious_clusters = self.layering_detector.detect_layering()
         score_by_side = {'ask': 0.0, 'bid': 0.0}
         side_volume = defaultdict(float)
+        self.cluster_density_by_side = {'ask': 0, 'bid': 0}
 
+
+        #Weight mapping for different spoofing behaviours
+        label_weights = {
+            'LAYER_CANCEL_ONLY': 1.0,
+            'LADDER_CANCEL_ONLY': 1.0,
+            'LAYER_WIPE': 1.0,
+            'MULTILEVEL_LADDERING': 1.0,
+            'LAYER_PARTIAL_FILL': 0.5,
+            'LADDER_PARTIAL_FILL': 0.5,
+            'LAYER_TRUE_FILL': 0.25,
+            'LADDER_TRUE_FILL': 0.25
+        }
+
+        #Score each cluster based on aggression, fill behaviour, and cancel latency
         for cluster in suspicious_clusters:
             label = cluster['label']
             orders = cluster['cluster']
             size_factor = sum(o['size'] for o in orders) / self.reference_size
             duration_penalty = 1.0 
 
-            if 'durations' in cluster and cluster['durations']:
+            if cluster.get('durations'):
                 avg_cancel_time = sum(cluster['durations']) / len(cluster['durations'])
                 duration_penalty = max(1.0 - (avg_cancel_time / self.decay_half_life), 0.1)
 
-            if label == 'LAYER_CANCEL_ONLY' or 'LADDER_CANCEL_ONLY' or 'LAYER_WIPE' or 'MULTILEVEL_LADDERING':
-                base = self.base_score
-            elif label == 'LAYER_PARTIAL_FILL' or 'LADDER_PARTIAL_FILL':
-                base = self.base_score * 0.5
-            elif label == 'LAYER_TRUE_FILL' or 'LADDER_TRUE_FILL':
-                base = self.base_score * 0.25 
-            else:
-                base = 0.0
-            
+            base =  self.base_score * label_weights.get(label, 0.0)
             contribution = base * size_factor * duration_penalty
 
-            #Assign contribution to correct side
-            side_in_cluster = {o['side'] for o in orders}
-            for side in side_in_cluster:
-                score_by_side[side] += contribution
-                side_volume[side] += sum(o['size'] for o in orders if o['side'] == side)
+            #Assign contribution to correct side and track cluster density
+            for s in ['ask', 'bid']:
+                if any(o['side'] == s for o in orders):
+                    score_by_side[s] += contribution
+                    side_volume[s] += sum(o['size'] for o in orders if o['side'] == s)
+                    self.cluster_density_by_side[s] += 1
 
-        #Skew scoring bonus
-        bid_volume = side_volume.get('bid', 0.0)
-        ask_volume = side_volume.get('ask', 0.0)
+        #Apply Skew scoring bonus if one side dominates volume
+        bid_volume = side_volume['bid']
+        ask_volume = side_volume['ask']
         total_volume = bid_volume + ask_volume
 
         if total_volume > 0:
@@ -159,38 +200,54 @@ class LayeringScoring:
                 dominant_side = 'bid' if bid_volume > ask_volume else 'ask'
                 score_by_side[dominant_side] += self.base_score * 0.5
 
-        #Apply decay to each side
+        #Apply decay to each side to smooth score transitions over time
         if self.last_time is None:
             self.last_time = current_time
 
         decay = 0.5 ** ((current_time - self.last_time)/ self.decay_half_life)
 
-        for side in ['ask', 'bid']:
-            score_by_side[side] = score_by_side[side] * decay + self.last_score_by_side[side] * (1 - decay)
+        for s in ['ask', 'bid']:
+            raw_score = score_by_side[s]
+            decayed_score = raw_score * decay + self.last_score_by_side[s] * (1 - decay)
 
 
-            #Track min/max
-            self.min_score_by_side[side] = min(self.min_score_by_side[side], score_by_side[side])
-            self.max_score_by_side[side] = max(self.max_score_by_side[side], score_by_side[side])
+            #Track min/max and update for normalization
+            self.min_score_by_side[s] = min(self.min_score_by_side[s], decayed_score)
+            self.max_score_by_side[s] = max(self.max_score_by_side[s], decayed_score)
 
             #Normalize to 0-1
-            if self.max_score_by_side[side] == self.min_score_by_side[side]:
+            if self.max_score_by_side[s] == self.min_score_by_side[s]:
                 norm = 0.5
             else:
-                norm = (score_by_side[side] - self.min_score_by_side[side]) / \
-                        (self.max_score_by_side[side] - self.min_score_by_side[side])
+                norm = (decayed_score - self.min_score_by_side[s]) / \
+                        (self.max_score_by_side[s] - self.min_score_by_side[s])
                 
-            score_by_side[side] = max(0.0, min(1.0, norm))
-        
+            score_by_side[s] = max(0.0, min(1.0, norm))
 
+
+            # Track volatility (change in score)
+            self.score_volatility_by_side[s] = abs(score_by_side[s] - self.last_score_by_side[s])
+        
+        # Optional debug output
+        if self.debug:
+            print(f"[DEBUG] Raw Score: {score_by_side}")
+            print(f"[DEBUG] Volatility: {self.score_volatility_by_side}")
+            print(f"[DEBUG] Cluster density: {self.cluster_density_by_side}")
+            print(f"[DEBUG] Decay factor: {decay}")
+
+        #Update state for next tick
         self.last_score_by_side = score_by_side
         self.last_time = current_time
         return score_by_side
 
     def reset(self):
+        """
+        Clears all internal state for fresh scoring cycle.
+        """
         self.layering_detector.reset()
         self.last_score_by_side = {'ask': 0.0, 'bid': 0.0}
         self.recent_orders = []
         self.recent_cancels = []
         self.last_time = None
-
+        self.score_volatility_by_side= {'ask': 0.0, 'bid':0.0}
+        self.cluster_density_by_side = {'ask': 0, 'bid': 0}
