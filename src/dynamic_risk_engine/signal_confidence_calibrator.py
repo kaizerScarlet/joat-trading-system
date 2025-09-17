@@ -54,6 +54,14 @@ class SignalConfidenceCalibrator:
         """
         return self.compute_adjusted_confidence()
     
+    def get_confidence_breakdown(self) -> dict:
+        recent = self.signal_history[-10:]
+        streak = [s['was_correct'] for s in recent]
+        return {
+            'confidence': self.get_current_confidence(),
+            'recent_streak': streak
+        }
+
 
     def reset(self):
         """

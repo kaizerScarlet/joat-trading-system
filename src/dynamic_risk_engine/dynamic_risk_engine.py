@@ -5,7 +5,7 @@ from dynamic_risk_engine.dynamic_position_sizer import DynamicPositionSizer
 from dynamic_risk_engine.throttle_cooldown_manager import ThrottleCooldownManager
 from Execution_layer.binance_adapter import BinanceExecutionAdapter
 from market_data.orderbook import OrderBook
-from dynamic_risk_engine.market_regime_classifier import  CognitiveMarketRegimeClassifier, MarketRegime
+from dynamic_risk_engine.cognitive_market_regime_classifier import  CognitiveMarketRegimeClassifier, MarketRegime
 from cancel_window.simple_cancel_window import SimpleCancelWindow
 from datetime import datetime 
 
@@ -40,8 +40,16 @@ class DynamicRiskEngine:
 
         self.current_regime = MarketRegime.UNKNOWN
 
-        self.initial_balance = self.binance_adapter.get_account_balance()
-        self.max_risk_per_trade = self.performance_tracker.win_rate() - ((1 - self.performance_tracker.win_rate() / self.performance_tracker.win_rate()))
+        self.initial_balance = None #Will be set asynchronously
+        self.max_risk_per_trade = None
+
+    async def initialize(self):
+        """
+        Initialize the engine with the current account balance.
+        """
+        await self.dynamic_position_sizer.initialize()
+        self.initial_balance = await self.binance_adapter.get_account_balance()
+        self.max_risk_per_trade = self.dynamic_position_sizer.max_risk_per_trade
 
     def update_market_regime(self):
         self.current_regime = self.market_regime_classifier.update_regime()
@@ -62,7 +70,7 @@ class DynamicRiskEngine:
         return self.max_risk_per_trade
 
     
-    def get_position_size(self, stop_loss_distance: float) -> float:
+    async def get_position_size(self, stop_loss_distance: float) -> float:
         """
         Get optimal position size based on current edge and risk conditions.
         :param stop_loss_distnace: price units from entry to stop loss
@@ -74,7 +82,7 @@ class DynamicRiskEngine:
         rr_ratio = self.performance_tracker.average_rrr()
 
 
-        base_size = self.dynamic_position_sizer.calculate_position_size(
+        base_size = await self.dynamic_position_sizer.calculate_position_size(
             stop_loss_distance=stop_loss_distance,
             signal_confidence=confidence,
             win_rate=win_rate,
@@ -109,8 +117,12 @@ class DynamicRiskEngine:
         )
         self.throttle_cooldown_manager.register_trade_result(pnl)
 
-    
-    def reset(self):
+    def get_risk_curve_value(self) -> float:
+        confidence = self.signal_confidence_calibrator.get_current_confidence()
+        risk_curve = lambda c: 0.005 + (c ** 2) * 0.045
+        return round(risk_curve(confidence), 4)
+
+    async def reset(self):
         """
         Reset all internal state (e.g., start of day
         )"""
@@ -122,11 +134,12 @@ class DynamicRiskEngine:
             max_risk_per_trade=self.max_risk_per_trade,
             account_balance=self.initial_balance
         )
+        await self.dynamic_position_sizer.initialize()
         self.throttle_cooldown_manager =  ThrottleCooldownManager()
         self.current_regime = MarketRegime.UNKNOWN
 
 
-    def get_diagnostic(self) -> dict:
+    async def get_diagnostic(self) -> dict:
         """
         Return full risk risk enigine diagnostic state.
         Usefule for debugging and monitoring, or audit logs
@@ -135,7 +148,7 @@ class DynamicRiskEngine:
         return {
 
             'can_trade': self.can_trade(),
-            'position_size_for_1_sl': self.get_position_size(stop_loss_distance=1.0),
+            'position_size_for_1_sl': await self.get_position_size(stop_loss_distance=1.0),
             'current_confidence': self.signal_confidence_calibrator.get_current_confidence(),
             'current_win_rate': round(self.performance_tracker.win_rate(), 4),
             'average_rrr': round(self.performance_tracker.average_rrr(), 4),
@@ -145,10 +158,11 @@ class DynamicRiskEngine:
             'equity_curve': self.performance_tracker.get_equity_curve(),
             'market_regime': self.current_regime.value,
             'regime_duration_seconds': self.market_regime_classifier.get_regime_duration_seconds(),
-            'regime_history_tail': [r.value for r in list(self.market_regime_classifier.regime_history)[-5:]],
-            'regime_duration_seconds': self.market_regime_classifier.get_regime_duration_seconds(),
             'regime_stability': self.market_regime_classifier.get_regime_stability(),
             'regime_history_tail': [r.value for r in list(self.market_regime_classifier.regime_history)[-5:]],
+            'confidence_breakdown': self.signal_confidence_calibrator.get_confidence_breakdown(),
+            'risk_curve_value': self.get_risk_curve_value(),
+            
 
         }
     
