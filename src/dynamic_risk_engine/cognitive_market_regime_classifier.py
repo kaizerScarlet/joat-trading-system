@@ -116,6 +116,8 @@ class CognitiveMarketRegimeClassifier:
         return (datetime.now() - self.last_regime_change).total_seconds()
     
     def get_regime_stability(self) -> float:
+        if not self.regime_history:
+            return 0.0  #Ensure that we don't divide by zero
         current = self.get_current_regime()
         return round(self.regime_history.count(current) / len(self.regime_history), 2)
 

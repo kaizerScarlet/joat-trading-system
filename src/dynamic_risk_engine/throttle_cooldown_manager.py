@@ -166,7 +166,7 @@ class ThrottleCooldownManager:
         """
         self.loss_streak = 0
         self.cooldown_until = 0
-        self.trade_timestamps = []
+        self.trade_timestamps = deque()
 
 
     def _cleanup(self):

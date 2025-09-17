@@ -48,6 +48,10 @@ class DynamicRiskEngine:
         Initialize the engine with the current account balance.
         """
         await self.dynamic_position_sizer.initialize()
+
+        #Explicitly initialize drawdown manager to set drawdown_limit
+        await self.daily_drawdown_manager.initialize()
+
         self.initial_balance = await self.binance_adapter.get_account_balance()
         self.max_risk_per_trade = self.dynamic_position_sizer.max_risk_per_trade
 
@@ -78,15 +82,10 @@ class DynamicRiskEngine:
         """
 
         confidence = self.signal_confidence_calibrator.get_current_confidence()
-        win_rate = self.performance_tracker.win_rate()
-        rr_ratio = self.performance_tracker.average_rrr()
 
 
         base_size = await self.dynamic_position_sizer.calculate_position_size(
-            stop_loss_distance=stop_loss_distance,
-            signal_confidence=confidence,
-            win_rate=win_rate,
-            rr_ratio=rr_ratio
+            stop_loss_distance=stop_loss_distance
         )
 
         #Regime-aware throttle
@@ -130,11 +129,16 @@ class DynamicRiskEngine:
         self.performance_tracker.reset()
         self.daily_drawdown_manager.reset_daily_drawdown(datetime.now())
         self.signal_confidence_calibrator.reset()
-        self.dynamic_position_sizer = DynamicPositionSizer(
-            max_risk_per_trade=self.max_risk_per_trade,
-            account_balance=self.initial_balance
-        )
+
+        self.dynamic_position_sizer = DynamicPositionSizer()
+        self.dynamic_position_sizer.max_risk_per_trade = self.max_risk_per_trade
+        self.dynamic_position_sizer.account_balance = self.binance_adapter
+        self.dynamic_position_sizer.drawdown.account_balance = self.binance_adapter
         await self.dynamic_position_sizer.initialize()
+
+        self.daily_drawdown_manager.account_balance = self.binance_adapter
+        await self.daily_drawdown_manager.initialize()
+
         self.throttle_cooldown_manager =  ThrottleCooldownManager()
         self.current_regime = MarketRegime.UNKNOWN
 

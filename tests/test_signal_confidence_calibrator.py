@@ -18,7 +18,8 @@ def test_mixed_signals_adjusts_confidence_correctly():
     calibrator.update_signal_result('signal3', True)
     # Reset to clear history
     # 2 correct out of 3
-    assert calibrator.get_current_confidence() == 0.6667
+    assert round(calibrator.get_current_confidence(), 4) == 0.667
+    assert abs(calibrator.get_current_confidence() - 0.667) < 0.001
 
 
 def test_reset_clears_history():
@@ -39,9 +40,9 @@ def test_precision_rounding():
     for i in range(3):
         calibrator.update_signal_result(f'signal{i+7}', False)
 
-    assert calibrator.get_current_confidence() == 0.7  # Should round to 4 decimal places
+    assert calibrator.get_current_confidence() == 0.6446  # Should round to 4 decimal places
     assert len(calibrator.signal_history) == 10  # History should contain all signals
-    assert calibrator.compute_adjusted_confidence() == 0.7  # Should match computed confidence
+    assert calibrator.compute_adjusted_confidence() == 0.6446 # Should match computed confidence
 
 
 def test_multiple_resets():

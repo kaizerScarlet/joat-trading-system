@@ -14,7 +14,7 @@ def test_initial_state(manager):
     manager.reset()
     assert manager.loss_streak == 0
     assert manager.cooldown_until == 0
-    assert manager.trade_timestamps == []
+    assert len(manager.trade_timestamps) == 0
     assert manager.can_trade() is True
 
 
@@ -98,4 +98,22 @@ def test_no_cooldown_on_profitable_trades(manager):
     assert manager.is_in_cooldown() is False  # Should not be in cooldown after profitable trades
     assert manager.loss_streak == 0  # Loss streak should not increase
     assert manager.can_trade() is True  # Should be able to trade
+
+
+def test_diagnostic_snapshot(manager):
+    manager.reset()
+    manager.register_trade_result(-50)
+    diag = manager.get_diagnostic()
+    assert diag["loss_streak"] == 1
+    assert diag["in_cooldown"] is False
+    assert diag["conversion_rate"] >= 0.0
+    assert diag["fill_weight"] >= 0.0
+
+
+def test_throttle_triggered_by_order_volume(manager):
+    manager.reset()
+    for _ in range(manager.max_orders_per_10s + 1):
+        manager.record_order(volume=1.0)
+    assert manager.is_throttled() is True
+
     

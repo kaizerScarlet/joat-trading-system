@@ -2,6 +2,7 @@
 
 from typing import Tuple, Optional
 import numpy as np
+import time
 from alpha_scoring.AlphaBlender import AlphaBlender
 from market_data.orderbook import OrderBook
 
@@ -34,6 +35,7 @@ class AdaptiveSLTP:
         min_gap_ticks: float = 0.01,
         max_gap_multiplier: float = 5.0,
         tp_extension_factor: float = 1.5,
+        alpha_weights: Optional[dict] = None
     ):
         """
         :param orderbook: OrderBook-like instance (must expose required getters).
@@ -45,7 +47,13 @@ class AdaptiveSLTP:
         :param max_gap_multiplier: maximum multiple of base distance allowed for gap.
         :param tp_extension_factor: TP distance = current SL distance * tp_extension_factor (keeps asymmetry).
         """
-        self.alpha_score = AlphaBlender()
+        self.alpha_score = AlphaBlender(
+            alpha_weights or {
+                "order_age": 0.33,
+                "cancel_activity": 0.33,
+                "layering": 0.34
+            }
+        )
         self.ob = OrderBook()
         self.atr_window = atr_window
         self.base_atr_multiplier = base_atr_multiplier
@@ -67,6 +75,8 @@ class AdaptiveSLTP:
         self.entry_price: Optional[float] = None
         self.stop_loss: Optional[float] = None
         self.take_profit: Optional[float] = None
+        self.sl_tightening_events = []  # List of (timestamp, old_sl, new_sl)
+
 
         # store original initial risk distance for break-even checks
         self.original_risk: Optional[float] = None
@@ -220,14 +230,13 @@ class AdaptiveSLTP:
 
     # --------------------------
     # Monitor / adjust (call on every tick)
-    # --------------------------
     def monitor_and_adjust(self) -> None:
         """
         Call this function on every tick (or whenever midprice/ob metrics update).
         It will:
-          - move SL to break-even once original_risk is achieved
-          - compute trailing gap and update SL (only tighten; never loosen)
-          - update TP dynamically (extend outward when momentum/support strong)
+        - move SL to break-even once original_risk is achieved
+        - compute trailing gap and update SL (only tighten; never loosen)
+        - update TP dynamically (extend outward when momentum/support strong)
         """
         if not self.in_trade:
             return
@@ -238,28 +247,30 @@ class AdaptiveSLTP:
 
         composite = self._compute_composite_score()
 
-        # 1) Break-even: if price moved by at least original_risk, move SL to entry
+        # 1) Break-even logic
         if self.original_risk is not None and self.entry_price is not None:
             if self.side == "bid" and current_price >= self.entry_price + self.original_risk:
-                # move SL to entry (profit protected)
                 self.stop_loss = max(self.stop_loss, round(self.entry_price, 8))
             elif self.side == "ask" and current_price <= self.entry_price - self.original_risk:
                 self.stop_loss = min(self.stop_loss, round(self.entry_price, 8))
 
-        # 2) Compute the desired trailing gap and propose new SL based on it
+        # 2) Trailing SL logic
         gap = self._compute_trailing_gap(composite, current_price)
 
         if self.side == "bid":
             proposed_sl = round(current_price - gap, 8)
-            # tighten only (never loosen)
             if self.stop_loss is None:
                 self.stop_loss = proposed_sl
             else:
+                if proposed_sl > self.stop_loss:
+                    self.sl_tightening_events.append({
+                        "timestamp": time.time(),
+                        "old_sl": self.stop_loss,
+                        "new_sl": proposed_sl
+                    })
                 self.stop_loss = round(max(self.stop_loss, proposed_sl), 8)
 
-            # protect ordering: SL must be < TP
             if self.take_profit is not None and self.stop_loss >= self.take_profit:
-                # snap SL slightly below TP
                 self.stop_loss = round(self.take_profit - self.min_gap_ticks, 8)
 
         else:  # 'ask' short
@@ -267,27 +278,28 @@ class AdaptiveSLTP:
             if self.stop_loss is None:
                 self.stop_loss = proposed_sl
             else:
-                # for shorts we only tighten (make stop lower), i.e., move stop closer to price: min()
+                if proposed_sl < self.stop_loss:
+                    self.sl_tightening_events.append({
+                        "timestamp": time.time(),
+                        "old_sl": self.stop_loss,
+                        "new_sl": proposed_sl
+                    })
                 self.stop_loss = round(min(self.stop_loss, proposed_sl), 8)
 
-            # ordering: SL must be > TP for shorts
             if self.take_profit is not None and self.stop_loss <= self.take_profit:
                 self.stop_loss = round(self.take_profit + self.min_gap_ticks, 8)
 
-        # 3) Dynamic TP: extend TP outward based on (current SL distance) * tp_extension_factor
+        # 3) Dynamic TP logic
         if self.stop_loss is not None and self.entry_price is not None:
             sl_dist = abs(current_price - self.stop_loss)
-            # choose a conservative baseline if sl_dist is tiny (avoid degenerate TP)
             baseline = max(sl_dist, max(1e-8, abs(self.entry_price - self.stop_loss)))
+
             if self.side == "bid":
                 new_tp = round(current_price + (baseline * self.tp_extension_factor), 8)
-                # never move TP inward below current TP unless you want to lock smaller target — we will allow outward-only
                 if self.take_profit is None:
                     self.take_profit = new_tp
                 else:
-                    # allow TP to move outward only
                     self.take_profit = round(max(self.take_profit, new_tp), 8)
-
             else:
                 new_tp = round(current_price - (baseline * self.tp_extension_factor), 8)
                 if self.take_profit is None:
@@ -295,15 +307,25 @@ class AdaptiveSLTP:
                 else:
                     self.take_profit = round(min(self.take_profit, new_tp), 8)
 
-            # ensure ordering after TP update
             if self.side == "bid" and self.stop_loss >= self.take_profit:
                 self.stop_loss = round(self.take_profit - self.min_gap_ticks, 8)
             if self.side == "ask" and self.stop_loss <= self.take_profit:
                 self.stop_loss = round(self.take_profit + self.min_gap_ticks, 8)
 
+
     # --------------------------
     # Accessors
     # --------------------------
+    def get_trailing_gap(self) -> Optional[float]:
+        """Return the current trailing gap based on composite score and midprice."""
+        if not self.in_trade or self.entry_price is None:
+            return None
+        current_price = float(self.ob.get_midprice())
+        if current_price == 0.0:
+            return None
+        composite = self._compute_composite_score()
+        return round(self._compute_trailing_gap(composite, current_price), 8)
+
     def get_sl_tp(self) -> Tuple[Optional[float], Optional[float]]:
         """Return (stop_loss, take_profit) rounded for convenience."""
         if self.stop_loss is None or self.take_profit is None:
@@ -315,6 +337,18 @@ class AdaptiveSLTP:
     # --------------------------
     def debug_state(self) -> dict:
         """Return a snapshot of internal state for logging/inspection."""
+        profit_distance = 0.0
+        if self.entry_price is not None:
+            mid = float(self.ob.get_midprice())
+            if self.side == "bid":
+                profit_distance = max(0.0, mid - self.entry_price)
+            else:
+                profit_distance = max(0.0, self.entry_price - mid)
+
+        profit_ratio = 0.0
+        if self.original_risk and self.original_risk > 0:
+            profit_ratio = profit_distance / self.original_risk
+
         return {
             "in_trade": self.in_trade,
             "side": self.side,
@@ -325,5 +359,8 @@ class AdaptiveSLTP:
             "atr": self._calculate_atr(),
             "composite_score": self._compute_composite_score(),
             "midprice": float(self.ob.get_midprice()),
-        }
+            "profit_ratio": round(profit_ratio, 4),
+            "trailing_gap": self.get_trailing_gap(),
+            "sl_tightening_events": self.sl_tightening_events[-5:]  # last 5 events
 
+        }

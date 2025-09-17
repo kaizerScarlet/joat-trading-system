@@ -25,7 +25,11 @@ class MockAlphaBlender:
 
 
 def make_sltp(mid=100.0, vol=0.01, alpha_bid=0.8, alpha_ask=0.2):
-    sltp = AdaptiveSLTP()
+    sltp = AdaptiveSLTP(alpha_weights={
+        "order_age": 0.33,
+        "cancel_activity": 0.33,
+        "layering": 0.34
+    })
     sltp.ob = MockOrderBook(mid, vol)
     sltp.alpha_score = MockAlphaBlender(alpha_bid, alpha_ask)
     return sltp
@@ -275,3 +279,43 @@ def test_huge_atr_vs_volatility_ask():
     sl, tp = sltp.start_trade("ask")
     assert sl > sltp.entry_price > tp
     assert sltp.original_risk > 0
+
+def test_sl_tightening_event_logged_bid():
+    sltp = make_sltp()
+    for _ in range(15):
+        sltp.update_candlestick(105, 95, 100)
+    sltp.start_trade("bid")
+
+    # Simulate a midprice that will trigger tightening
+    mid = 102
+    sltp.ob._mid = mid
+
+    # Compute the expected tightening level
+    composite_score = sltp._compute_composite_score()
+    gap = sltp._compute_trailing_gap(composite_score, mid)
+    proposed_sl = round(mid - gap, 8)
+
+    # Set stop_loss just below proposed_sl to guarantee tightening
+    sltp.stop_loss = proposed_sl - 0.01
+    sltp.monitor_and_adjust()
+
+    # Assert that a tightening event was logged
+    assert len(sltp.sl_tightening_events) > 0
+    event = sltp.sl_tightening_events[-1]
+    assert event["old_sl"] < event["new_sl"]
+
+
+
+
+
+def test_debug_state_snapshot():
+    sltp = make_sltp()
+    for _ in range(15):
+        sltp.update_candlestick(105, 95, 100)
+    sltp.start_trade("bid")
+    sltp.ob._mid = 102
+    sltp.monitor_and_adjust()
+    state = sltp.debug_state()
+    assert state["in_trade"] is True
+    assert state["composite_score"] > 0
+    assert state["stop_loss"] is not None

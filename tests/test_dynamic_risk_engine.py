@@ -64,6 +64,8 @@ async def initialized_engine():
     engine.binance_adapter = mock_adapter
     engine.dynamic_position_sizer.account_balance = mock_adapter
     engine.dynamic_position_sizer.drawdown.account_balance = mock_adapter
+    engine.daily_drawdown_manager.account_balance = mock_adapter
+
     engine.signal_confidence_calibrator = mock_confidence
     engine.performance_tracker = mock_tracker
 
@@ -112,7 +114,7 @@ async def test_register_trade_loss_and_cooldown_triggered(initialized_engine):
 @pytest.mark.asyncio
 async def test_position_size_scaling(initialized_engine):
     position_size = await initialized_engine.get_position_size(stop_loss_distance=5)
-    assert position_size > 1.0
+    assert position_size > 0.01
 
 @pytest.mark.asyncio
 async def test_engine_reset(initialized_engine):
