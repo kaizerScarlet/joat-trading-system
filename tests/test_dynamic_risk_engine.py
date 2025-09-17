@@ -1,10 +1,11 @@
 import time
 import pytest 
 from dynamic_risk_engine.dynamic_risk_engine import DynamicRiskEngine
+from Execution_layer.binance_adapter import BinanceExecutionAdapter
 
 def test_initial_state():
 
-    engine =  DynamicRiskEngine(initial_balance=100000.0, max_risk_per_trade=0.02, daily_drawdown_limit=0.25)
+    engine =  DynamicRiskEngine(daily_drawdown_limit=0.25)
 
     diagnostic = engine.get_diagnostic()
 
@@ -19,7 +20,7 @@ def test_initial_state():
 
 
 def test_register_trade_win_updates_all_modules():
-    engine = DynamicRiskEngine(initial_balance=1000, max_risk_per_trade=0.02, daily_drawdown_limit=0.25)
+    engine = DynamicRiskEngine(daily_drawdown_limit=0.25)
 
     engine.register_trade(
         pnl = 100.0,
@@ -42,7 +43,7 @@ def test_register_trade_win_updates_all_modules():
 
 
 def test_register_trade_loss_and_cooldown_triggered():
-    engine = DynamicRiskEngine(initial_balance=1000, max_risk_per_trade=0.02, daily_drawdown_limit=0.25)
+    engine = DynamicRiskEngine(daily_drawdown_limit=0.25)
 
     engine.register_trade(
         pnl = -50.0,
@@ -79,7 +80,7 @@ def test_register_trade_loss_and_cooldown_triggered():
 
 
 def test_position_size_scaling():
-    engine = DynamicRiskEngine(initial_balance=1000, max_risk_per_trade=0.01, daily_drawdown_limit=0.25)
+    engine = DynamicRiskEngine(daily_drawdown_limit=0.25)
 
     #Record 3 good trades to raise confidence + win rate
     engine.register_trade(
@@ -118,7 +119,7 @@ def test_position_size_scaling():
 
 
 def test_engine_reset():
-    engine = DynamicRiskEngine(initial_balance=500, max_risk_per_trade=0.05, daily_drawdown_limit=0.25)
+    engine = DynamicRiskEngine(daily_drawdown_limit=0.25)
     engine.register_trade(
         pnl = -100.0,
         risk = 50.0,

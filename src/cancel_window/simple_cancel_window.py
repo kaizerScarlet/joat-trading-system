@@ -829,7 +829,7 @@ class SimpleCancelWindow(CancelWindow):
         # --- Step 1: Normalize Cancel Density -----
         density = self.get_cancel_density(side)
         total_cancels = sum(density.values()) or 1e-9
-        norm_density = density.get(price, 0) / total_cancels
+        norm_density =(density.get(price, 0) / total_cancels)**1.5
 
         # ------ Step 2: Distance from Midprice -----
         if self.update_midprice() is None:
@@ -843,7 +843,7 @@ class SimpleCancelWindow(CancelWindow):
 
         # ------Step 3: Recent Fills at that Price ----
         recent_fills = [f for f in self.fill_events if f['price'] == price and f['side'] == side]
-        fill_score = min(len(recent_fills) / 5, 1.0)    #normalize
+        fill_score = min(len(recent_fills) / 2, 1.0)    #normalize
 
         # ------Step 4: Inverse Book Depth at Price ----
         """Still need to implement the orderbook.get_level_size(price, size)"""
@@ -851,7 +851,7 @@ class SimpleCancelWindow(CancelWindow):
         inv_book_depth = min(1.0 / size_at_price, 1.0)
 
         # -----Weighted Combination -------
-        w1, w2, w3, w4 = 0.6, 0.2, 0.1, 0.1
+        w1, w2, w3, w4 = 0.5, 0.2, 0.1, 0.2
         score = (
             w1 * norm_density +
             w2 * dist_from_mid +

@@ -4,6 +4,9 @@ from dynamic_risk_engine.signal_confidence_calibrator import SignalConfidenceCal
 from dynamic_risk_engine.dynamic_position_sizer import DynamicPositionSizer
 from dynamic_risk_engine.throttle_cooldown_manager import ThrottleCooldownManager
 from Execution_layer.binance_adapter import BinanceExecutionAdapter
+from market_data.orderbook import OrderBook
+from dynamic_risk_engine.market_regime_classifier import  CognitiveMarketRegimeClassifier, MarketRegime
+from cancel_window.simple_cancel_window import SimpleCancelWindow
 from datetime import datetime 
 
 
@@ -14,22 +17,34 @@ class DynamicRiskEngine:
     Governs whether trades can proceed based on how large they should be
     """
 
-    def __init__(self, initial_balance: float, max_risk_per_trade: float, daily_drawdown_limit: float, binance_adapter: BinanceExecutionAdapter):
+    def __init__(self,daily_drawdown_limit: float):
 
         """
         :param initial_balance: Starting balance for the risk engine
         :param max_risk_per_trade: Maximum risk allowed per trade as a fraction of the balance
         """
         self.performance_tracker = PerformanceTracker()
-        self.daily_drawdown_manager = DailyDrawdownManager(daily_drawdown_limit, initial_balance)  # 25% daily drawdown limit
+        self.daily_drawdown_manager = DailyDrawdownManager(daily_drawdown_limit)  # 25% daily drawdown limit
         self.signal_confidence_calibrator = SignalConfidenceCalibrator()
-        self.dynamic_position_sizer = DynamicPositionSizer(max_risk_per_trade=max_risk_per_trade, account_balance=initial_balance)
+        self.dynamic_position_sizer = DynamicPositionSizer()
         self.throttle_cooldown_manager = ThrottleCooldownManager()
+        self.binance_adapter = BinanceExecutionAdapter()
 
+        self.orderbook = OrderBook()
+        self.cancel_window = SimpleCancelWindow()
+        self.market_regime_classifier =  CognitiveMarketRegimeClassifier(
+            orderbook=self.orderbook,
+            signal_calibrator=self.signal_confidence_calibrator,
+            cancel_window=self.cancel_window
+        )
 
-        self.initial_balance = binance_adapter.get_account_balance()
+        self.current_regime = MarketRegime.UNKNOWN
+
+        self.initial_balance = self.binance_adapter.get_account_balance()
         self.max_risk_per_trade = self.performance_tracker.win_rate() - ((1 - self.performance_tracker.win_rate() / self.performance_tracker.win_rate()))
 
+    def update_market_regime(self):
+        self.current_regime = self.market_regime_classifier.update_regime()
 
     def can_trade(self) -> bool:
         """
@@ -59,12 +74,21 @@ class DynamicRiskEngine:
         rr_ratio = self.performance_tracker.average_rrr()
 
 
-        return self.dynamic_position_sizer.calculate_position_size(
+        base_size = self.dynamic_position_sizer.calculate_position_size(
             stop_loss_distance=stop_loss_distance,
             signal_confidence=confidence,
             win_rate=win_rate,
             rr_ratio=rr_ratio
         )
+
+        #Regime-aware throttle
+        if self.current_regime == MarketRegime.VOLATILE:
+            return base_size * 0.7
+        elif self.current_regime == MarketRegime.ILLIQUID:
+            return base_size * 0.5
+        elif self.current_regime == MarketRegime.TRENDING and confidence > 0.7:
+            return base_size * 1.1
+        return base_size
     
 
     def register_trade(self, pnl:float, risk: float, reward: float, signal_id: str, was_correct: bool, metadata: dict = None):
@@ -99,6 +123,7 @@ class DynamicRiskEngine:
             account_balance=self.initial_balance
         )
         self.throttle_cooldown_manager =  ThrottleCooldownManager()
+        self.current_regime = MarketRegime.UNKNOWN
 
 
     def get_diagnostic(self) -> dict:
@@ -117,7 +142,14 @@ class DynamicRiskEngine:
             'profit_factor': round(self.performance_tracker.profit_factor(), 4),
             'drawdown_triggered': self.daily_drawdown_manager.is_trading_halted(datetime.now()),
             'cooldown_active': self.throttle_cooldown_manager.is_in_cooldown(),
-            'equity_curve': self.performance_tracker.get_equity_curve()
+            'equity_curve': self.performance_tracker.get_equity_curve(),
+            'market_regime': self.current_regime.value,
+            'regime_duration_seconds': self.market_regime_classifier.get_regime_duration_seconds(),
+            'regime_history_tail': [r.value for r in list(self.market_regime_classifier.regime_history)[-5:]],
+            'regime_duration_seconds': self.market_regime_classifier.get_regime_duration_seconds(),
+            'regime_stability': self.market_regime_classifier.get_regime_stability(),
+            'regime_history_tail': [r.value for r in list(self.market_regime_classifier.regime_history)[-5:]],
+
         }
     
 

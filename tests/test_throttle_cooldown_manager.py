@@ -20,19 +20,19 @@ def test_initial_state(manager):
 
 def test_register_trade_win_resets_loss_streak(manager):
     manager.reset()
-    manager.register_trade(-100)
-    manager.register_trade(-50)
+    manager.register_trade_result(-100)
+    manager.register_trade_result(-50)
     assert manager.loss_streak == 2
-    manager.register_trade(200)  # Register a win
+    manager.register_trade_result(200)  # Register a win
     assert manager.loss_streak == 0  # Loss streak should reset after a win
     
 
 
 def test_cooldown_expires_after_duration(manager):
     manager.reset()
-    manager.register_trade(-1)
-    manager.register_trade(-1)
-    manager.register_trade(-1)  # Should trigger cooldown
+    manager.register_trade_result(-1)
+    manager.register_trade_result(-1)
+    manager.register_trade_result(-1)  # Should trigger cooldown
     assert manager.is_in_cooldown() is True
     
     #simulate time passing
@@ -45,31 +45,31 @@ def test_cooldown_expires_after_duration(manager):
 def test_rate_limit_blocks_trade_when_exceeded_profits(manager):
     manager.reset()
     #simulate 3 trades under one minute
-    manager.register_trade(10)
+    manager.register_trade_result(10)
     time.sleep(0.5)
-    manager.register_trade(20)
+    manager.register_trade_result(20)
     time.sleep(0.5)
-    manager.register_trade(30)
+    manager.register_trade_result(30)
     assert manager.can_trade() is True  # Should not be blocked due to rate limit not affected by profitable trades
 
 def test_rate_limit_blocks_trade_when_exceeded_losses(manager):
     manager.reset()
     #simulate 3 trades under one minute
-    manager.register_trade(-10)
+    manager.register_trade_result(-10)
     time.sleep(0.5)
-    manager.register_trade(-20)
+    manager.register_trade_result(-20)
     time.sleep(0.5)
-    manager.register_trade(-30)
+    manager.register_trade_result(-30)
     assert manager.can_trade() is False  # Should be blocked due to rate limit affected by losses
 
 def test_rate_limit_resets_after_60_seconds_losses(manager):
     manager.reset()
     #simulate 3 trades under one minute
-    manager.register_trade(-10)
+    manager.register_trade_result(-10)
     time.sleep(1)
-    manager.register_trade(-20)
+    manager.register_trade_result(-20)
     time.sleep(1)
-    manager.register_trade(-30)
+    manager.register_trade_result(-30)
     assert manager.can_trade() is False  # Should be blocked due to rate limit
     
     #simulate time passing
@@ -79,11 +79,11 @@ def test_rate_limit_resets_after_60_seconds_losses(manager):
 def test_rate_limit_resets_after_60_seconds_profits(manager):
     manager.reset()
     #simulate 3 trades under one minute
-    manager.register_trade(10)
+    manager.register_trade_result(10)
     time.sleep(1)
-    manager.register_trade(20)
+    manager.register_trade_result(20)
     time.sleep(1)
-    manager.register_trade(30)
+    manager.register_trade_result(30)
     assert manager.can_trade() is True  # Should not be blocked due to rate limit due to profits
     
     #simulate time passing
@@ -94,7 +94,7 @@ def test_rate_limit_resets_after_60_seconds_profits(manager):
 def test_no_cooldown_on_profitable_trades(manager):
     manager.reset()
     for _ in range(manager.max_losses):
-        manager.register_trade(100) # Register profitable trades
+        manager.register_trade_result(100) # Register profitable trades
     assert manager.is_in_cooldown() is False  # Should not be in cooldown after profitable trades
     assert manager.loss_streak == 0  # Loss streak should not increase
     assert manager.can_trade() is True  # Should be able to trade
