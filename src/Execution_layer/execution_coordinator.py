@@ -1,4 +1,5 @@
-import time, datetime
+import time
+from datetime import datetime
 from typing import Dict, Optional, Tuple, Any
 import logging
 from alpha_scoring.alpha_pipeline import AlphaSignalPipeline
@@ -527,7 +528,7 @@ class ExecutionCoordinator:
          #Emergency tighten on bad alpha
          try:
                debug_info = self.sl_and_tp.debug_state()
-               composite_score = debug_info.get("composite_score", 1.0)
+               composite_score = float(debug_info.get("composite_score", 1.0))
                if composite_score < 0.55:
                     logger.warning("Low composite score detected(%.3f) - tighten SL aggressively.", composite_score)
                     # Re-run monitor with awareness (we could also set a flag inside AdaptiveSLTP to force gap gap min)

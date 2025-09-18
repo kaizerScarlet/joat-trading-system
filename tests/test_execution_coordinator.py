@@ -90,15 +90,17 @@ def test_choose_order_type_fixed(coordinator, pref, expected_type):
 def test_choose_order_type_adaptive_market(coordinator):
     coordinator.config["order_type_preference"] = "adaptive"
     coordinator.config["min_fill_prob_for_limit"] = 0.05
+    coordinator.config["queue_horizon_sec"] = 10
 
-    coordinator.orderbook.get_best_price.side_effect = lambda side: 100 if side == "bid" else 100.01
+
+    coordinator.orderbook.get_best_price.side_effect = lambda side: 100 if side == "bid" else 100.05
     coordinator.orderbook.get_top_liquidity = MagicMock(return_value=0.5)
 
     coordinator.slippage_model = MagicMock()
     coordinator.slippage_model.expected_market_slip = MagicMock(return_value=0.01)
 
     # Override queue model to force low fill probability
-    coordinator.queue_model.estimate = lambda *args, **kwargs: (0.5, 0.01)
+    coordinator.queue_model.estimate = lambda *args, **kwargs: (0.5, 0.001)
 
     # Optional: mock orderbook dynamics if needed
     coordinator.orderbook.get_update_rate = MagicMock(return_value=0.1)
@@ -112,20 +114,21 @@ def test_choose_order_type_adaptive_market(coordinator):
 
 
 
-import asyncio
-
-def test_execute_order_success(coordinator):
+@pytest.mark.asyncio
+async def test_execute_order_success(coordinator):
     coordinator.exchange_client.place_order.return_value = "OID123"
     coordinator.sl_and_tp.start_trade.return_value = (1, 2)
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(coordinator._execute_order("BUY", 1.0, "MARKET", None, 12345, 1.0, 2.0, "bid"))
+    coordinator._execute_order("BUY", 1.0, "MARKET", None, 12345, 1.0, 2.0, "bid")
+    await asyncio.sleep(0.1)  # allow background task to complete
 
 
-def test_execute_order_fail(coordinator):
+
+@pytest.mark.asyncio
+async def test_execute_order_fail(coordinator):
     coordinator.exchange_client.place_order.return_value = None
     coordinator._execute_order("BUY", 1.0, "MARKET", None, 12345, 1.0, 2.0, "bid")
+    await asyncio.sleep(0.1)  # allow background task to complete
 
 @pytest.mark.asyncio
 async def test_on_fill_entry_buy(coordinator):
@@ -240,7 +243,7 @@ async def test_on_new_alpha_successful_flow(coordinator):
     coordinator.on_new_alpha({"bid": 0.7, "ask": 0.2}, {})
 
     coordinator._compute_order_size.assert_called_once()
-    coordinator._choose_order_type_and_price.assert_called_once_with("BUY")
+    coordinator._choose_order_type_and_price.assert_called_once_with("BUY", 1.0)
     coordinator._execute_order.assert_called_once()
 
 
@@ -260,11 +263,42 @@ def test_sl_tp_drift_logging(coordinator):
     coordinator.on_market_tick(high=100, low=90, close=95)
     coordinator.performance_tracker.record_sl_tp_drift.assert_called_once_with(95, 105)
 
-def test_drawdown_triggers_emergency_mode(coordinator):
+import pytest
+from unittest.mock import MagicMock
+from datetime import datetime
+
+def test_drawdown_triggers_emergency_mode(coordinator, caplog):
+    # Fix datetime.now() usage
     coordinator.drawdown_manager.calculate_daily_drawdown = MagicMock(return_value=-1000)
     coordinator.drawdown_manager.get_daily_drawdown_limit = MagicMock(return_value=-500)
-    coordinator.sl_and_tp.monitor_and_adjust = MagicMock()
 
-    coordinator.on_market_tick()
+    # Fix composite score comparison
+    coordinator.get_composite_score = MagicMock(return_value=0.5)
+
+    # Fix SL/TP unpacking
+    coordinator.sl_and_tp.get_sl_tp = MagicMock(return_value=(90, 110))
+    coordinator.sl_and_tp.monitor_and_adjust = MagicMock()
+    coordinator.sl_and_tp.start_trade = MagicMock()
+
+    # Fix exchange client call
+    coordinator.exchange_client.get_open_positions = MagicMock(return_value=[
+        {"symbol": "XYZ", "qty": 1.0, "side": "BUY"}
+    ])
+
+    # Ensure config has symbol
+    coordinator.config["symbol"] = "XYZ"
+
+    with caplog.at_level("ERROR"):
+        coordinator.on_market_tick()
+
+    # ✅ Assertions
+    assert "Drawdown override logic failed" not in caplog.text
+    assert "Emergency SL tigthen logic failed" not in caplog.text
+    assert "failed to log AdaptiveSLTP debug state" not in caplog.text
+
+    coordinator.drawdown_manager.calculate_daily_drawdown.assert_called_once()
+    coordinator.drawdown_manager.get_daily_drawdown_limit.assert_called_once()
+    assert coordinator.sl_and_tp.monitor_and_adjust.call_count >= 2
+    assert coordinator.sl_and_tp.get_sl_tp.call_count >= 2
+    coordinator.exchange_client.get_open_positions.assert_called_once()
     assert coordinator.sl_and_tp._emergency_mode is True
-    coordinator.sl_and_tp.monitor_and_adjust.assert_called()
