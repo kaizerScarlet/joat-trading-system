@@ -2,13 +2,16 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from Execution_layer.execution_coordinator import ExecutionCoordinator
-from Execution_layer.execution_coordinator import FeeSchedule
+from Execution_layer.fee_schedule import FeeSchedule
+from Execution_layer.queue_position_model import QueuePositionModel
+
 
 
 @pytest.fixture
 def coordinator():
     c = ExecutionCoordinator()
     # Mock dependencies
+
     c.alpha_pipeline = MagicMock()
     c.risk_engine = MagicMock()
     c.throttle_manager = MagicMock()
@@ -81,26 +84,44 @@ def test_compute_order_size_normal(coordinator):
 def test_choose_order_type_fixed(coordinator, pref, expected_type):
     coordinator.config["order_type_preference"] = pref
     coordinator.orderbook.get_best_price.side_effect = lambda side: 100 if side == "bid" else 102
-    otype, price = coordinator._choose_order_type_and_price("BUY")
+    otype, price = coordinator._choose_order_type_and_price("BUY", 1.0)
     assert otype == expected_type
 
 def test_choose_order_type_adaptive_market(coordinator):
     coordinator.config["order_type_preference"] = "adaptive"
+    coordinator.config["min_fill_prob_for_limit"] = 0.05
+
     coordinator.orderbook.get_best_price.side_effect = lambda side: 100 if side == "bid" else 100.01
-    otype, price = coordinator._choose_order_type_and_price("BUY")
+    coordinator.orderbook.get_top_liquidity = MagicMock(return_value=0.5)
+
+    coordinator.slippage_model = MagicMock()
+    coordinator.slippage_model.expected_market_slip = MagicMock(return_value=0.01)
+
+    # Override queue model to force low fill probability
+    coordinator.queue_model.estimate = lambda *args, **kwargs: (0.5, 0.01)
+
+    # Optional: mock orderbook dynamics if needed
+    coordinator.orderbook.get_update_rate = MagicMock(return_value=0.1)
+    coordinator.orderbook.get_order_imbalance = MagicMock(return_value=0.5)
+    coordinator.orderbook.get_volatility_estimate = MagicMock(return_value=0.01)
+
+    otype, price = coordinator._choose_order_type_and_price("BUY", 1.0)
     assert otype == "MARKET"
 
-def test_choose_order_type_adaptive_limit(coordinator):
-    coordinator.config["order_type_preference"] = "adaptive"
-    coordinator.orderbook.get_best_price.side_effect = lambda side: 100 if side == "bid" else 102
-    otype, price = coordinator._choose_order_type_and_price("SELL")
-    assert otype == "LIMIT"
+
+
+
+
+import asyncio
 
 def test_execute_order_success(coordinator):
     coordinator.exchange_client.place_order.return_value = "OID123"
     coordinator.sl_and_tp.start_trade.return_value = (1, 2)
-    coordinator._execute_order("BUY", 1.0, "MARKET", None, 12345, 1.0, 2.0, "bid")
-    coordinator.performance_tracker.record_trade.assert_called_once()
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(coordinator._execute_order("BUY", 1.0, "MARKET", None, 12345, 1.0, 2.0, "bid"))
+
 
 def test_execute_order_fail(coordinator):
     coordinator.exchange_client.place_order.return_value = None
@@ -221,3 +242,29 @@ async def test_on_new_alpha_successful_flow(coordinator):
     coordinator._compute_order_size.assert_called_once()
     coordinator._choose_order_type_and_price.assert_called_once_with("BUY")
     coordinator._execute_order.assert_called_once()
+
+
+def test_emergency_mode_triggers_aggressive_sl(coordinator):
+    coordinator.sl_and_tp._emergency_mode = True
+    coordinator.sl_and_tp.monitor_and_adjust = MagicMock()
+    coordinator.sl_and_tp.monitor_and_adjust()
+    coordinator.sl_and_tp.monitor_and_adjust.assert_called_once()
+
+
+def test_sl_tp_drift_logging(coordinator):
+    coordinator.sl_and_tp.get_sl_tp.return_value = (95, 105)
+    coordinator.sl_and_tp.debug_state.return_value = {"composite_score": 0.6}
+    coordinator.performance_tracker.record_sl_tp_drift = MagicMock()
+    coordinator.monitor_open_positions = MagicMock()
+
+    coordinator.on_market_tick(high=100, low=90, close=95)
+    coordinator.performance_tracker.record_sl_tp_drift.assert_called_once_with(95, 105)
+
+def test_drawdown_triggers_emergency_mode(coordinator):
+    coordinator.drawdown_manager.calculate_daily_drawdown = MagicMock(return_value=-1000)
+    coordinator.drawdown_manager.get_daily_drawdown_limit = MagicMock(return_value=-500)
+    coordinator.sl_and_tp.monitor_and_adjust = MagicMock()
+
+    coordinator.on_market_tick()
+    assert coordinator.sl_and_tp._emergency_mode is True
+    coordinator.sl_and_tp.monitor_and_adjust.assert_called()

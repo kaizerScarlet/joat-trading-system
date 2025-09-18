@@ -76,6 +76,7 @@ class AdaptiveSLTP:
         self.stop_loss: Optional[float] = None
         self.take_profit: Optional[float] = None
         self.sl_tightening_events = []  # List of (timestamp, old_sl, new_sl)
+        self._emergency_mode = False
 
 
         # store original initial risk distance for break-even checks
@@ -237,6 +238,8 @@ class AdaptiveSLTP:
         - move SL to break-even once original_risk is achieved
         - compute trailing gap and update SL (only tighten; never loosen)
         - update TP dynamically (extend outward when momentum/support strong)
+        -Support emergency tightening mode via internal override
+
         """
         if not self.in_trade:
             return
@@ -245,7 +248,14 @@ class AdaptiveSLTP:
         if current_price == 0.0:
             return  # can't act without valid price
 
-        composite = self._compute_composite_score()
+        #Emergency override: bypass composite score logic
+        if getattr(self, "_emergency_mode", False):
+            composite = 0.1 # aggressive tightening
+            self._emergency_mode = False # reset
+        else:
+            composite = self._compute_composite_score()
+
+
 
         # 1) Break-even logic
         if self.original_risk is not None and self.entry_price is not None:

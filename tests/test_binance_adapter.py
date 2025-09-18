@@ -160,3 +160,68 @@ async def test_cancel_order_records_throttle(adapter):
     resp = await adapter.cancel_order("BTCUSDT", orderId=1)
     assert resp["status"] == "CANCELED"
     adapter.throttle.record_cancel.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_place_stop_loss_order_format(adapter):
+    mock_response = MockAiohttpResponseCM(status=200, json_data={"status": "NEW", "type": "STOP_LOSS_LIMIT"})
+    adapter._get_session = AsyncMock(return_value=make_mock_session(mock_response))
+    adapter._sign = lambda q: deterministic_sign(adapter, q)
+
+    resp = await adapter.place_stop_loss_order("BTCUSDT", "SELL", stop_price=45000.0, quantity=0.01)
+    assert resp["status"] == "NEW"
+    assert resp["type"] == "STOP_LOSS_LIMIT"
+    adapter.throttle.record_order.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_place_take_profit_order_format(adapter):
+    mock_response = MockAiohttpResponseCM(status=200, json_data={"status": "NEW", "type": "LIMIT"})
+    adapter._get_session = AsyncMock(return_value=make_mock_session(mock_response))
+    adapter._sign = lambda q: deterministic_sign(adapter, q)
+
+    resp = await adapter.place_take_profit_order("BTCUSDT", "SELL", take_profit_price=47000.0, quantity=0.01)
+    assert resp["status"] == "NEW"
+    assert resp["type"] == "LIMIT"
+    adapter.throttle.record_order.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_modify_order_cancel_replace(adapter):
+    cancel_resp = MockAiohttpResponseCM(status=200, json_data={"status": "CANCELED"})
+    place_resp = MockAiohttpResponseCM(status=200, json_data={"orderId": 999, "status": "NEW"})
+
+    adapter._get_session = AsyncMock(return_value=make_mock_session(cancel_resp))
+    adapter._sign = lambda q: deterministic_sign(adapter, q)
+
+    # Patch place_order to return mock response
+    adapter.place_order = AsyncMock(return_value={"orderId": 999, "status": "NEW"})
+
+    result = await adapter.modify_order(symbol="BTCUSDT", orig_order_id=123, new_price=46000.0, new_qty=0.01)
+    assert result["status"] == "replaced"
+    assert result["new_order"]["orderId"] == 999
+
+
+@pytest.mark.asyncio
+async def test_handle_user_event_triggers_fill_callback(adapter):
+    fill_event = {
+        "e": "executionReport",
+        "E": 1690000000000,
+        "s": "BTCUSDT",
+        "S": "BUY",
+        "x": "TRADE",
+        "X": "FILLED",
+        "i": 12345,
+        "l": "0.01",
+        "L": "45000.0"
+    }
+
+    mock_callback = AsyncMock()
+    adapter.on_fill_callback = mock_callback
+
+    await adapter.handle_user_event(fill_event)
+    mock_callback.assert_awaited_once()
+    args = mock_callback.call_args[0][0]
+    assert args["qty"] == 0.01
+    assert args["price"] == 45000.0
+    assert args["symbol"] == "BTCUSDT"

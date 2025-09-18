@@ -13,6 +13,10 @@ from market_data.orderbook import OrderBook
 from dynamic_risk_engine.daily_drawdown_manager import DailyDrawdownManager
 from Execution_layer.adaptive_sl_tp import AdaptiveSLTP
 from Execution_layer.stealth_router import StealthRouter
+from Execution_layer.fee_schedule import FeeSchedule
+from Execution_layer.slippage_model import SlippageModel
+from Execution_layer.latency_model import LatencyModel
+from Execution_layer.queue_position_model import QueuePositionModel
 import asyncio
 
 
@@ -20,106 +24,8 @@ import asyncio
 import random
 import math
 
-class FeeSchedule:
-    """
-    Store fees in basis points (bps). Keep venue truth here but apply in the coordinator.
-    """
-    def __init__(self, maker_bps: float = 8.0, taker_bps: float = 10.0):
-        self.maker_bps = maker_bps
-        self.taker_bps = taker_bps
-
-    def maker_rate(self) -> float:
-        return self.maker_bps / 1e4
-
-    def taker_rate(self) -> float:
-        return self.taker_bps / 1e4
 
 
-class LatencyModel:
-    """
-    End-to-end one-way latency (decision->exchange). Milliseconds.
-    Use lognormal-ish distribution for rare heavier tails.
-    """
-    def __init__(self, base_ms: float = 20.0, jitter_ms: float = 15.0, p_tail: float = 0.05, tail_multiplier: float = 3.0):
-        self.base_ms = base_ms
-        self.jitter_ms = jitter_ms
-        self.p_tail = p_tail
-        self.tail_multiplier = tail_multiplier
-
-    def sample_ms(self) -> int:
-        draw = random.uniform(-self.jitter_ms, self.jitter_ms)
-        ms = max(0.0, self.base_ms + draw)
-        if random.random() < self.p_tail:
-            ms *= self.tail_multiplier
-        return int(ms)
-
-
-class SlippageModel:
-    """
-    Very simple impact model:
-    - Market orders pay spread/2 + impact proportional to qty vs top-of-book liquidity.
-    - Limit orders: expected fill price nudged toward mid by a tiny mean-reversion term.
-    Hook into your OrderBook for better depth-aware modelling later.
-    """
-    def __init__(self, impact_coeff: float = 0.5):
-        self.impact_coeff = impact_coeff  # multiplier on qty/liquidity
-
-    def expected_market_slip(self, side: str, mid: float, spread: float, qty: float, top_liquidity: float) -> float:
-        half_spread = spread * 0.5
-        impact = 0.0 if top_liquidity <= 0 else self.impact_coeff * (qty / top_liquidity) * spread
-        # BUY moves up, SELL moves down (cost is positive)
-        return half_spread + impact
-
-    def expected_limit_price(self, side: str, base_price: float, mid: float, micro_revert_bps: float = 0.5) -> float:
-        # Small pull toward mid to avoid needlessly crossing
-        k = micro_revert_bps / 1e4
-        if side == "BUY":
-            return max(base_price - k * (base_price - mid), 0.0)
-        else:
-            return max(mid - k * (mid - base_price), 0.0)
-
-
-class QueuePositionModel:
-    """
-    Naive queue estimate: compare our qty to visible top-of-book size.
-    Returns (queue_fraction, approx_fill_prob_per_second)
-    """
-    def __init__(self, base_trade_rate: float = 1.0):
-         #fallback if book doesnt provide activity
-         self.base_trade_rate = base_trade_rate
-
-    def estimate(self, side: str, our_qty: float, tob_qty: float, orderbook = OrderBook) -> tuple[float, float]:
-        """
-        :param side: "BUY" or "SELL"
-        :param our_qty: how much we want to post
-        :param tob_qty: visible top-of-book liquidity
-        :param orderbook: optional Orderbook object
-        :return: (queue_fraction, approx_fill_prob_per_second)
-        """
-
-        if tob_qty <= 0 or our_qty <= 0:
-            return 1.0, 0.0  # unknown -> assume back of queue, no info on fill rate
-        
-        #Fraction of top-of-book we represent
-        qfrac = min(1.0, our_qty / (tob_qty + 1e-9))
-
-        # Activity-based fill intensity ---
-        fill_rate = self.base_trade_rate
-        if orderbook is not None:
-             #Use observed update rate as proxy for consumption
-             upd_rate = orderbook.get_update_rate() #Updates/sec
-             imb = orderbook.get_order_imbalance() #0..1
-             vol = orderbook.get_volatility_estimate()
-
-             #crude heuristic: higher update rate + higher vol -> faster fills
-             #imbalance tilt: if we're on the favoured side, more fills
-             side_factor = imb if side.upper() == "SELL" else (1.0 - imb)
-
-             fill_rate = max(0.1, upd_rate * (1 + 5 * vol) * (1 + side_factor))
-
-        # Scale by our share of the queue
-        p = min(1.0, qfrac * fill_rate)
-        return qfrac, p
 
 
 
@@ -151,9 +57,9 @@ class ExecutionCoordinator:
             config: Optional dict with execution settings
         """
         self.alpha_pipeline = AlphaSignalPipeline()
-        self.risk_engine = DynamicRiskEngine()
+        self.risk_engine = DynamicRiskEngine(daily_drawdown_limit=0.25)
         self.throttle_manager = ThrottleCooldownManager()
-        self.drawdown_manager = DailyDrawdownManager()
+        self.drawdown_manager = DailyDrawdownManager(daily_drawdown_limit=0.25)
         self.exchange_client = BinanceExecutionAdapter()
         self.performance_tracker = PerformanceTracker()
         self.confidence = SignalConfidenceCalibrator()
@@ -301,6 +207,19 @@ class ExecutionCoordinator:
          price = fill.get("price", 0.0)
          symbol = fill.get("symbol")
 
+         # --- Fill latency ----
+         dispatch_ts = fill.get("dispatch_ts")
+         fill_ts = fill.get("fill_ts", self.now_ms())
+         if dispatch_ts:
+              latency_ms = fill_ts - dispatch_ts
+              self.performance_tracker.record_latency(latency_ms)
+
+         # --- Slippage ----
+         expected_price = fill.get("expected_price")
+         if expected_price:
+              slippage = abs(price - expected_price)
+              self.performance_tracker.record_slippage(slippage)
+
          # --- Fee attribution (NEW) ---
          liquidity = fill.get("liquidity", None) #"Maker" / "Taker" / None
          fee_rate = (self.fees.maker_rate() if liquidity == "MAKER" else self.fees.taker_rate())
@@ -382,12 +301,12 @@ class ExecutionCoordinator:
                ask_score = alpha.get("ask", 0.0)
 
                if bid_score >= self.config["min_confidence_to_trade"] and bid_score > ask_score:
-                    #Fade the side with high score
-                    return "SELL"
+                    #Follow side with strong momentum
+                    return "BUY"
                     
                elif ask_score >= self.config["min_confidence_to_trade"] and ask_score > bid_score:
-                    #Fade the side with the high score
-                    return "BUY"
+                    #Follow side with strong momentum
+                    return "SELL"
                     
                return None
 
@@ -540,7 +459,11 @@ class ExecutionCoordinator:
                         limit_price=price,
                         fee_schedule = self.fees,                #New
                         slippage_model = self.slippage_model,    #New (for per-slice adjustments)
-                        orderbook = self.orderbook     #New (for queue/top-liq)
+                        orderbook = self.orderbook ,   #New (for queue/top-liq)
+                        metadata = {
+                             "dispatch_ts": self.now_ms(),
+                               "expected_price": price
+                        }
                    )
                     #Result = list of slice records; store IDs for later reconciliation
                     self.active_entry_order_ids = [r["orderId"] for r in result if "orderId" in r]
@@ -595,7 +518,7 @@ class ExecutionCoordinator:
               except Exception:
                    logger.debug("Error updating candlestick to AdaptiveSLTP", exc_info=True)
 
-        #The SL/TP manager updates internal SL/TP based on microstructure and volatility
+         #The SL/TP manager updates internal SL/TP based on microstructure and volatility
          try:
               self.sl_and_tp.monitor_and_adjust()
          except Exception:
@@ -608,12 +531,26 @@ class ExecutionCoordinator:
                if composite_score < 0.55:
                     logger.warning("Low composite score detected(%.3f) - tighten SL aggressively.", composite_score)
                     # Re-run monitor with awareness (we could also set a flag inside AdaptiveSLTP to force gap gap min)
+                    self.sl_and_tp._emergency_mode = True
                     self.sl_and_tp.monitor_and_adjust()
          except Exception:
               logger.exception("Emergency SL tigthen logic failed")
+
+         # Emergency override under drawdown stress
+         try:
+              drawdown = self.drawdown_manager.calculate_daily_drawdown(datetime.now())
+              threshold = self.drawdown_manager.get_daily_drawdown_limit()
+              if drawdown <= threshold:
+                       logger.warning("Drawdown threshold breached (%.3f <= %.3f) — forcing SL tightening.", drawdown, threshold)
+                       self.sl_and_tp._emergency_mode = True
+                       self.sl_and_tp.monitor_and_adjust()
+         except Exception:
+                 logger.exception("Drawdown override logic failed")
      
          #Log current SL/TP state for traceability
          try:
+               sl, tp = self.sl_and_tp.get_sl_tp()
+               self.performance_tracker.record_sl_tp_drift( sl, tp)
                debug_snapshot = self.sl_and_tp.debug_state()
                logger.debug("SLTP Debug State: %s", debug_snapshot)
          except Exception:

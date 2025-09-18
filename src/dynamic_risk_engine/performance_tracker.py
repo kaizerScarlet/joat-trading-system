@@ -1,4 +1,5 @@
 from typing import List, Dict, Optional
+import time
 
 class PerformanceTracker:
     
@@ -9,6 +10,8 @@ class PerformanceTracker:
         self.trades : List[Dict] = []
         self.equity_curve: List[float] = []
         self.balance: float = 0.0
+        self.sl_tp_history = []
+
 
     def record_trade(self, pnl: float, risk: float, reward: float, metadata: Optional[Dict] = None):
         """
@@ -51,6 +54,18 @@ class PerformanceTracker:
         """
         rrr = [t['rrr'] for t in self.trades if t['risk'] > 0]
         return sum(rrr) / len(rrr) if rrr else 0.0
+    
+    def record_sl_tp_drift(self, sl: float, tp: float):
+        """
+        Record SL/TP evolution for diagnostics.
+        You can extend this to log timestamped drift or visualize it later.
+        """
+        self.sl_tp_history.append({
+            "timestamp": time.time(),
+            "sl": sl,
+            "tp": tp
+        })
+
     
     def profit_factor(self) -> float:
         """
