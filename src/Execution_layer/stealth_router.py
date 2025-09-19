@@ -60,6 +60,10 @@ class StealthRouter:
         self.execution_log = [] #Post Trade analysis log
         self.repricing_model = repricing_model or SmartRepricingModel(tick_size=self.tick_size, slippage_bps=slippage_bps)
         self.slippage_model = slippage_model or SlippageModel()
+    
+    def now_ms(self):
+        import time
+        return int(time.time() * 1000)
 
 
     async def execute_parent_order(self, side:str, total_qty: float,
@@ -177,7 +181,7 @@ class StealthRouter:
             )
 
             m = _mid()
-            if order_type == "LIMIT" and self.slippage_model and m:
+            if order_type == "LIMIT" and slippage_model and m:
                 #Pull slightly toward mid to reduce crossing; final snap is done in _choose_slice_price
                 slice_price = self.slippage_model.expected_limit_price(side, slice_price, m, micro_revert_bps=0.5)
             

@@ -1,3 +1,5 @@
+import random
+
 class LatencyModel:
     """
     End-to-end one-way latency (decision->exchange). Milliseconds.
