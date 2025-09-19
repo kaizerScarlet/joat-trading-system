@@ -5,8 +5,10 @@ import logging
 from market_data.orderbook import OrderBook
 from Execution_layer.fee_schedule import FeeSchedule
 from Execution_layer.slippage_model import SlippageModel
-from Execution_layer.queue_position_model import QueuePositionModel
+from Execution_layer.queue_position_model import QueuePositionModel 
 from Execution_layer.binance_adapter import BinanceExecutionAdapter
+from Execution_layer.smart_pricing_model import SmartRepricingModel
+from dynamic_risk_engine.cognitive_market_regime_classifier import CognitiveMarketRegimeClassifier, MarketRegime
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +27,10 @@ class StealthRouter:
                  qty_precison: int = 6,
                  max_slices: int = 20,
                  slippage_bps: float = 5.0, #max slippage per slice (optional)
-                 queue_model = None #New: queue model injected for hybrid monitoring
+                 queue_model = None,#New: queue model injected for hybrid monitoring
+                 repricing_model = None, #New: repricing model (optional
+                 regime_classifier = None,
+                 slippage_model = None
                  
                  ):
         """
@@ -51,12 +56,16 @@ class StealthRouter:
         self.max_slices = max_slices
         self.slippage_bps = slippage_bps / 10000.0 #convert bps to fraction
         self.queue_model = queue_model or QueuePositionModel()
+        self.regime_classifier = regime_classifier or CognitiveMarketRegimeClassifier()
+        self.execution_log = [] #Post Trade analysis log
+        self.repricing_model = repricing_model or SmartRepricingModel(tick_size=self.tick_size, slippage_bps=slippage_bps)
+        self.slippage_model = slippage_model or SlippageModel()
 
 
     async def execute_parent_order(self, side:str, total_qty: float,
                                    order_type: str, limit_price: Optional[float]=None,
                                    fee_schedule = None, #New: FeeSchedule (Optional)
-                                   slippage_model = SlippageModel, #New: SlippageModel (Optional)
+                                   slippage_model = SlippageModel(), #New: SlippageModel (Optional)
                                    orderbook = OrderBook, #New: OrderBook (Optional)
                                    mode: str = "normal",    #New: normal | hybrid
                                    hybrid_threshold: float = 0.3, # Fill prob cutoff
@@ -77,6 +86,49 @@ class StealthRouter:
         remaining_qty = total_qty
         placed_order_ids = []
         slice_count = 0
+
+        #Regime detection
+        regime = self.regime_classifier.update_regime() if self.regime_classifier else MarketRegime.UNKNOWN
+        logger.info(f"[StealthRouter] Detected market regime: {regime.value}")
+
+        #Regime-based tuning
+        if regime == MarketRegime.TRENDING:
+            self.random_delay_range = (0.1, 0.4)
+            self.slippage_bps = 10.0
+            fill_prob_threshold = 0.4
+        elif regime == MarketRegime.MEAN_REVERTING:
+            self.random_delay_range = (1.0, 2.5)
+            self.slippage_bps = 2.0
+            fill_prob_threshold = 0.2
+        elif regime == MarketRegime.VOLATILE:
+            self.random_delay_range = (0.3, 1.0)
+            self.slippage_bps = 15.0
+            fill_prob_threshold = 0.5
+        elif regime == MarketRegime.ILLIQUID:
+            self.random_delay_range = (2.0, 4.0)
+            self.slippage_bps = 5.0
+            fill_prob_threshold = 0.3
+
+        #Sync repricing model with updated regime slippage
+        self.repricing_model.slippage_bps = self.slippage_bps
+
+        # Regime-aware velocity thresholds
+        if regime == MarketRegime.TRENDING:
+            velocity_fast = 0.6
+            velocity_slow = 0.2
+        elif regime == MarketRegime.MEAN_REVERTING:
+            velocity_fast = 0.4
+            velocity_slow = 0.1
+        elif regime == MarketRegime.VOLATILE:
+            velocity_fast = 0.8
+            velocity_slow = 0.3
+        elif regime == MarketRegime.ILLIQUID:
+            velocity_fast = 0.3
+            velocity_slow = 0.05
+        else:
+            velocity_fast = 0.5
+            velocity_slow = 0.1
+
 
         #helpers from orderbook if available
         def _best(side_):
@@ -100,15 +152,34 @@ class StealthRouter:
             return 0.0
 
         while remaining_qty > 0 and slice_count < self.max_slices:
+            #Velocity-aware sizing
             slice_qty = self._choose_slice_size(remaining_qty)
+            velocity = self.get_recent_fill_velocity()
+            logger.debug(f"[Velocity Feedback] Recent fill velocity: {velocity:.4f} qty/s")
+
+            #Adjust Slice Size based on regime-aware velocity
+            if velocity > velocity_fast:
+                slice_qty = min(slice_qty * 1.5, remaining_qty)
+            elif velocity < velocity_slow:
+                slice_qty = max(slice_qty * 0.5, self._choose_slice_size(remaining_qty) * 0.5)
+
+            #OptionaL: adjust delay range based on fill speed
+            if velocity > velocity_fast:
+                self.random_delay_range = (0.1, 0.4)
+            elif velocity < velocity_slow:
+                self.random_delay_range = (1.5, 3.0)
 
             #Base price from caller / mid
-            slice_price = self._choose_slice_price(side, limit_price, order_type)
+            slice_price = self.repricing_model.optimize_price(
+                side=side,
+                orderbook=orderbook,
+                fill_prob_target=fill_prob_threshold
+            )
 
             m = _mid()
-            if order_type == "LIMIT" and slippage_model and m:
+            if order_type == "LIMIT" and self.slippage_model and m:
                 #Pull slightly toward mid to reduce crossing; final snap is done in _choose_slice_price
-                slice_price = slippage_model.expected_limit_price(side, slice_price, m, micro_revert_bps=0.5)
+                slice_price = self.slippage_model.expected_limit_price(side, slice_price, m, micro_revert_bps=0.5)
             
             #if MARKET, price stays None (Adapter will send a market)
             #If LIMIT and price ends up crossing current opposite best, we'll be taker.
@@ -136,10 +207,11 @@ class StealthRouter:
                 exp_fill_prob = 1 - (1 - fill_prob_per_s) ** horizon_s
 
                 # ---- Hybrid upgrade -------
+                slice_order_type = order_type #Preserve Original
                 if exp_fill_prob < fill_prob_threshold:
                     logger.info(f"[Hybrid] fill probability {exp_fill_prob:.2f} < {fill_prob_threshold:.2f}, "
                                 f"upgrading slice {slice_count + 1} to MARKET")
-                    order_type = "MARKET"
+                    slice_order_type = "MARKET"
                     slice_price = None
                     liquidity = "TAKER"
 
@@ -151,20 +223,27 @@ class StealthRouter:
                     symbol = self.symbol,
                     side = side,
                     size = slice_qty,
-                    type = order_type,
+                    type = slice_order_type,
                     price = slice_price,
                     quantity = round(slice_qty, self.qty_precision)
                 )
 
                     if resp and "orderId" in resp:
+                        fill_ts = self.now_ms() #Timestamp after placement
                         rec = {
                             "orderId": resp["orderId"],
                             "qty": slice_qty,
                             "price": slice_price,
                             "liquidity": liquidity, # <------ tag for fee attribution upstream
                             "exp_fill_prob": exp_fill_prob,  # New: Store expected fill probability
+                            'regime': regime.value, # New: Store detected regime
+                            'placement_ts': fill_ts,
+                            'expected_slip': exp_slip if order_type == "MARKET" else 0.0,
+                            'latency_ms': None,#Will be updated on fill
+                            'realized_slip': None # Will be updated on fill
                         }
                         placed_order_ids.append(rec)
+                        self.execution_log.append(rec) #Store slice metrics for post trade analysis
                         logger.debug(f"Placed slice {slice_count + 1} / {self.max_slices}: "
                                      f"{slice_qty} {side} @ {slice_price} "
                                      f"(liq={liquidity}, fillProb={exp_fill_prob:.2f}) "
@@ -196,11 +275,17 @@ class StealthRouter:
 
         if slice_count >= self.max_slices:
             logger.warning(f"Reached max slices limit ({self.max_slices}) before completing parent order") 
+
+        logger.info(f"[Execution Summary] {len(self.execution_log)} slices executed under {regime.value} regime")
+        for rec in self.execution_log:
+            logger.debug(f"Slice {rec['orderId']}: qty={rec['qty']} liq={rec['liquidity']} expSlip={rec['expected_slip']:.4f} "
+                    f"realSlip={rec['realized_slip']} latency={rec['latency_ms']}ms")
+
         
         return placed_order_ids
     
 
-    async def _monitor_slice(self, slice_info, side, qty, orderbook, horizon_sec: int, threshold: float):
+    async def _monitor_slice(self, slice_info, side, qty, orderbook:OrderBook , horizon_sec: int, threshold: float):
         """
         Monitor a passive slice; cancel/replace or cross if fill prob drops below threshold.
         """
@@ -313,3 +398,19 @@ class StealthRouter:
         logger.debug(f"Sleeping for {delay:.2f}s before next slice")
         await asyncio.sleep(delay)
         
+
+    def record_fill(self, order_id: str, fill_price: float, fill_ts: float):
+        for rec in self.execution_log:
+            if rec["orderId"] == order_id:
+                rec["latency_ms"] = fill_ts - rec["placement_ts"]
+                rec["realized_slip"] = abs(fill_price - (rec["price"] or fill_price))
+                rec["fill_velocity"] = rec["qty"] / max((rec["latency_ms"] / 1000.0), 0.001)  # qty/sec
+                logger.info(f"[Execution Attribution] Order {order_id} filled. Latency={rec['latency_ms']}ms, Slip={rec['realized_slip']:.4f},  Velocity={rec['fill_velocity']:.4f} qty/s")
+                break
+
+    def get_recent_fill_velocity(self, lookback: int = 5) -> float:
+        recent = self.execution_log[-lookback:]
+        if not recent:
+            return 0.0
+        velocities = [rec.get("fill_velocity", 0.0) for rec in recent if rec.get("fill_velocity") is not None]
+        return sum(velocities) / max(len(velocities), 1)

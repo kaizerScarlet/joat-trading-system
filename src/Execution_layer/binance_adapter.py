@@ -404,7 +404,17 @@ class BinanceExecutionAdapter:
                     #callback to execution coordinator
                     if self.on_fill_callback:
                         #allow both sync & async callbacks
-                        res = self.on_fill_callback(fill)
+                        res = self.on_fill_callback({
+                            "orderId": str(fill["order_id"]),
+                            "price": fill["price"],
+                            "timestamp": fill["timestamp"],
+                            "qty": fill["qty"],
+                            "side": fill["side"],
+                            "status": fill["status"],
+                            "symbol": fill["symbol"],
+                            "raw": fill["raw"],
+
+                        })
                         if asyncio.iscoroutine(res):
                             await res
 
