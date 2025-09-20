@@ -33,20 +33,26 @@ class OrderBook:
         self.last_update_ts = now
 
         for p, q in msg.get("bid",[]):
-            price = float(p)
-            size = float(q)
-            if size > 0 :
-                self.bids[price] = size
-            elif price in self.bids:
-                del self.bids[price]
+            try:
+                price = float(p)
+                size = float(q)
+                if size > 0 :
+                    self.bids[price] = size
+                elif price in self.bids:
+                    del self.bids[price]
+            except (ValueError, TypeError):
+                continue
 
         for p, q in msg.get('ask', []):
-            price = float(p)
-            size = float(q)
-            if size > 0:
-                self.asks[price] = size
-            elif price in self.asks:
-                del self.asks[price]
+            try:
+                price = float(p)
+                size = float(q)
+                if size > 0:
+                    self.asks[price] = size
+                elif price in self.asks:
+                    del self.asks[price]
+            except (ValueError, TypeError):
+                continue
 
         self._update_midprice()
 
