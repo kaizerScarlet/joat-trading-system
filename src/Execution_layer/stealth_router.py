@@ -9,6 +9,10 @@ from Execution_layer.queue_position_model import QueuePositionModel
 from Execution_layer.binance_adapter import BinanceExecutionAdapter
 from Execution_layer.smart_pricing_model import SmartRepricingModel
 from dynamic_risk_engine.cognitive_market_regime_classifier import CognitiveMarketRegimeClassifier, MarketRegime
+from dynamic_risk_engine.signal_confidence_calibrator import SignalConfidenceCalibrator
+from cancel_window.simple_cancel_window import SimpleCancelWindow
+
+
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +60,7 @@ class StealthRouter:
         self.max_slices = max_slices
         self.slippage_bps = slippage_bps / 10000.0 #convert bps to fraction
         self.queue_model = queue_model or QueuePositionModel()
-        self.regime_classifier = regime_classifier or CognitiveMarketRegimeClassifier()
+        self.regime_classifier = regime_classifier or CognitiveMarketRegimeClassifier(orderbook=OrderBook(), signal_calibrator=SignalConfidenceCalibrator(), cancel_window=SimpleCancelWindow())
         self.execution_log = [] #Post Trade analysis log
         self.repricing_model = repricing_model or SmartRepricingModel(tick_size=self.tick_size, slippage_bps=slippage_bps)
         self.slippage_model = slippage_model or SlippageModel()
