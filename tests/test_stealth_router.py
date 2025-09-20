@@ -1,6 +1,7 @@
 import pytest
 import random
 import asyncio
+import logging
 from Execution_layer.slippage_model import SlippageModel
 
 
@@ -199,3 +200,135 @@ def test_execution_log_contains_expected_fields(router):
     keys = router.execution_log[0].keys()
     for field in ["orderId", "qty", "price", "latency_ms", "realized_slip", "fill_velocity"]:
         assert field in keys
+
+
+
+def test_record_fill_creates_synthetic_record_for_unknown_order(router):
+    # Act: record a fill for an unknown orderId
+    router.record_fill(order_id="UNKNOWN", fill_price=200.0, fill_ts=5000)
+
+    # Assert: synthetic record appended
+    rec = router.execution_log[-1]
+    assert rec["orderId"] == "UNKNOWN"
+    assert rec["price"] == 200.0
+    assert rec["placement_ts"] == 5000
+
+    # All expected keys must exist
+    expected_keys = [
+        "orderId", "qty", "price", "placement_ts", "latency_ms",
+        "realized_slip", "fill_velocity", "liquidity",
+        "exp_fill_prob", "regime", "expected_slip"
+    ]
+    for key in expected_keys:
+        assert key in rec
+
+
+def test_record_fill_synthetic_defaults_are_none(router):
+    router.record_fill(order_id="XYZ", fill_price=150.0, fill_ts=6000)
+    rec = router.execution_log[-1]
+
+    # Fields we cannot know should be None
+    assert rec["qty"] is None
+    assert rec["latency_ms"] is None
+    assert rec["realized_slip"] is None
+    assert rec["fill_velocity"] is None
+    assert rec["liquidity"] is None
+    assert rec["exp_fill_prob"] is None
+    assert rec["regime"] is None
+    assert rec["expected_slip"] is None
+
+def test_partial_fill_updates_metrics(router):
+    router.execution_log = [{
+        "orderId": "P123",
+        "qty": 2.0,
+        "price": 100.0,
+        "placement_ts": 1000000
+    }]
+    # Simulate partial fill of 1.0 at 101.0
+    router.record_fill(order_id="P123", fill_price=101.0, fill_ts=1000500, fill_qty=1.0)
+    rec = router.execution_log[0]
+    assert rec["latency_ms"] == 500
+    assert rec["realized_slip"] == 1.0
+    assert rec["fill_velocity"] == pytest.approx(2.0, rel=1e-2)
+
+
+@pytest.mark.asyncio
+async def test_regime_drift_mid_trade(router, mock_orderbook_instance):
+    from dynamic_risk_engine.cognitive_market_regime_classifier import MarketRegime
+
+    # ---------------- Phase 1: MEAN_REVERTING ----------------
+    router.regime_classifier.update_regime = lambda: MarketRegime.MEAN_REVERTING
+    router.get_recent_fill_velocity = lambda: 0.2  # Above velocity_slow for MEAN_REVERTING
+
+    await router.execute_parent_order(
+        side="SELL",
+        total_qty=2.0,
+        order_type="LIMIT",
+        orderbook=mock_orderbook_instance
+    )
+
+    # ✅ Option 1: Isolate regime tuning
+    assert router.random_delay_range == (1.0, 2.5)
+    assert router.slippage_bps == 2.0
+
+    # ---------------- Phase 2: VOLATILE ----------------
+    router.regime_classifier.update_regime = lambda: MarketRegime.VOLATILE
+    router.get_recent_fill_velocity = lambda: 0.1  # Below velocity_slow for VOLATILE
+
+    await router.execute_parent_order(
+        side="SELL",
+        total_qty=2.0,
+        order_type="LIMIT",
+        orderbook=mock_orderbook_instance
+    )
+
+    # ✅ Option 2: Assert regime tuning before reflex override
+    # Regime tuning for VOLATILE should be (0.3, 1.0)
+    regime_delay_range = (0.3, 1.0)
+    assert router.slippage_bps == 15.0
+    assert regime_delay_range == (0.3, 1.0)
+
+    # Reflex override due to low velocity should push delay to (1.5, 3.0)
+    assert router.random_delay_range == (1.5, 3.0)
+
+
+
+def test_spoof_burst_triggers_regime_reinforcement(router):
+    from dynamic_risk_engine.cognitive_market_regime_classifier import MarketRegime
+
+    # Inject spoof flags
+    router.regime_classifier.cancel_window._flags = [
+        {"type": "CANCEL_DENSITY_SPIKE", "price": 100.0, "side": "BUY"},
+        {"type": "CANCEL_DENSITY_SPIKE", "price": 101.0, "side": "SELL"},
+        {"type": "CANCEL_DENSITY_SPIKE", "price": 102.0, "side": "BUY"},
+    ]
+
+    regime = router.regime_classifier.update_regime()
+    assert regime in [MarketRegime.VOLATILE, MarketRegime.ILLIQUID, MarketRegime.TRENDING]
+
+
+
+@pytest.mark.asyncio
+async def test_execution_summary_logs_correct_metrics(router, mock_orderbook_instance, caplog):
+    caplog.set_level(logging.INFO)
+    await router.execute_parent_order(
+        side="BUY",
+        total_qty=5.0,
+        order_type="LIMIT",
+        orderbook=mock_orderbook_instance
+    )
+
+    # Confirm summary log
+    summary = [r for r in caplog.records if "[Execution Summary]" in r.message]
+    assert summary
+    assert f"{len(router.execution_log)} slices executed" in summary[0].message
+
+    # Confirm each slice has expected fields
+    for rec in router.execution_log:
+        assert "orderId" in rec
+        assert "qty" in rec
+        assert "liquidity" in rec
+        assert "regime" in rec
+        assert "expected_slip" in rec
+
+

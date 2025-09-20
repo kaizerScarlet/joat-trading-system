@@ -275,7 +275,9 @@ class StealthRouter:
             slice_count += 1
 
             if remaining_qty > 0:
-                await self._random_delay()
+                maybe_coro = self._random_delay()
+                if asyncio.iscoroutine(maybe_coro):
+                    await maybe_coro
 
         if slice_count >= self.max_slices:
             logger.warning(f"Reached max slices limit ({self.max_slices}) before completing parent order") 
@@ -403,14 +405,42 @@ class StealthRouter:
         await asyncio.sleep(delay)
         
 
-    def record_fill(self, order_id: str, fill_price: float, fill_ts: float):
+    def record_fill(self, order_id: str, fill_price: float, fill_ts: float, fill_qty: Optional[float] = None):
         for rec in self.execution_log:
             if rec["orderId"] == order_id:
                 rec["latency_ms"] = fill_ts - rec["placement_ts"]
-                rec["realized_slip"] = abs(fill_price - (rec["price"] or fill_price))
-                rec["fill_velocity"] = rec["qty"] / max((rec["latency_ms"] / 1000.0), 0.001)  # qty/sec
-                logger.info(f"[Execution Attribution] Order {order_id} filled. Latency={rec['latency_ms']}ms, Slip={rec['realized_slip']:.4f},  Velocity={rec['fill_velocity']:.4f} qty/s")
-                break
+                rec_price = rec.get("price", fill_price)
+                rec["realized_slip"] = abs(fill_price - rec_price)
+                qty_used =  fill_qty if fill_qty is not None else rec["qty"]
+                rec["fill_velocity"] = qty_used / max((rec["latency_ms"] / 1000.0), 0.001)  # qty/sec
+                logger.info(
+                    f"[Execution Attribution] Order {order_id} filled." 
+                    f"Latency={rec['latency_ms']}ms, Slip={rec['realized_slip']:.4f},"
+                    f" Velocity={rec['fill_velocity']:.4f} qty/s"
+                )
+                return
+            
+        # Unexpected: Fill for an order not logged at placement
+        logger.warning(
+            f"Fill received for unknown order_id = {order_id}."
+            "Creating synthetic execution_log entry with defaults."
+        )
+
+        synthetic_record = {
+            "orderId": order_id,
+            "qty": None, #Unknown
+            "price": fill_price, # at least we know the fill price
+            "placement_ts": fill_ts, # Assume fill_ts as placement baseline
+            "latency_ms": None, #Cannot compute without true placement
+            "realized_slip": None,      # cannot compute without expected price
+            "fill_velocity": None,      # cannot compute without qty
+            "liquidity": None,          # unknown
+            "exp_fill_prob": None,      # unknown
+            "regime": None,             # unknown
+            "expected_slip": None,      # unknown
+        }
+
+        self.execution_log.append(synthetic_record)
 
     def get_recent_fill_velocity(self, lookback: int = 5) -> float:
         recent = self.execution_log[-lookback:]
