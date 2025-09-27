@@ -96,10 +96,24 @@ class CognitiveMarketRegimeClassifier:
         base_regime = self.classify_environment()
         reinforced_regime = self.reinforce_regime(base_regime)
 
+        #Detect regime drift (mutation within same label)
+        drift_detected = self.detect_regime_drift()
+        over_lay = self.get_behavioral_overlay()
+
+        # Log regime shift
         if reinforced_regime != self.last_regime:
             print(f"[Regime Shift] {self.last_regime.value} → {reinforced_regime.value} at {datetime.now()}")
             self.last_regime = reinforced_regime
             self.last_regime_change = datetime.now()
+
+        #Log regime drift
+        if drift_detected:
+            print(f"[Regime Drift] {self.last_regime.value} showing behavioral mutation at {datetime.now()}")
+
+        #Log behavioral overlay
+        if over_lay != "NORMAL":
+            print(f"[Behavioral Overlay] {over_lay} active at {datetime.now()}")
+
 
         self.regime_history.append(reinforced_regime)
 
@@ -116,10 +130,64 @@ class CognitiveMarketRegimeClassifier:
         return (datetime.now() - self.last_regime_change).total_seconds()
     
     def get_regime_stability(self) -> float:
+        """
+        To defer trades in unstable regimes.
+        """
         if not self.regime_history:
             return 0.0  #Ensure that we don't divide by zero
         current = self.get_current_regime()
         return round(self.regime_history.count(current) / len(self.regime_history), 2)
+
+    def detect_regime_drift(self) -> bool:
+        """
+        To log or Simulate regime transitions.
+        """
+        current = self.get_current_regime()
+        confidence = self.signal_calibrator.get_current_confidence()
+        update_rate = self.orderbook.get_update_rate()
+        liquidity = (
+            self.orderbook.get_liquidity_within_bps("bid", 50) +
+            self.orderbook.get_liquidity_within_bps("ask", 50)
+        )
+        volatility = self.orderbook.get_volatility_estimate()
+        spoof_score = max([
+            self.cancel_window.compute_cancel_impact_score(f['price'], f['side'])
+            for f in self.cancel_window._flags
+            if f['type'] == "CANCEL_DENSITY_SPIKE"
+        ], default=0.0)
+
+        # Example drift conditions
+        if current == MarketRegime.TRENDING and confidence < 0.3 and spoof_score > 0.4:
+            return True  # Momentum exhaustion
+        if current == MarketRegime.MEAN_REVERTING and volatility > 0.02 and spoof_score > 0.3:
+            return True  # Volatile breakout
+        if current == MarketRegime.ILLIQUID and update_rate > 1.0 and liquidity > 300:
+            return True  # Liquidity recovery
+
+        return False
+    
+
+    def get_behavioral_overlay(self) -> str:
+        """
+        You can use this overlay in your execution logic to throttle, defer or fade trades if the 
+        regime label hasnt changed.
+        """
+        confidence = self.signal_calibrator.get_current_confidence()
+        volatility = self.orderbook.get_volatility_estimate()
+        spoof_score = max([
+            self.cancel_window.compute_cancel_impact_score(f['price'], f['side'])
+            for f in self.cancel_window._flags
+            if f['type'] == "CANCEL_DENSITY_SPIKE"
+        ], default=0.0)
+
+        if spoof_score > 0.6 and volatility > 0.03:
+            return "LIQUIDITY_VACUUM"
+        if confidence < 0.3 and volatility > 0.02:
+            return "MOMENTUM_EXHAUSTION"
+        if volatility < 0.005 and confidence < 0.4:
+            return "CHOPPY_NOISE"
+
+        return "NORMAL"
 
 
 
