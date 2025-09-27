@@ -1,0 +1,1360 @@
+from typing import Dict, Any, List, Tuple, Optional
+from .interface import CancelWindow #samefolder
+from collections import defaultdict
+from datetime import datetime
+import time 
+import math 
+import uuid
+
+from market_data.orderbook import OrderBook
+from cancel_window.order_age_distribution import OrderAgeDistribution
+
+# ====== adaptive_density_tuner.py
+class AdaptiveDensityWindow:
+    def __init__(self, initial_window_ms: int = 100, decay: float = 0.1):
+        self.current_window = initial_window_ms
+        self.decay = decay 
+
+    def update(self, ts: float, recent_cancel_rate: float):
+        #assume cancel rate is in cancels per second
+        ideal_window = max(25, min(500, 1000) / (recent_cancel_rate + 1e-6))
+        self.current_window = (1 - self.decay) * self.current_window + self.decay * ideal_window
+
+    def get_current_window(self) -> int:
+        return int(self.current_window)
+    
+# ======Adaptive Threshold ============
+class AdaptiveThreshold:
+    def __init__(self, initial_threshold: int = 3, decay: float = 0.1):
+        self.threshold = initial_threshold
+        self.decay = decay 
+
+    def update(self, volume: float, volatility: float):
+        #Simple heuristic: increase threshold when volume or volatility is high
+        factor = 1 + 0.5 * math.tanh(volume * volatility)
+        adjusted = max(2, min(10, factor * self.threshold))
+        self.threshold = (1 - self.decay) * self.threshold + self.decay *adjusted
+
+    def get_threshold(self) -> int:
+        return int(self.threshold)
+    
+
+# ========== adaptive_fill_threshold ============
+class FillThresholdTuner:
+    def __init__(self, initial_ratio: float = 0.9, decay: float = 0.05):
+        self.ratio = initial_ratio 
+        self.decay = decay 
+
+    def update(self, avg_trade_size: float, volatility: float):
+        #Reduce threshold slightly in high volatility to allow more fills
+        adjustment = max(0.7, min(0.98, self.ratio - 0.1 * math.tanh(volatility)))
+        self.ratio = (1 - self.decay) * self.ratio + self.decay * adjustment 
+
+    def get_ratio(self) -> float :
+        return self.ratio
+
+class CancelWindowTunerForLayering:
+    def __init__(self, ema_alpha: float = 0.2, min_ms: int = 100, max_ms: int = 350):
+        self.ema_latency = None
+        self.ema_alpha = ema_alpha
+        self.min_ms = min_ms
+        self.max_ms = max_ms 
+
+    def update(self, latency_ms: float):
+        if self.ema_latency is None:
+            self.ema_latency = latency_ms
+        else:
+            self.ema_latency = (
+                self.ema_alpha * latency_ms + (1 - self.ema_alpha) * self.ema_latency
+            )
+        self.ema_latency = max(self.min_ms, min(self.ema_latency, self.max_ms))
+    
+    def current_window_ms(self) -> int :
+        return int(self.ema_latency or self.min_ms)
+
+# ===== CancelWindowTuner (inline) ========
+class CancelWindowTuner:
+    def __init__(self, ema_alpha: float = 0.2, min_ms: int = 50, max_ms: int = 75):
+        self.ema_latency = None
+        self.ema_alpha = ema_alpha
+        self.min_ms = min_ms
+        self.max_ms = max_ms 
+
+    def update(self, latency_ms: float):
+        if self.ema_latency is None:
+            self.ema_latency = latency_ms
+        else:
+            self.ema_latency = (
+                self.ema_alpha * latency_ms + (1 - self.ema_alpha) * self.ema_latency
+            )
+        self.ema_latency = max(self.min_ms, min(self.ema_latency, self.max_ms))
+    
+    def current_window_ms(self) -> int :
+        return int(self.ema_latency or self.min_ms)
+    
+# ===== Main Class ======
+
+class SimpleCancelWindow(CancelWindow):
+    """
+    Shadow-book tracker + fast-cancel / fill logic.
+    Emits:
+        1. CANCEL_SPOOF - size->0 within window_ms
+        2. TRUE_FILL - trade size >= removed size inside window_ms
+        3. PARTIAL_FILL - trade size < removed size " "
+        4. ICERBERG_CANCEL - size is rudeced to zero over multiple orders
+        5. HIGH_CANCEL_DENSITY - >= N cancels at the same (side, price) within cancel_density_window_ms
+        6. CANCEL_DENSITY_SPIKE -> More than threshold cancels at same level rollwing window
+        7. MULTILEVEL_LADDERING -> Placing multiple orders across several adjacent price levels on one side (bid or ask) in rapid succession to simulate strong or selling interest with the intent to fill them
+        8. LADDER_CANCEL_ONLY
+        9. FILL_NO_CANCEL_CACHE -> for stealth fills near top of book
+        10. LADDER_TRUE_FILL
+        11. LADDER_PARTIAL_FILL
+        12. REPOSTING_BEHAVIOR -> Cancel at nearby price, then re-add at same / nearby price (spoofing or layering)
+        13. LAYER_WIPE -> Canceling several prices at once in a singl direction (layer wipe)
+        14. BURST_CANCEL -> Very rapid cancels across multiple levels (cancel sweep)
+        15. PING_CANCEL -> Orders placed for very short time (ping for liquidity)
+    """
+    # -----------------------------------------------------------------------------------------------#
+    def __init__(self):
+        
+        self.adaptive = True
+        self.window_ms = None
+        self.tuner = CancelWindowTuner() if self.adaptive else None
+        self.order_age_tracker = OrderAgeDistribution()
+
+        self._flags: List[Dict[str,Any]] = []
+
+        #-----------------New shadow-book state ---------------------------------
+        self.bids: Dict[float, float] = {}  #price -> size
+        self.asks: Dict[float, float] = {}
+
+        # when a level is first seen
+        self.add_ts: Dict[tuple[str, float], int ] = {} #("bid"/"asks", price) -> epoch-ms
+
+        # New -> cache of most-recent cancels so trades can match them
+        # key -> ("bid"/"ask", price);  value -> (cancel_ts, removed_size)
+        self.cancel_cache: Dict[Tuple[str, float], Tuple[int, float]] = {}
+
+        #New -> Track size reductions (for iceberg detection)
+        self.reduction_history: Dict[Tuple[str, float], List[float]] ={}
+
+        #Track timestamps of cancels per level
+        self.cancel_timestamps: Dict[Tuple[str, float], List[int]] = {}
+
+        #New: track per-redution timestamps
+        self.reduction_timestamps: Dict[Tuple[str, float], List[int]] = {}
+
+        #Dynamic cancel Density Thresholds per side
+        self.cancel_density_threshold_bid = AdaptiveThreshold(initial_threshold=3) #Example: 3 cancels in the last 100ms
+        self.cancel_density_threshold_ask = AdaptiveThreshold(initial_threshold=3)
+
+        self.cancel_density_window_ms = AdaptiveDensityWindow(initial_window_ms=75) #Timewindow to evaluate density 
+
+        #----------------------------NOT YET SEEN WHAT IT DOES-----------------------#
+        self.cancel_events = []
+        self.fill_events = []
+       
+        self.orderbook = OrderBook()   # to be injected/ set externally
+        self.midprice = self.orderbook.get_midprice()    #injected externally by orderbook
+        #---------------------------------------------------------------------------#
+
+        #Add Iceberg Cancel Buffer
+        self.iceberg_buffer = defaultdict(list) # (price, side) -> List(Dict)
+
+        # For detecting multilevel laddering
+        self.laddering_buffer = [] #For detecting multilevel laddering
+        self.active_ladder = None
+
+
+    def _next_id(self) -> str:
+        """Generate Unique ID for orders"""
+        return str(uuid.uuid4())
+
+
+
+    # -------------------------------------------------------------------------------------------------#
+    # L2 UPDATES
+    # -------------------------------------------------------------------------------------------------#
+    def process_l2_update(self, msg: Dict[str, Any]) -> None:
+        ts = msg["E"]       # event time
+        bid_updates =msg.get("b", [])   #[["30000","1,2"],......]
+        asks_updates = msg.get("a", [])
+        
+        #helper for each side
+        def _handle(side: str, book: Dict[float, float], updates):
+            for price_str, size_str in updates:
+                price = float(price_str)
+                size = float(size_str)
+                key = (side, price)
+
+                #Add / Modify
+                if size > 0:
+                    prev_size = book.get(price)
+
+                    # New order
+                    if price not in book:
+                        self.add_ts[key] = ts
+                    else:
+                        if prev_size is not None:
+                            reduction = prev_size - size
+                            if reduction > 0:
+                                #Tracks if there was a reduction for the iceberg detection
+                                self.reduction_history.setdefault(key,[]).append(reduction)
+                                self.reduction_timestamps.setdefault(key,[]).append(ts)
+                    
+                    #Update book
+                    book[price] = size
+
+                    #Track new laddering levels
+                    if prev_size is None:
+                        self.laddering_buffer.append({
+                            'side': side,
+                            'price': price,
+                            'timestamp': ts,
+                        })
+                        self.laddering_buffer = [e for e in self.laddering_buffer if ts - e['timestamp'] <= self.get_window_ms()]
+                        recent_levels =[e['price'] for e in self.laddering_buffer if e['side'] == side]
+                        if len(set(recent_levels)) >= 3:
+                            orderid = self._next_id() #Auto generate
+                            self._flags.append({
+                                'type': 'MULTILEVEL_LADDERING',
+                                'orderid': orderid,
+                                'side': side,
+                                'size': size,
+                                'price': price,
+                                'prices': sorted(set(recent_levels)),
+                                'timestamp': ts,
+                                'context': {
+                                    "window_ms": self.get_window_ms(),
+                                    "cancel_density": self.get_cancel_density(side),
+                                }
+                            })
+                            #Pass along to OrderAgeDistribution to tag
+                            self.order_age_tracker.cancel_order(orderid=orderid, timestamp=ts, event_type='MULTILEVEL_LADDERING', price=price, size=size, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
+                            
+                            self.active_ladder = {
+                                'side': side,
+                                'price': price,
+                                'prices': set(recent_levels),
+                                'timestamp': ts,
+                                'size': size,
+                                'filled': False
+                            }
+
+                # size == 0 -> Cancel
+                #Delete (Cancel)
+                else:
+                    if price in book:
+                        removed_size = book[price]
+                        #Use last reduction timestamp instead of first add_ts
+                        last_reduction_ts = self.reduction_timestamps.get(key, [self.add_ts.get(key)])[-1]
+                        dt = ts - last_reduction_ts
+
+                        #---Adaptive tuner update -------
+                        if self.adaptive and dt >= 0:
+                            self.tuner.update(dt)
+                            self.window_ms = self.tuner.current_window_ms()
+                        
+                        #Register the cancel
+                        self.register_cancel(ts, price, side, removed_size)
+
+                        # cache the cancel for a potential trade match
+                        self.cancel_cache[key] = (ts, removed_size)
+                        #Iceberg detection: multiple reductions before cancel
+                        reductions = self.reduction_history.get(key, [])
+                        if len(reductions) >= 2 and dt < self.get_window_ms():    #Iceberg flag
+                            # Quantitative iceberg scoring
+                            total_reduction = sum(reductions)
+                            iceberg_score = self._quantitative_iceberg_spoof(
+                                side, price, dt, total_reduction, ts
+                            )
+                            if iceberg_score >= 0.35: #Threshold for flag
+                                orderid = self._next_id() #Auto generate
+                                self._flags.append({
+                                    "timestamp": ts,
+                                    'orderid': orderid,
+                                    "type": "ICEBERG_CANCEL",
+                                    "side": side,
+                                    "price": price,
+                                    "size": size,
+                                    "reductions": reductions,
+                                    "latency_ms": dt,
+                                    "score": round(iceberg_score, 3),
+                                    "context": {
+                                        "window_ms": self.get_window_ms(),
+                                        "cancel_density": self.get_cancel_density(side),
+                                    }
+                                })
+                                #Pass along to OrderAgeDistribution to tag
+                                self.order_age_tracker.cancel_order(orderid=orderid, timestamp=ts, event_type="ICEBERG_CANCEL", price=price, size=size, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
+
+                        elif dt < self.get_window_ms(): 
+                            spoof_score = self._quantitative_iceberg_spoof(side, price, dt, removed_size, ts)
+                            #Short-lived order -> spoof cancel
+                            orderid = self._next_id() #Auto generate
+                            self._flags.append({
+                                "timestamp": ts,
+                                'orderid': orderid,
+                                "type": "CANCEL_SPOOF",
+                                "side": side,
+                                'size': size,
+                                "price": price,
+                                "latency_ms": dt,
+                                "score": round(spoof_score, 3),
+                                "context": {
+                                    "window_ms": self.get_window_ms(),
+                                    "cancel_density": self.get_cancel_density(side)
+                                }
+                                
+                            })
+                            #Pass along to OrderAgeDistribution to tag
+                            self.order_age_tracker.cancel_order(orderid=orderid, timestamp=ts, event_type="CANCEL_SPOOF", price=price, size=size, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
+                       
+                        # Record cancel timestamp
+                        self.cancel_timestamps.setdefault(key, []).append(ts)
+                        #check for high cancel density
+                        recent_cancels = [
+                            t for t in self.cancel_timestamps[key]
+                            if ts - t <= self.cancel_density_window_ms.get_current_window()
+                        ]
+
+                        recent_cancel_rate = len(recent_cancels) / (self.cancel_density_window_ms.get_current_window() / 1000)
+                        self.cancel_density_window_ms.update(ts, recent_cancel_rate)
+
+                        vol = self.orderbook.get_estimated_volume(side)
+                        volty = self.orderbook.get_volatility_estimate()
+                        threshold = self.cancel_density_threshold_bid if side == "bid" else self.cancel_density_threshold_ask
+                        threshold.update(vol, volty)
+
+
+                        if len(recent_cancels) >= threshold.get_threshold():
+                            orderid = self._next_id() #Auto generate
+                            self._flags.append({
+                                'orderid': orderid,
+                                "timestamp": ts,
+                                "type": "HIGH_CANCEL_DENSITY",
+                                "side": side,
+                                'size': size,
+                                "price": price,
+                                "count": len(recent_cancels),
+                                "density_window_ms": self.cancel_density_window_ms.get_current_window(),
+                                "context": {
+                                    "window_ms": self.get_window_ms(),
+                                    "Cancel Density": self.get_cancel_density(side)
+                                }
+                            })
+
+                        #Check for ladder cancels
+                        if self.active_ladder and key[0] == self.active_ladder['side'] and price in self.active_ladder['prices']:
+                            orderid = self._next_id() #Auto generate
+                            self._flags.append({
+                                'orderid': orderid,
+                                'type': 'LADDER_CANCEL_ONLY',
+                                'side': side,
+                                'size': size,
+                                'price': price,
+                                'timestamp': ts,
+                                "context": {
+                                    "window_ms": self.get_window_ms(),
+                                    "Cancel Density": self.get_cancel_density(side)
+                                }
+                            })
+                            #Pass along to OrderAgeDistribution to tag
+                            self.order_age_tracker.cancel_order(orderid=orderid, timestamp=ts, event_type='LADDER_CANCEL_ONLY', price=price, size=size, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
+
+                        # Clean up
+                        book.pop(price, None)
+                        self.add_ts.pop(key, None)
+                        self.reduction_history.pop(key, None)
+                        self.reduction_timestamps.pop(key, None)
+
+        _handle("bid", self.bids, bid_updates)
+        _handle("ask", self.asks, asks_updates)
+
+
+        if self.active_ladder and ts - self.active_ladder['timestamp'] > 300:
+            self.active_ladder = None
+        
+        #Detect excessive cancel density
+        density = self.compute_cancel_density()  #you can parameterize this too
+        for (side, price), count in density.items():
+            
+            vol = self.orderbook.get_estimated_volume(side)
+            volty = self.orderbook.get_volatility_estimate()
+            threshold = self.cancel_density_threshold_bid if side == "bid" else self.cancel_density_threshold_ask
+            threshold.update(vol, volty)
+
+            if count >= threshold.get_threshold(): #Set a meaningful threshold
+                orderid = self._next_id() #Auto generate
+                self._flags.append({
+                    "timestamp": msg["E"],
+                    'orderid': orderid,
+                    "type": "CANCEL_DENSITY_SPIKE",
+                    "side": side,
+                    "price": price,
+                    "cancel_count": count,
+                    "window_ms": self.cancel_density_window_ms.get_current_window(),
+                    "context": {
+                                    "window_ms": self.get_window_ms(),
+                                    "Cancel Density": self.get_cancel_density(side)
+                                }
+                })
+    
+    # --------------------------------------------------------------------------#
+    #   TRADES
+    # --------------------------------------------------------------------------#
+    def process_trade(self, trade_msg: Dict[str, Any]) -> None:
+        """
+        Match trade to recently-cancelled level to flag true/partial fills.
+        
+        """
+        ts     = trade_msg["T"]
+        price  = float(trade_msg["p"])
+        qty    = float(trade_msg["q"])
+        side   = "bid" if trade_msg["m"] else "ask"  #side that was removed
+
+        key = (side, price)
+        
+        #Did we see a cancel at this price recently?
+        if key in self.cancel_cache:
+            cancel_ts, removed_size = self.cancel_cache[key]
+            dt = ts - cancel_ts
+
+            if self.adaptive and dt >= 0:
+                self.tuner.update(dt)
+                self.window_ms = self.tuner.current_window_ms()
+
+            if dt < self.get_window_ms():
+                flag_type = "TRUE_FILL" if qty >= removed_size else "PARTIAL_FILL"
+                orderid = self._next_id() #Auto generate
+                self._flags.append({
+                    'orderid': orderid,
+                    "timestamp": ts,
+                    "type": flag_type,
+                    "side": side,
+                    "price": price,
+                    "qty": qty,
+                    "latency_ms": dt,
+                    "context": {
+                                    "window_ms": self.get_window_ms(),
+                                    "Cancel Density": self.get_cancel_density(side)
+                                }
+                })
+                #Pass along to OrderAgeDistribution to tag
+                self.order_age_tracker.fill_order(orderid=orderid, timestamp=ts, event_type=flag_type, price=price, size=qty, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
+
+            else:
+                #Fallback detection: fill seen at meaningful price w/o cancel
+                best_price = self.orderbook.get_best_price('ask' if side == 'bid' else 'bid')
+                spread = abs(best_price - price)
+                if spread < 2 * self.orderbook.get_tick_size(): # Near top of book
+                    orderid = self._next_id() #Auto generate
+                    self._flags.append({
+                        'orderid': orderid,
+                        'timestamp': ts,
+                        'type': 'FILL_NO_CANCEL_CACHE',
+                        'side': side,
+                        'price': price,
+                        'qty': qty,
+                        "context": {
+                                    "window_ms": self.get_window_ms(),
+                                    "Cancel Density": self.get_cancel_density(side)
+                                }
+                    })
+                    #Pass along to OrderAgeDistribution to tag
+                    self.order_age_tracker.fill_order(orderid=orderid, timestamp=ts, event_type='FILL_NO_CANCEL_CACHE', price=price, size=qty, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
+            
+            self.fill_events.append({
+                'timestamp': ts,
+                'price': price,
+                'qty': qty,
+                'side': side
+            })
+
+            #Fill  follow-up for laddering
+            if self.active_ladder and price in self.active_ladder['prices'] and side == self.active_ladder['side']:
+                self.active_ladder['filled'] = True
+                fill_type = "LADDER_TRUE_FILL" if qty >= self.orderbook.get_level_size(price, side) else 'LADDER_PARTIAL_FILL'
+                orderid = self._next_id() #Auto generate
+                self._flags.append({
+                    'orderid': orderid,
+                    'timestamp': ts,
+                    'type': fill_type,
+                    'side': side,
+                    'price': price,
+                    'qty': qty,
+                    "context": {
+                                    "window_ms": self.get_window_ms(),
+                                    "Cancel Density": self.get_cancel_density(side)
+                                }
+                })
+                #Pass along to OrderAgeDistribution to tag
+                self.order_age_tracker.fill_order(orderid=orderid, timestamp=ts, event_type=flag_type, price=price, size=qty, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
+
+            if self.active_ladder and ts -self.active_ladder['timestamp'] > 300:
+                self.active_ladder =  None
+
+            self.add_ts.pop(key, None)  # cleanup
+            self.reduction_history.pop(key, None)
+            #Keep cancel_cache until it ages out (> window), dont pop immediately
+    # -----------------------------------------------------------------------------------------------
+    # HELPER METHODS
+    # -----------------------------------------------------------------------------------------------
+    def flush_flags(self) -> List[Dict[str, Any]]:
+        #return current flags and clears them (destructive)
+        #Use in streaming or batch mode, where flags should be consumed once
+        out, self._flags = self._flags, []
+        return out
+    
+    def get_flags(self) -> list[dict]:
+        #returns current flags only (Non-destructive)
+        #Use to inspect flags multiple times or during testing/debugging
+        flags = self._flags[:]
+        self._flags.clear()
+        return flags
+    
+
+    def set_window_ms(self):
+        self.window_ms = self.tuner.current_window_ms()
+
+    def get_window_ms(self) -> int:
+        self.window_ms = self.tuner.current_window_ms()
+        return self.window_ms
+
+
+    def snapshot_state(self) -> Dict[str, Any]:
+        #Return minimal state for now
+        return {
+            "window_ms": self.get_window_ms(),
+            "flag_count":  len(self._flags),
+            "bids": len(self.bids),
+            "asks": len(self.asks),
+            "cancel_cache": len(self.cancel_cache),
+            "flags": self.get_flags(),
+            "cancel_density": self.compute_cancel_density()
+            
+
+        }
+    
+    def compute_cancel_density(self) -> Dict[Tuple[str, float], int]:
+        """
+        Compute how many cancels occured at each (side, price) level in the past window 'self.get_window_ms()'
+        """
+        now = max((ts for timestamps in self.cancel_timestamps.values() for ts in timestamps), default=0)
+        cutoff = now - self.get_window_ms()
+        cancel_density: Dict[Tuple[str, float], int] = {}
+
+        for key, timestamps in self.cancel_timestamps.items():
+            #count how many timestamps fall within the window
+            recent_cancels = [ts for ts in timestamps if ts >= cutoff]
+            if recent_cancels:
+                cancel_density[key] = len(recent_cancels)
+        
+        return cancel_density
+    
+    def set_cancel_density_params(self, initial_threshold: int, initial_window_ms: int) -> None:
+        self.cancel_density_threshold_bid = AdaptiveThreshold(initial_threshold=3) #Example: 3 cancels in the last 100ms
+        self.cancel_density_threshold_ask = AdaptiveThreshold(initial_threshold=3)
+
+        self.cancel_density_window_ms = AdaptiveDensityWindow(initial_window_ms=75) #Timewindow to evaluate density 
+
+
+
+    #-------------------------------------------------------------
+    # Register Cancel
+    #---------------------------------------------------------
+
+    def register_cancel(self, timestamp: int, price: float, side: str, size: float) -> None:
+        """
+        Registers a cancel event with metadata (used in l2 updates)
+        """
+        #Store Cancel
+        event = {
+            'price': price,
+            'side': side,
+            'timestamp': timestamp,
+            'size': size}
+        
+        self.cancel_events.append(event)
+        #Buffer cancels for ice detection
+        key = (price, side)
+        self.iceberg_buffer[key].append(event)
+
+        #Prune Old Ones
+        self.iceberg_buffer[key] = [
+            e for e in self.iceberg_buffer[key]
+            if timestamp - e["timestamp"] <= self.get_window_ms()
+        ]
+
+        #Trigger detection
+        self._detect_iceberg_cancel(key)
+
+        #New Spoof detection features
+        self.detect_ping_cancel(timestamp, price, side, size)
+        self.detect_reposting_behavior(timestamp, price, side, size)
+        self.detect_layer_wipe(timestamp, price, side, size)
+        self.detect_burst_cancel(timestamp, price, side, size)
+
+    def detect_burst_cancel(self, timestamp:int, price:float, side: str, size: float):
+        """Very rapid cancels across multiple levels (like a cancel sweep)"""
+        window_ms = self.get_window_ms()      #Rolling burst window
+        recent = [e for e in self.cancel_events if timestamp - e['timestamp'] <= window_ms]
+
+        vol = self.orderbook.get_estimated_volume(side)
+        volty = self.orderbook.get_volatility_estimate()
+        threshold = self.cancel_density_threshold_bid if side == "bid" else self.cancel_density_threshold_ask
+        threshold.update(vol, volty)
+
+        if len(recent) >= threshold.get_threshold():
+            orderid = self._next_id() #Auto generate
+            self._flags.append({
+                'orderid': orderid,
+                'type': 'BURST_CANCEL',
+                'timestamp': timestamp,
+                'cancel_count': len(recent),
+                'price': price,
+                'side': side,
+                'size': size,
+                'window_ms': window_ms,
+               
+            })
+            #Pass along to OrderAgeDistribution to tag
+            self.order_age_tracker.cancel_order(orderid=orderid, timestamp=timestamp, event_type='BURST_CANCEL', price=price, size=size, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
+
+    def detect_ping_cancel(self, timestamp: int, price: float, side: str, size: float):
+        "Tracks orders placed for a very short time (ping for liquidity)"
+        cancels_at_price = [
+            e for e in self.cancel_events if e['price'] == price and e['side'] == side
+        ]
+        vol = self.orderbook.get_estimated_volume(side)
+        volty = self.orderbook.get_volatility_estimate()
+        threshold = self.cancel_density_threshold_bid if side == "bid" else self.cancel_density_threshold_ask
+        threshold.update(vol, volty)
+
+        if len(cancels_at_price) >= threshold.get_threshold():
+            deltas = [
+                cancels_at_price[i+1]['timestamp'] - cancels_at_price[i]['timestamp']
+                for i in range(len(cancels_at_price)-1)
+            ]
+            if any(delta < self.get_window_ms() for delta in deltas): #Arbitary ping delta
+                orderid = self._next_id() #Auto generate
+                self._flags.append({
+                    'orderid': orderid,
+                    'type': 'PING_CANCEL',
+                    'timestamp': timestamp,
+                    'cancel_count': len(cancels_at_price),
+                    'price': price,
+                    'side': side,
+                    'size': size,
+                    'window_ms': self.get_window_ms()
+
+                })
+                #Pass along to OrderAgeDistribution to tag
+                self.order_age_tracker.cancel_order(orderid=orderid, timestamp=timestamp, event_type='PING_CANCEL', price=price, size=size, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
+
+    def detect_reposting_behavior(self, timestamp: int, price: float, side:str, size: float):
+        """Tracks cancel at price and re-add at same/ nearby price (spoofing/layering)"""
+        book = self.bids if side == 'bid' else self.asks
+        if (side, price) in self.cancel_cache and price in book:
+            orderid = self._next_id() #Auto generate
+            self._flags.append({
+                'orderid': orderid,
+                'type': 'REPOSTING_BEHAVIOUR',
+                'timestamp': timestamp,
+                'price': price,
+                'side': side,
+                'size': size,
+                'timestamp': timestamp
+            })
+            #Pass along to OrderAgeDistribution to tag
+            self.order_age_tracker.cancel_order(orderid=orderid, timestamp=timestamp, event_type='REPOSTING_BEHAVIOUR', price=price, size=size, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
+
+    def detect_layer_wipe(self, timestamp: int, price: float, side:str, size:float):
+        """Cancelling several price at once in a single direction(layer wipe)"""
+        price_levels = self.bids.keys() if side == 'bid' else self.asks.keys()
+        cancel_levels = [price for (s, price), _ in self.cancel_cache.items() if s == side]
+        active_levels = set(price_levels).intersection(cancel_levels)
+
+        vol = self.orderbook.get_estimated_volume(side)
+        volty = self.orderbook.get_volatility_estimate()
+        threshold = self.cancel_density_threshold_bid if side == "bid" else self.cancel_density_threshold_ask
+        threshold.update(vol, volty)
+        
+        if len(active_levels) >= threshold.get_threshold(): #arbitary threshold
+            orderid = self._next_id() #Auto generate
+            self._flags.append({
+                'orderid': orderid,
+                'type': 'LAYER_WIPE',
+                'timestamp': timestamp,
+                'price': price,
+                'side': side,
+                'size': size,
+                'price_levels': list(active_levels),
+                'timestamp': int(time.time()*1000)
+            })
+            #Pass along to OrderAgeDistribution to tag
+            self.order_age_tracker.cancel_order(orderid=orderid, timestamp=timestamp, event_type='LAYER_WIPE', price=price, size=size, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
+
+    def _detect_iceberg_cancel(self, key: Tuple[float, str]) -> None:
+        """
+        Detect iceberg cancels: multiple reductions followed by full cancel.
+        Uses score gated flagging.
+        """
+        events = self.iceberg_buffer[key]
+        if len(events) < 2: # need at least 2 reductions + final cancel
+            return
+        
+        total_size = sum(e['size'] for e in events)
+        first_ts = events[0]['timestamp']
+        last_ts = events[-1]['timestamp']
+        dt = last_ts - first_ts
+        side = events[-1]['side']
+        price= events[-1]['price']
+
+        iceberg_score = self._quantitative_iceberg_spoof(
+            side =side,
+            price =price,
+            dt =dt,
+            total_size = total_size,
+            ts = last_ts,
+        )
+
+        # icebreg if multiple reductions then final cancel, or many small cancels
+        if iceberg_score >= 0.35: # Score gate
+            orderid = self._next_id() #Auto generate
+            self._flags.append({
+                'orderid': orderid,
+                "type": "ICEBERG_CANCEL",
+                "price": key[0],
+                "side": key[1],
+                "size": total_size,
+                "count": len(events),
+                "score": round(iceberg_score, 3),
+                "timestamp": events[-1]["timestamp"]
+
+
+            })
+            #Pass along to OrderAgeDistribution to tag
+            self.order_age_tracker.cancel_order(orderid=orderid, timestamp=dt, event_type='ICEBERG_CANCEL', price=key[0], size=total_size, distance_from_best=abs(self.orderbook.get_best_price(side) - key[0]), side=side)
+
+            #Clear to avoid double reporting
+            self.iceberg_buffer[key].clear()
+
+
+    def get_cancel_density(self, side:str) -> dict:
+        """
+        :param side: str
+        :Returns a dictironary of {price: cancel_count} for the given side
+        Helps quantify where cancel activity is concentrated
+        """
+        density = defaultdict(int)
+        for event in self.cancel_events:
+            if event['side'] == side:
+                price = event['price']
+                density[price] +=  1
+        return dict(density)
+    
+    def get_normalized_cancel_density(self):
+        """
+        Compute normalized cancel density metrics over the current window.
+        returns:
+            dict: {
+                'time_window_ms': int,
+                'price_range': float,
+                'num_cancels': int,
+                'cancel_density_per_sec': float,
+                'cancel_density_per_price': float,
+                'normalized_score': float
+            }
+        """
+        if not self.cancel_events:
+            return{
+                'time_window_ms': 0,
+                'price_range': 0.0,
+                'num_cancels': 0,
+                'cancel_density_per_sec': 0.0,
+                'cancel_density_per_price': 0.0,
+                'normalized_score': 0.0
+            }
+        
+        timestamps = [event['timestamp'] for event in self.cancel_events]
+        prices = [event['price'] for event in self.cancel_events]
+
+        time_window_ms = max(timestamps) - min(timestamps)
+        price_range = max(prices) - min(prices)
+
+        num_cancels = len(self.cancel_events)
+        time_window_sec = time_window_ms / 1000.0 if time_window_ms > 0 else 1e-3
+        price_range = price_range if price_range > 0 else 1e-3  # avoid division by zero
+
+        cancel_density_per_sec = num_cancels / time_window_sec
+        cancel_density_per_price = num_cancels / price_range 
+
+        #Optional Composite score
+        normalized_score = (cancel_density_per_sec + cancel_density_per_price) / 2
+
+        return{
+            'time_window_ms': time_window_ms,
+            'price_range': price_range,
+            'num_cancels': num_cancels,
+            'cancel_density_per_sec': cancel_density_per_sec,
+            'cancel_density_per_price': cancel_density_per_price,
+            'normalized_score': normalized_score
+        }
+    
+    def flush(self):
+        self.cancel_events.clear()
+        self.fill_events.clear()
+
+    #revist to ensure if this is complete
+    def update_midprice(self, mid_price: Optional[float] = None):
+
+        """Update mid price for cancel impact scoring 
+            If mid_price is provided (as tests do), use it, otherwise pull from the OrderBook.
+        """
+        if mid_price is not None:
+            self.mid_price = float(mid_price)
+        else:
+            if hasattr(self.orderbook, "get_midprice"):
+                self.mid_price = self.orderbook.get_midprice()
+            # fallback: return cached if mock orderbook has no method
+        return self.mid_price
+
+    
+    def compute_cancel_impact_score(self, price: float, side: str) -> float:
+        """Compute the impact score of cancels at a given price level and side.
+        The higher the score, the more market-impacting the cancel is.
+        """
+
+        # --- Step 1: Normalize Cancel Density -----
+        density = self.get_cancel_density(side)
+        total_cancels = sum(density.values()) or 1e-9
+        norm_density =(density.get(price, 0) / total_cancels)**1.5
+
+        # ------ Step 2: Distance from Midprice -----
+        if self.update_midprice() is None:
+            dist_from_mid = 0.5 # Neutral
+        else:
+            max_rel_dist = 0.02 #2%
+            mp = self.update_midprice()
+            # Guard mp == 0 to avoid division warnings in synthetic tests.
+            rel_dis = abs(price - mp) / (mp if mp else 1e-9)
+            dist_from_mid = max(0.0, 1.0 - min(1.0, rel_dis / max_rel_dist)) # mapped to [0,1]
+
+        # ------Step 3: Recent Fills at that Price ----
+        recent_fills = [f for f in self.fill_events if f['price'] == price and f['side'] == side]
+        fill_score = min(len(recent_fills) / 2, 1.0)    #normalize
+
+        # ------Step 4: Inverse Book Depth at Price ----
+        """Still need to implement the orderbook.get_level_size(price, size)"""
+        size_at_price = self.orderbook.get_level_size(price, side) or 1e-9
+        inv_book_depth = min(1.0 / size_at_price, 1.0)
+
+        # -----Weighted Combination -------
+        w1, w2, w3, w4 = 0.5, 0.2, 0.1, 0.2
+        score = (
+            w1 * norm_density +
+            w2 * dist_from_mid +
+            w3 * fill_score +
+            w4 * inv_book_depth
+
+        )
+        return round(score, 4)
+    
+    # ------------------------------------------
+    # Quantitative iceberg /spoof scoring helper
+    # --------------------------------------
+
+    def _quantitative_iceberg_spoof(self, side, price, dt, total_size, ts):
+        """
+        Score cancels probabilistically instead of binary flags
+        """
+        # Base score: bigger reduction and shorter dt -> higher score
+        size_score = min(1.0, total_size / 10.0) #Scale by typical level size
+        dt_score = max(0.0, 1.0 - dt / max(1, self.get_window_ms()))
+        #Distance from midprice: cancels closer to mid are more impactful
+        if self.midprice is not None:
+            dist = abs(price - self.midprice) / max(1e-9, self.midprice)
+            dist_score = max(0.0, 1.0 - dist / 0.02)
+        else:
+            dist_score = 0.5
+        score = 0.6 * size_score + 0.3 * dt_score + 0.1 * dist_score
+        return score
+
+
+
+"""Order layering Dection module
+Detects the strategtic placemeent of multiple orders at different price levels(typically on one side of the book) meant to 
+manipulate preice perception.
+
+Inputs:
+
+* Stream of limit_orders (price, size, side, timestamp)
+*Configurable layering_distance_threshold and min_layers
+
+Logic:
+*Group Orders by side
+* Check for multiple levels within a certain price spread
+* Check temporal proximit or burst patterns
+
+Output:
+*List of detected layering patterns
+*Optional: flag aggressive layering activity
+
+Purpose: Detects spoofing patterns based on clustered orders layered near the top of the book
+
+Detection Signals:
+*Multiple large orders placed at adjacent price levels 
+*On the same side(ask or bid)
+*Placed within a short time window.
+*Quickly canceled before execution
+"""
+
+from collections import defaultdict
+from typing import List, Dict, Any 
+import time
+from cancel_window.simple_cancel_window import CancelWindowTunerForLayering
+from cancel_window.simple_cancel_window import AdaptiveDensityWindow
+from cancel_window.simple_cancel_window import AdaptiveThreshold
+
+class OrderLayeringDetection:
+    def __init__(self, price_tick: float = 0.1,
+                  cluster_depth: int = 3,
+                    min_orders: int =3,
+                    retention_ms: int = 300_000,
+                    min_size_per_order: float = 0.0
+                    ):
+        """
+        :param time_window_ms: Time window to consider for clustering orders
+        :param price_tick: Minimum price difference to consider as a separate level
+        :param cluster_depth: Number of levels to consider for layering detection
+        :param min_orders: Minimum number of orders at each level to qualify as layering
+        """
+        self.tuner = CancelWindowTunerForLayering()
+        self.price_tick = price_tick
+        self.cluster_depth = cluster_depth
+        self.min_orders = min_orders
+        self.retention_ms = retention_ms
+        self.min_size_per_order = min_size_per_order
+
+
+
+        self.orders_log: List[Dict[str, Any]] = []  #All order placements
+        self.cancel_log: List[Dict[str, Any]] = [] #Cancels matching placed orders
+        self.fills_log: List[Dict[str, Any]] = [] #Optional: fills for evalution
+
+
+    def register_order(self, orderid:str, timestamp: int, price: float, size: float, side: str):
+        """
+        Register a new order in the system.
+        :param timestamp: Order timestamp in milliseconds
+        :param price: Order price
+        :param size: Order size
+        :param side: 'a' for ask, 'b' for bid
+        """
+        self.orders_log.append({
+            'orderid': orderid,
+            'timestamp': timestamp,
+            'price': price,
+            'size': size,
+            'side': self._normalize_side(side),
+            'status': 'active'  # initially active
+        })
+
+    def register_cancel(self, orderid: str, timestamp: int, event_type:str, price: float, size: float, side: str):
+        self.cancel_log.append({
+            'orderid': orderid,
+            'timestamp': timestamp,
+            'event_type': event_type,
+            'price': price,
+            'size': size,
+            'side': self._normalize_side(side),
+        })
+
+        # Mark Matching order as canceled
+        for order in reversed(self.orders_log): # Search from latest
+            if order['orderid'] == orderid and order['status'] == 'active':
+                latency = timestamp - order['timestamp']
+                self.tuner.update(latency)
+                order['cancel_time'] = timestamp
+                order['status'] = 'canceled'
+                break
+
+    def register_fill(self, orderid: str, timestamp: int, event_type: str, price: float,size: float, side: str):
+        self.fills_log.append({
+            'orderid': orderid,
+            'timestamp': timestamp,
+            'event_type': event_type,
+            'price': price,
+            'size': size,
+            'side': self._normalize_side(side),
+
+        })
+
+        for order in reversed(self.orders_log):
+            if order['orderid'] == orderid and order['status'] == 'active':
+                order['fill_time'] = timestamp 
+                order['status'] = 'filled'
+                break
+
+    def detect_layering(self) -> List[Dict[str, Any]]:
+        """
+        Detect potential layering patterns in the order log.
+        :return: List of detected layering clusters with spoofing characteristics
+        """
+        self._prune()
+        
+
+        suspicious_clusters = []
+        current_time = int(time.time() * 1000)
+
+        # Group orders into clusters by side and time_window
+        orders_by_side = defaultdict(list)
+        for order in self.orders_log:
+            if order['status'] in ['active', 'canceled', 'filled']:
+                orders_by_side[order['side']].append(order)
+
+        for side, orders in orders_by_side.items():
+            # Sort orders by price and then by timestamp
+            orders.sort(key=lambda x: (x['price'], x['timestamp']))
+            used_orders = set()
+
+            for i in range(len(orders)):
+                if orders[i]['orderid'] in used_orders:
+                    continue
+
+                cluster = [orders[i]]
+                price_levels = {orders[i]['price']}
+                
+                
+                for j in range(i + 1, len(orders)):
+                    if orders[j]['orderid'] in used_orders:
+                        continue
+                    
+
+                    time_diff = orders[j]['timestamp'] - orders[i]['timestamp']
+                    price_diff = abs(orders[j]['price'] - orders[i]['price'])
+
+             
+                
+                    if  time_diff > self.tuner.current_window_ms():
+                        break
+
+                
+
+                    if price_diff <= (self.price_tick * self.cluster_depth) + 1e-6:
+                        cluster.append(orders[j])
+                        price_levels.add(orders[j]['price'])
+                
+ 
+                if len(cluster) >= self.min_orders and len(price_levels) >= self.cluster_depth:
+                    if any(o['size'] < self.min_size_per_order for o in cluster):
+                        continue
+
+
+                    status_types = {o['status'] for o in cluster}
+
+                    if 'canceled' in status_types and 'filled' not in status_types:
+                        label = 'LAYER_CANCEL_ONLY'
+                    elif 'filled' in status_types:
+                        filled_ratio = sum(1 for o in cluster if o['status'] == 'filled') / len(cluster)
+                        label = 'LAYER_TRUE_FILL' if filled_ratio > 0.5 else 'LAYER_PARTIAL_FILL'
+                    else:
+                        label = 'LAYER_UNKNOWN'
+
+
+
+                    suspicious_clusters.append({
+                        'timestamp': orders[i]['timestamp'],
+                        'side': side,
+                        'cluster_size': len(cluster),
+                        'label': label,
+                        'depth_range': [min(o['price'] for o in cluster), max(o['price'] for o in cluster)],
+                        'durations': [o.get('cancel_time', current_time) - o['timestamp'] for o in cluster if o['status'] == 'canceled'],
+                        'aggression_score': sum(o['size'] for o in cluster) / len(cluster),
+                        'orders': cluster,
+
+                    })
+                    
+                    # Only Mark orders as used after cluster is accepted
+                    for o in cluster:
+                        used_orders.add(o['orderid'])
+       
+
+        return suspicious_clusters
+    
+    def _prune(self):
+        current_time = int(time.time() * 1000)
+        cutoff = current_time - self.retention_ms
+
+        self.orders_log = [o for o in self.orders_log if o['timestamp'] >= cutoff]
+        self.cancel_log = [c for c in self.cancel_log if c['timestamp'] >= cutoff]
+        self.fills_log = [f for f in self.fills_log if f['timestamp'] >= cutoff]
+
+    def _normalize_side(self, side: str) -> str:
+        return 'ask' if side in ['a', 'ask'] else 'bid'
+
+
+    def reset(self):
+        """
+        Reset the order log for a new detection cycle.
+        """
+        self.orders_log.clear()
+        self.cancel_log.clear()
+        self.fills_log.clear()
+        
+
+
+"""
+Order Age Distribution Module 
+
+Tracks the age of active orders to understand whether orders are passive (long lived) or aggressive(shortlived)
+- a feature tied to informed trading or liquidity stress
+
+input:
+*Order lifecylce (add, fill, cancel)
+
+Logic:
+*For each order, store timestamp_created 
+*When the order is cancelled or filled, compute age.
+*Use histogram or statiscal summary (e.g mean, std, quantiles)
+
+Output:
+*Age Distribution statistics
+*Optional: Detection of unusual burst of short-leved orders
+"""
+
+from typing import List, Dict
+
+class OrderAgeDistribution:
+    def __init__(self):
+        self.active_orders: Dict[str, Dict] = {}  # Maps order_id to timestamp_created
+        self.cancelled_orders: List[Dict]    = []  # List of cancelled orders with their ages
+        self.filled_orders: List[Dict]  = []  # List of filled orders with their ages
+        self.retention_ms = 300_000
+        self.max_events = 10_000
+
+    def _prune(self, current_time: int):
+        """Hybrid pruning: keep only recent events within retention window + cap max size"""
+        cutoff = current_time - self.retention_ms
+        self.cancelled_orders = [o for o in self.cancelled_orders if o['timestamp'] >= cutoff][-self.max_events:]
+        self.filled_orders = [o for o in self.filled_orders if o['timestamp'] >= cutoff][-self.max_events:]
+
+    
+    def register_event(self, orderid:str, timestamp: int, price: float, size: float, side: str)-> None:
+        """
+        Place a new order and record its creation time.
+        :param order_id: Unique identifier for the order
+        :param timestamp: Order timestamp in milliseconds
+        :param price: Order price
+        :param size: Order size
+        :param side: 'a' for ask, 'b' for bid
+
+        :return: None
+        """
+
+        """Add a new active order"""
+        self.active_orders[orderid] = {
+            'orderid': orderid,
+            'timestamp': timestamp,
+            'price': price,
+            'size': size,
+            'side': side,
+        }
+
+
+    def cancel_order(self, orderid:str, timestamp: int, event_type:str, price: float, size: float,distance_from_best:float, side: str) -> None:
+        """
+        Cancel an order and record its age and side/price context.
+        :param timestamp: Cancellation timestamp in milliseconds
+        :param price:
+        
+        :return : None
+        """
+        """Mark order as cancelled and compute its age"""
+        order = self.active_orders.pop(orderid, None)
+        if order:
+            age = timestamp - order['timestamp']
+            self.cancelled_orders.append({
+                'orderid': orderid,
+                'timestamp': timestamp,
+                'event_type': event_type,
+                'price': price,
+                'size': size,
+                'distance_from_best': distance_from_best,
+                'side': side,
+                'age': age,
+                })
+                
+       
+    
+    def fill_order(self,orderid:str, timestamp: int, event_type:str, price: float, size: float,distance_from_best:int, side: str) -> None:
+        """
+        Fill an order and record its age and side/price context
+        :param order_id: Unique identifier for the order
+        :param timestamp: Fill timestamp in milliseconds
+
+        :return : None
+        """
+        """Mark order as filled and compute its age"""
+        order = self.active_orders.pop(orderid, None)
+        if order:
+            age = timestamp - order['timestamp']
+            self.filled_orders.append({
+                'orderid': orderid,
+                'timestamp': timestamp,
+                'event_type': event_type,
+                'price': price,
+                'size': size,
+                'distance_from_best': distance_from_best,
+                'side': side,
+                'age': age
+            })
+
+    def detect_bursts(self, age_threshold_ms: int = 200, burst_window_ms: int = 500):
+        """
+        
+        detects bursts of short-lived orders (potential manipulation or stress).
+        (
+        Binary event flag- quickly tells you if there is a single burst of short lived orders right now, per side. Useful for real-time 
+        alerting
+
+        Use this in the Dynamic Risk Engine
+        )
+
+        :param age_threshold_ms: Max age for an order to be considered short-lived
+        :param burst_window_ms: Time window to look for bursts
+        :return: Dict with burst flags per side
+
+        This allows you to flag:
+            *Aggressive cancellation waves just before a spoof/fake move
+            *Real-time stress signals (liquidity panic, front running)
+            *Highly responsive algo tactics (e.g pinging for fills)
+
+        """
+        current_time = max([
+            *(o['timestamp'] for o in self.cancelled_orders),
+            *(o['timestamp'] for o in self.filled_orders) 
+        ], default=0)
+
+        self._prune(current_time)
+
+        recent_cancel_burst = [
+            o for o in self.cancelled_orders
+            if o['age'] <= age_threshold_ms and (current_time - o['timestamp'] <= burst_window_ms)
+        ]
+
+        recent_fill_burst = [
+            o for o in self.filled_orders
+            if o['age'] <= age_threshold_ms and (current_time - o['timestamp'] <= burst_window_ms)
+        ]
+
+        burst_by_side = {'ask': 0, 'bid': 0}
+        for o in recent_cancel_burst + recent_fill_burst:
+            burst_by_side[o['side']] += 1
+
+        return {
+            'burst_detected_bid': burst_by_side['bid'] >= 3, #Tweak threshold if needed
+            'burst_detected_ask': burst_by_side['ask'] >= 3
+        }
+    def detect_short_lived_bursts(self, age_threshold_ms: int = 300, cluster_window_ms: int= 500) -> Dict[str, int]:
+        """
+        Detect bursts of short-lived orders on each side (ask and bid).
+        (
+            Useful for:
+            * alphaScoring modules
+            * Volatility-aware fill thresholds
+            * Spoof heatmaps or cancel densities
+            * Execution deferral heuristics
+        )
+        :param age_threshold_ms: Max age to be considered short-lived
+        :param cluster_window_ms: Time window to count count orders as a burst
+        :return: Dict with number of detected bursts per side
+        """
+        from collections import defaultdict
+
+        current_time = max([
+            *(o['timestamp'] for o in self.cancelled_orders),
+            *(o['timestamp'] for o in self.filled_orders)
+        ], default=0)
+
+        self._prune(current_time)
+        
+        bursts = defaultdict(int)
+        for side in ['ask', 'bid']:
+            #Combine filled and cancelled orders on the same side that were short-lived
+            short_lived = [
+                o for o in self.cancelled_orders + self.filled_orders
+                if o.get('side') == side and o['age'] <= age_threshold_ms
+            ]
+
+            short_lived.sort(key=lambda o: o['timestamp'])
+
+            #Sliding window to detect bursts
+            i = 0
+            while i < len(short_lived):
+                burst_count = 1
+                j = i + 1
+                while j < len(short_lived) and (short_lived[j]['timestamp'] - short_lived[i]['timestamp'] <= cluster_window_ms):
+                    burst_count += 1
+                    j += 1
+                if burst_count >= 3:
+                    bursts[side] += 1
+                    i = j #Skip ahead after a burst
+                else:
+                    i += 1
+        return dict(bursts)
+
+
+    def get_statistics(self) -> Dict[str, float]:
+        """
+        Compute statistics on the ages of cancelled and filled orders.
+        :return: Dictionary with mean, std, and quantiles of order ages
+        """
+        from numpy import mean, std, quantile
+
+        current_time = max([
+            *(o['timestamp'] for o in self.cancelled_orders),
+            *(o['timestamp'] for o in self.filled_orders)
+        ], default = 0)
+
+        self._prune(current_time)
+
+        cancelled_ages = [order['age'] for order in self.cancelled_orders]
+        filled_ages = [order['age'] for order in self.filled_orders]
+
+        stats = {
+            'cancelled_mean': mean(cancelled_ages) if cancelled_ages else 0,
+            'cancelled_std': std(cancelled_ages) if cancelled_ages else 0,
+            'cancelled_quantiles': quantile(cancelled_ages, [0.25, 0.5, 0.75]) if cancelled_ages else [],
+            'filled_mean': mean(filled_ages) if filled_ages else 0,
+            'filled_std': std(filled_ages) if filled_ages else 0,
+            'filled_quantiles': quantile(filled_ages, [0.25, 0.5, 0.75]) if filled_ages else []
+        }
+
+        #Now add side-specific stats
+        for side in ['bid', 'ask']:
+            side_cancelled = [o['age'] for o in self.cancelled_orders if o.get('side') == side]
+            side_filled = [o['age'] for o in self.filled_orders if o.get('side') == side]
+
+            stats[f'cancelled_mean_{side}'] = mean(side_cancelled) if side_cancelled else 0.0
+            stats[f'cancelled_std_{side}'] = std(side_cancelled) if side_cancelled else 0.0
+            stats[f'cancelled_quantiles_{side}'] = quantile(side_cancelled, [0.25, 0.5, 0.75]).tolist() if side_cancelled else []
+
+            stats[f'filled_mean_{side}'] = mean(side_filled) if side_filled else 0.0
+            stats[f'filled_std_{side}'] = std(side_filled) if side_filled else 0.0
+            stats[f'filled_quantiles_{side}'] = quantile(side_filled, [0.25, 0.5, 0.75]).tolist() if side_filled else []
+
+        return stats
+    
+
+    def reset(self):
+        """
+        Reset the order age distribution tracker.
+        """
+        self.active_orders.clear()
+        self.cancelled_orders.clear()
+        self.filled_orders.clear()
+     
+     
+

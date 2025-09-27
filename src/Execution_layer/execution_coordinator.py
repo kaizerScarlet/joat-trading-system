@@ -12,12 +12,16 @@ from dynamic_risk_engine.signal_confidence_calibrator import SignalConfidenceCal
 from dynamic_risk_engine.dynamic_position_sizer import DynamicPositionSizer
 from market_data.orderbook import OrderBook
 from dynamic_risk_engine.daily_drawdown_manager import DailyDrawdownManager
+from dynamic_risk_engine.cognitive_market_regime_classifier import CognitiveMarketRegimeClassifier, MarketRegime
 from Execution_layer.adaptive_sl_tp import AdaptiveSLTP
 from Execution_layer.stealth_router import StealthRouter
 from Execution_layer.fee_schedule import FeeSchedule
 from Execution_layer.slippage_model import SlippageModel
 from Execution_layer.latency_model import LatencyModel
 from Execution_layer.queue_position_model import QueuePositionModel
+from alpha_scoring.order_age_scorer import OrderAgeDistributionScorer
+from alpha_scoring.Order_layering_scorer import LayeringScoring
+from alpha_scoring.cancel_activity_scorer import CancelActivityScorer
 import asyncio
 
 
@@ -67,6 +71,10 @@ class ExecutionCoordinator:
         self.dynamic_position_sizer = DynamicPositionSizer()
         self.orderbook = OrderBook()
 
+        self.regime_classifier = CognitiveMarketRegimeClassifier()
+        self.spoofing_detector = CancelActivityScorer()
+        self.layering_scorer = LayeringScoring()
+        self.order_age_scorer= OrderAgeDistributionScorer()
 
         #Instantiate adaptive SL/TP and give it the orderbook so it can fetch microstructure score
         self.sl_and_tp = AdaptiveSLTP(
@@ -301,14 +309,55 @@ class ExecutionCoordinator:
                bid_score = alpha.get("bid", 0.0)
                ask_score = alpha.get("ask", 0.0)
 
+               regime = self.regime_classifier.get_current_regime()
+               current_time = int(time.time() * 1000)
+               spoof_pressure = self.spoofing_detector.compute_score(current_time, side=None)
+               layering_score = self.layering_scorer.compute_score(current_time)
+               order_age_bias = self.order_age_scorer.compute_score(side=None) #returns {'bid': float, 'ask': float }
+
+               #---- Interpret order age bias ----
+               bid_age_score = order_age_bias.get('bid', 0.0)
+               ask_age_score = order_age_bias.get('ask', 0.0)
+
+               # ----Interpret spoof pressure ----
+               bid_cancel_spoof = spoof_pressure.get('bid', 0.0)
+               ask_cancel_spoof = spoof_pressure.get('ask', 0.0)
+
+               #---- Interpret layering score ----
+               bid_layering_score = layering_score.get('layering_score', 0.0)
+               ask_layering_score = layering_score.get('layering_score', 0.0)
+
+               # ---- Decision Logic ----
                if bid_score >= self.config["min_confidence_to_trade"] and bid_score > ask_score:
-                    #Follow side with strong momentum
-                    return "BUY"
+                    if regime == "TRENDING":
+                         if bid_cancel_spoof < 0.3 or bid_layering_score > 0.5:
+                              return "BUY"
+                    elif regime == "MEAN_REVERTING":
+                         if bid_cancel_spoof > 0.7 or bid_age_score < 0.0:
+                              return None # Fade spoof
+                         return "SELL" # fade bid aggression
+                    elif regime == "ILLIQUID":
+                         if order_age_bias > 0.5 and bid_layering_score > 0.4:
+                              return "BUY" #Follow strong bid aggression
+                    elif regime == "LIQUID":
+                         return "BUY" #Spoof impact low
                     
                elif ask_score >= self.config["min_confidence_to_trade"] and ask_score > bid_score:
-                    #Follow side with strong momentum
-                    return "SELL"
-                    
+                    if regime == "TRENDING":
+                         if ask_cancel_spoof < 0.3 or ask_layering_score > 0.5:
+                              return "SELL"
+                    elif regime == "MEAN_REVERTING":
+                         if ask_cancel_spoof > 0.7 or ask_age_score < 0.0:
+                              return None
+                         return "BUY" # fade ask aggression
+                    elif regime == "ILLIQUID":
+                         if order_age_bias > 0.5 and ask_layering_score > 0.4:
+                              return "SELL" #Follow strong ask aggression
+                    elif regime == "VOLATILE":
+                         if ask_cancel_spoof < 0.5 and ask_layering_score > 0.3:
+                              return "SELL"
+                    elif regime == "LIQUID":
+                         return "SELL"
                return None
 
     def _check_pre_trade_conditions(self) -> bool:

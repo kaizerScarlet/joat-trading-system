@@ -208,6 +208,30 @@ class OrderLayeringDetection:
 
     def _normalize_side(self, side: str) -> str:
         return 'ask' if side in ['a', 'ask'] else 'bid'
+    
+
+    def get_layering_score(self) -> float:
+        """
+        Returns a normalized layering score (0.0 to 1.0) based on recent suspicious clusters.
+        Higher score = more aggressive layering activity.
+        """
+        clusters = self.detect_layering()
+        if not clusters:
+            return 0.0
+
+        # Weight by aggression and recency
+        current_time = int(time.time() * 1000)
+        scores = []
+        for cluster in clusters:
+            age_ms = current_time - cluster['timestamp']
+            recency_weight = max(0.0, 1.0 - age_ms / self.retention_ms)
+            aggression = cluster.get('aggression_score', 0.0)
+            label_weight = 1.0 if cluster['label'] == 'LAYER_CANCEL_ONLY' else 0.5
+            scores.append(recency_weight * aggression * label_weight)
+
+        raw_score = sum(scores) / len(scores)
+        return min(1.0, raw_score / 100.0)  # Normalize to 0..1
+
 
 
     def reset(self):

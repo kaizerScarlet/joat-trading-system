@@ -240,6 +240,71 @@ class OrderAgeDistribution:
 
         return stats
     
+    def get_order_age_bias(self) -> float:
+        """
+        Returns a normalized bias score:
+        - < 0.0 → young orders dominate (aggressive, possibly spoofy)
+        - > 0.0 → aged orders dominate (passive, likely real)
+        - ~0.0 → mixed or neutral
+        """
+        stats = self.get_statistics()
+        filled_mean = stats.get("filled_mean", 0)
+        cancelled_mean = stats.get("cancelled_mean", 0)
+        avg_age_ms = (filled_mean + cancelled_mean) / 2.0
+        normalized = (avg_age_ms - 10_000) / 20_000  # center around 10s, scale to ±1
+        return max(-1.0, min(1.0, normalized))
+
+
+    def get_age_distribution(self, bucket_ms: int = 500) -> Dict[int, int]:
+        """
+        Get histogram of order ages in specified buckets.
+        :param bucket_ms: Size of each age bucket in milliseconds
+        :return: Dict mapping bucket index to count of orders in that age range
+        useful for:
+            * Visualizing order age distribution
+            * Feeding into ML models for regime detection
+            * Understanding order lifecycle dynamics
+            *Spoof heatmaps
+            *Execution deferral heuristics
+        """
+        from collections import defaultdict
+
+        current_time = max([
+            *(o['timestamp'] for o in self.cancelled_orders),
+            *(o['timestamp'] for o in self.filled_orders)
+        ], default=0)
+
+        self._prune(current_time)
+
+        buckets = defaultdict(int)
+        for o in self.cancelled_orders + self.filled_orders:
+            bucket = int(o['age'] // bucket_ms)
+            buckets[bucket] += 1
+
+        return dict(buckets)
+    
+    def get_recent_short_lived_ratio(self, threshold_ms: int = 300, window_ms: int = 1000) -> float:
+        """
+        This gives you a real-time ratio of short-lived orders in the recent window.
+        perfect for spoof reflex or volatility aware throttling
+        """
+
+        current_time = max([
+            *(o['timestamp'] for o in self.cancelled_orders),
+            *(o['timestamp'] for o in self.filled_orders)
+        ], default=0)
+
+        self._prune(current_time)
+
+        recent = [
+            o for o in self.cancelled_orders + self.filled_orders
+            if current_time - o['timestamp'] <= window_ms
+        ]
+        short_lived = [o for o in recent if o['age'] <= threshold_ms]
+
+        total = len(recent)
+        return len(short_lived) / total if total > 0 else 0.0
+
 
     def reset(self):
         """
