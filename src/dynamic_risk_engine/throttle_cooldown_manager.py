@@ -3,9 +3,13 @@
 #While adaptive throttling based on system load and recent trade behaviour
 
 import time
+from typing import List, Tuple
 from collections import deque
 import asyncio
-
+from dynamic_risk_engine.cognitive_market_regime_classifier import CognitiveMarketRegimeClassifier, MarketRegime 
+from dynamic_risk_engine.signal_confidence_calibrator import SignalConfidenceCalibrator
+from cancel_window.simple_cancel_window import SimpleCancelWindow
+from market_data.orderbook import OrderBook
 
 class ThrottleCooldownManager:
     """
@@ -31,7 +35,7 @@ class ThrottleCooldownManager:
             min_conversion_rate = 0.05, #5%  of orders must convert
             min_fill_weight = 0.05, #5%  of volume must fill
 
-
+        
             
             ):
         """
@@ -79,6 +83,12 @@ class ThrottleCooldownManager:
         self.daily_order_count = 0
         self.last_reset = time.time()
 
+        self.confidence = SignalConfidenceCalibrator()
+        self.cancel_window = SimpleCancelWindow()
+        self.orderbook = OrderBook()
+
+        #Regime Classifier (for potential adaptive throttling)
+        self.regime_classifier = CognitiveMarketRegimeClassifier(self.orderbook, self.confidence, self.cancel_window)
         
 #
 #   Cooldown and Loss Streak Control
@@ -260,6 +270,14 @@ class ThrottleCooldownManager:
         self._cleanup()
         reasons = []
 
+        overlay = self.regime_classifier.get_behavioral_overlay()
+        regime = self.regime_classifier.get_current_regime()
+
+        if overlay == "LIQUIDITY_VACUUM":
+            reasons.append("Behavioral throttle: LIQUIDITY_VACUUM")
+        if overlay == "CHOPPY_NOISE":
+            reasons.append("Behavioral throttle: CHOPPY_NOISE")
+
         if len(self.order_timestamps) > self.max_orders_per_10s:
             reasons.append("Order Exceed 10s limit")
         if self.daily_order_count > self.max_orders_per_day:
@@ -271,8 +289,16 @@ class ThrottleCooldownManager:
         if self.get_fill_weight() < self.min_fill_weight:
             reasons.append("Low fill weight")
 
+
+        if reasons:
+            print(f"[THROTTLE ACTIVE] Regime={regime}, Overlay={overlay}, Reasons={reasons}")
+
         return len(reasons) > 0
     
+
+
+
+
     def get_diagnostic(self) -> dict:
         """
         Return a snapshot of the current system for debugging.
@@ -289,7 +315,9 @@ class ThrottleCooldownManager:
             "weight_per_minute": round(self.get_weight_per_minute(), 2),
             "daily_order_count": self.daily_order_count,
             "loss_streak": self.loss_streak,
-            "in_cooldown": self.is_in_cooldown()
+            "in_cooldown": self.is_in_cooldown(),
+            "overlay": self.regime_classifier.get_behavioral_overlay(),
+            "regime": self.regime_classifier.get_current_regime(),
         }
 
 

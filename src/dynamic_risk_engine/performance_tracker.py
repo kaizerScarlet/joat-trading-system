@@ -11,9 +11,13 @@ class PerformanceTracker:
         self.equity_curve: List[float] = []
         self.balance: float = 0.0
         self.sl_tp_history = []
+        self.slippage_fee = []
+        self.fee = []
+        self.trade_latency = []
+        self.fill_probability = []
 
 
-    def record_trade(self, pnl: float, risk: float, reward: float, metadata: Optional[Dict] = None):
+    def record_trade(self,order_id: str, pnl: float, risk: float, reward: float, metadata: Optional[Dict] = None):
         """
         Record a trade outcome
 
@@ -26,6 +30,7 @@ class PerformanceTracker:
         is_win = pnl > 0
 
         trade = {
+            'order_id': order_id,
             'pnl': pnl,
             'risk': risk,
             'reward': reward,
@@ -55,13 +60,14 @@ class PerformanceTracker:
         rrr = [t['rrr'] for t in self.trades if t['risk'] > 0]
         return sum(rrr) / len(rrr) if rrr else 0.0
     
-    def record_sl_tp_drift(self, sl: float, tp: float):
+    def record_sl_tp_drift(self,order_id: str, sl: float, tp: float):
         """
         Record SL/TP evolution for diagnostics.
         You can extend this to log timestamped drift or visualize it later.
         """
         self.sl_tp_history.append({
             "timestamp": time.time(),
+            "order_id": order_id,
             "sl": sl,
             "tp": tp
         })
@@ -80,6 +86,62 @@ class PerformanceTracker:
         Get the equity curve of the trading strategy
         """
         return self.equity_curve
+    
+    def record_slippage(self,order_id: str, slippage: float, side: str, qty: float, price: float, symbol: str)-> None:
+        """
+        Record the on-fill order slippage for trades
+        """
+        self.slippage_fee.append({
+            "order_id": order_id,
+            "Slippage_fee": slippage,
+            "side": side,
+            "size": qty,
+            "price": price,
+            "symbol": symbol,
+
+        })
+
+    def record_fee(self,order_id: str, fee: float, side: str, qty: float, price: float, symbol: str) -> None:
+        """
+        Record the on-fill order fee per trade
+        """
+        self.fee.append({
+            "order_id": order_id,
+            "Schedule_Fee": fee,
+            "side": side,
+            "size": qty,
+            "price": price,
+            "symbol": symbol
+        })
+
+    def record_latency(self, order_id: str, latency_ms: float, side: str, qty: float, price: float, symbol: str)-> None:
+        """
+        Record fill latency on fill per trade
+        """
+        self.trade_latency.append({
+            "order_id": order_id,
+            "trade_latency": latency_ms,
+            "side": side,
+            "size": qty,
+            "price": price,
+            "symbol": symbol,
+        })
+
+
+    def record_fill_probability(self, order_id: str, fill_probability: float, side: str, qty: float, price: float, symbol: str) -> None:
+        """
+        Record the fill probability per trade, this is given by the queue model
+        """
+        self.record_fill_probability.append({
+            "order_id": order_id,
+            "fill_probability": fill_probability,
+            "side": side,
+            "size": qty,
+            "price": price,
+            "symbol": symbol,
+        })
+
+
     
     def reset(self):
         """

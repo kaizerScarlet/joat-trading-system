@@ -46,11 +46,25 @@ def test_now_ms_with_offset(coordinator):
 def test_decide_trade_side_buy(coordinator):
     coordinator.alpha_pipeline.get_alpha_signal.return_value = {"bid": 0.6, "ask": 0.4}
     coordinator.config["min_confidence_to_trade"] = 0.55
+    from unittest.mock import MagicMock
+
+    coordinator.spoofing_detector.compute_score = MagicMock(return_value={"bid": 0.1, "ask": 0.1})
+    coordinator.layering_scorer.compute_score = MagicMock(return_value={"layering_score": 0.6})
+    coordinator.order_age_scorer.compute_score = MagicMock(return_value={"bid": 0.5, "ask": 0.5})
+    coordinator.regime_classifier.get_current_regime = MagicMock(return_value="TRENDING")
+
     assert coordinator._decide_trade_side() == "BUY"
 
 def test_decide_trade_side_sell(coordinator):
     coordinator.alpha_pipeline.get_alpha_signal.return_value = {"bid": 0.4, "ask": 0.6}
     coordinator.config["min_confidence_to_trade"] = 0.55
+    from unittest.mock import MagicMock
+
+    coordinator.spoofing_detector.compute_score = MagicMock(return_value={"bid": 0.1, "ask": 0.1})
+    coordinator.layering_scorer.compute_score = MagicMock(return_value={"layering_score": 0.6})
+    coordinator.order_age_scorer.compute_score = MagicMock(return_value={"bid": 0.5, "ask": 0.5})
+    coordinator.regime_classifier.get_current_regime = MagicMock(return_value="TRENDING")
+
     assert coordinator._decide_trade_side() == "SELL"
 
 def test_decide_trade_side_none(coordinator):

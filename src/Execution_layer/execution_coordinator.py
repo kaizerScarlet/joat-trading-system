@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Dict, Optional, Tuple, Any
 import logging
 from alpha_scoring.alpha_pipeline import AlphaSignalPipeline
+from cancel_window.simple_cancel_window import SimpleCancelWindow
 from dynamic_risk_engine.dynamic_risk_engine import DynamicRiskEngine
 from dynamic_risk_engine.throttle_cooldown_manager import ThrottleCooldownManager
 from dynamic_risk_engine.performance_tracker import PerformanceTracker
@@ -69,9 +70,10 @@ class ExecutionCoordinator:
         self.performance_tracker = PerformanceTracker()
         self.confidence = SignalConfidenceCalibrator()
         self.dynamic_position_sizer = DynamicPositionSizer()
+        self.cancel_window = SimpleCancelWindow()
         self.orderbook = OrderBook()
 
-        self.regime_classifier = CognitiveMarketRegimeClassifier()
+        self.regime_classifier = CognitiveMarketRegimeClassifier(self.orderbook, self.confidence, self.cancel_window)
         self.spoofing_detector = CancelActivityScorer()
         self.layering_scorer = LayeringScoring()
         self.order_age_scorer= OrderAgeDistributionScorer()
@@ -221,13 +223,13 @@ class ExecutionCoordinator:
          fill_ts = fill.get("fill_ts", self.now_ms())
          if dispatch_ts:
               latency_ms = fill_ts - dispatch_ts
-              self.performance_tracker.record_latency(latency_ms)
+              self.performance_tracker.record_latency(order_id, latency_ms, side, qty, price, symbol)
 
          # --- Slippage ----
          expected_price = fill.get("expected_price")
          if expected_price:
               slippage = abs(price - expected_price)
-              self.performance_tracker.record_slippage(slippage)
+              self.performance_tracker.record_slippage(order_id, slippage, side, qty, price, symbol)
 
          # --- Fee attribution (NEW) ---
          liquidity = fill.get("liquidity", None) #"Maker" / "Taker" / None
@@ -237,7 +239,7 @@ class ExecutionCoordinator:
          fee = notional * fee_rate
 
          try:
-              self.performance_tracker.record_fee(fee) # if your tracker supports it
+              self.performance_tracker.record_fee(order_id, fee, side, qty, price, symbol) # if your tracker supports it
      
          except Exception:
               pass
@@ -326,7 +328,7 @@ class ExecutionCoordinator:
                #---- Interpret layering score ----
                bid_layering_score = layering_score.get('layering_score', 0.0)
                ask_layering_score = layering_score.get('layering_score', 0.0)
-
+               
                # ---- Decision Logic ----
                if bid_score >= self.config["min_confidence_to_trade"] and bid_score > ask_score:
                     if regime == "TRENDING":
@@ -372,14 +374,17 @@ class ExecutionCoordinator:
             #Computes the confidence to trade
             confidence = self.confidence.get_current_confidence()
             #If the confidence is less than 55% then trade condition not met
-            if confidence < 0.55:
+            if confidence < self.config["min_confidence_to_trade"]:
                  return False
             
             if self.throttle_manager.is_throttled():
-                return False
+               snapshot = self.throttle_manager.get_diagnostic()
+               logger.debug(f"Throttle diagnositic snapshot: {snapshot}")
+               return False
             
             if not self.risk_engine.can_trade():
                 return False 
+            
     
             return True
             
@@ -500,6 +505,14 @@ class ExecutionCoordinator:
          """
          async def _run():
                try:
+                    # ---- Behavioural Execution Context -----
+                    regime = self.regime_classifier.get_current_regime()
+                    overlay = self.regime_classifier.get_behavioral_overlay()
+                    
+                    behavioral_metadata = {
+                         "regime": regime,
+                         "overlay": overlay,
+                    }
                     # ----latency simulation before first child Leaves the house ---
                     await asyncio.sleep(self.latency.sample_ms() / 1000.0)
                     result = self.stealth_router.execute_parent_order(
@@ -512,7 +525,7 @@ class ExecutionCoordinator:
                         orderbook = self.orderbook ,   #New (for queue/top-liq)
                         metadata = {
                              "dispatch_ts": self.now_ms(),
-                               "expected_price": price
+                               "expected_price": price,
                         }
                    )
                     #Result = list of slice records; store IDs for later reconciliation
@@ -533,6 +546,7 @@ class ExecutionCoordinator:
                         "timestamp": ts,
                         "sl": base_sl,
                         "tp": base_tp,
+                        **behavioral_metadata
                    }
                )
                #Initialize SL/TP manager state for the new trade

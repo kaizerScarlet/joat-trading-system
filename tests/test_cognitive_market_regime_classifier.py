@@ -188,3 +188,101 @@ def test_get_current_regime_majority_vote(setup_classifier):
         MarketRegime.MEAN_REVERTING
     ])
     assert classifier.get_current_regime() == MarketRegime.TRENDING
+
+
+def test_regime_drift_from_trending_due_to_exhaustion(setup_classifier):
+    classifier, ob, sc, cw = setup_classifier
+
+    # Setup regime history
+    classifier.regime_history.extend([MarketRegime.TRENDING] * 5)
+
+    # Signal decay
+    sc.signal_history.extend([{'signal_id': 's1', 'was_correct': False}] * 30)
+
+    # Spoof spike
+    cw._flags.append({
+        "type": "CANCEL_DENSITY_SPIKE",
+        "price": 100,
+        "side": "bid",
+        "timestamp": time.time(),
+        "cancel_count": 500,
+        "orderid": "exhaustion_spoof"
+    })
+
+    # Price volatility
+    ob.price_history.extend([100, 110, 90, 115])
+    ob.last_update_ts = time.time() - 0.1
+    ob._update_midprice()
+
+    drift = classifier.detect_regime_drift()
+    assert drift is True
+
+
+def test_regime_drift_from_mean_reverting_to_volatile(setup_classifier):
+    classifier, ob, sc, cw = setup_classifier
+
+    classifier.regime_history.extend([MarketRegime.MEAN_REVERTING] * 5)
+
+    ob.price_history.extend([100, 120, 80, 130])
+    ob.last_update_ts = time.time() - 0.1
+    ob._update_midprice()
+
+    cw._flags.append({
+        "type": "CANCEL_DENSITY_SPIKE",
+        "price": 100,
+        "side": "ask",
+        "timestamp": time.time(),
+        "cancel_count": 400,
+        "orderid": "breakout_spoof"
+    })
+
+    drift = classifier.detect_regime_drift()
+    assert drift is True
+
+def test_behavioral_overlay_liquidity_vacuum(setup_classifier):
+    classifier, ob, sc, cw = setup_classifier
+
+    sc.signal_history.extend([{'signal_id': 's1', 'was_correct': True}] * 10)
+    ob.price_history.extend([100, 160, 80, 170, 75])
+    ob.last_update_ts = time.time() - 0.1
+    ob._update_midprice()
+
+    cw.fill_events = [{'price': 100, 'side': 'bid'}] * 100
+    cw._flags.append({
+        "type": "CANCEL_DENSITY_SPIKE",
+        "price": 100,
+        "side": "bid",
+        "timestamp": time.time(),
+        "cancel_count": 10000,
+        "orderid": "vacuum_spoof"
+    })
+
+    overlay = classifier.get_behavioral_overlay()
+    assert overlay == "LIQUIDITY_VACUUM"
+
+
+
+
+def test_behavioral_overlay_momentum_exhaustion(setup_classifier):
+    classifier, ob, sc, cw = setup_classifier
+
+    sc.signal_history.extend([{'signal_id': 's1', 'was_correct': False}] * 40)
+    ob.price_history.extend([100, 110, 90, 115])
+    ob.last_update_ts = time.time() - 0.1
+    ob._update_midprice()
+
+    overlay = classifier.get_behavioral_overlay()
+    assert overlay == "MOMENTUM_EXHAUSTION"
+
+
+
+def test_behavioral_overlay_choppy_noise(setup_classifier):
+    classifier, ob, sc, cw = setup_classifier
+
+    sc.signal_history.extend([{'signal_id': 's1', 'was_correct': False}] * 30)
+    ob.price_history.extend([100, 100.01, 99.99, 100.02])
+    ob.last_update_ts = time.time() - 0.1
+    ob._update_midprice()
+
+    overlay = classifier.get_behavioral_overlay()
+    assert overlay == "CHOPPY_NOISE"
