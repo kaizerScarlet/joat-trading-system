@@ -101,6 +101,37 @@ class OrderAgeDistributionScorer:
             print(f"[DEBUG] FinalScore[{s}] = {scores[s]} (Raw={raw_score})")
 
         return scores if self.enable_side_scoring else {'combined': sum(scores.values()) / 2}
+    
+
+    def get_debug_view(self) -> Dict[str, Dict]:
+        """
+        Returns a diagnostic snapshot of internal state for introspection and behavioral analysis.
+        Includes score bounds, order registration, recent fills/cancels, and normalized scores.
+        """
+        recent_orders = self.tracker.cancelled_orders + self.tracker.filled_orders
+        latest_ts = max((o['timestamp'] for o in recent_orders), default=0)
+
+        return {
+            'base_score': self.base_score,
+            'short_lived_threshold_ms': self.short_lived_threshold,
+            'burst_ratio_threshold': self.burst_ratio_threshold,
+            'decay_half_life_ms': self.decay_half_life_ms,
+            'volume_weighting': self.enable_volume_weighting,
+            'side_scoring': self.enable_side_scoring,
+            'score_bounds': {
+                'min': self.min_score_by_side,
+                'max': self.max_score_by_side
+            },
+            'registered_orders': self.order_registration_time,
+            'recent_events': {
+                'cancelled': self.tracker.cancelled_orders,
+                'filled': self.tracker.filled_orders
+            },
+            'normalized_scores': {
+                'ask': self.compute_score(side='ask', current_time=latest_ts)['ask'],
+                'bid': self.compute_score(side='bid', current_time=latest_ts)['bid']
+            }
+        }
 
     def reset(self):
         self.tracker.reset()

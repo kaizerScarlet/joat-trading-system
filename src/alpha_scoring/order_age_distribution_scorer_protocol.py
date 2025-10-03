@@ -44,5 +44,9 @@ class OrderAgeDistributionScorerProtocol(Protocol):
     ) -> Dict[str, float]:
         """Returns normalized age-based aggression scores per side (or combined)."""
 
+
     def reset(self) -> None:
         """Clears internal state for a fresh scoring cycle."""
+
+    def get_debug_view(self) -> Dict[str, Dict]:
+        """Returns internal state for debugging purposes."""

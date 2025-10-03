@@ -22,3 +22,8 @@ class CancelActivityScorerProtocol(Protocol):
 
     def reset(self) -> None:
         """Clears internal state and resets EMA smoothing."""
+
+
+    def get_debug_view(self) -> Dict[str, Dict]:
+        """Returns internal state for debugging purposes."""
+        

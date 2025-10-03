@@ -75,7 +75,7 @@ class LayeringScoring:
         self.recent_cancels = [c for c in self.recent_cancels if c['timestamp'] >= cutoff]
 
 
-    def register_events(self, timestamp: int, event_type: str, price: float, size: float, side: str) -> None:
+    def register_events(self, orderid: str, timestamp: int, event_type: str, price: float, size: float, side: str) -> None:
         """
         Unified event ingestion for layering-related flags.
         Routes fills and cancels to appropriate handlers.
@@ -86,16 +86,16 @@ class LayeringScoring:
         -param side:
         """
         if event_type in ['LAYER_CANCEL_ONLY', 'LADDER_CANCEL_ONLY', 'LAYER_WIPE', 'MULTILEVEL_LADDERING']:
-            self.register_cancel(timestamp,event_type, price, size, side)
+            self.register_cancel(orderid, timestamp,event_type, price, size, side)
 
         elif event_type in ['LAYER_TRUE_FILL', 'LAYER_PARTIAL_FILL', 'LADDER_TRUE_FILL', 'LADDER_PARTIAL_FILL']:
-            self.register_fill(timestamp,event_type, price, size, side)
+            self.register_fill(orderid, timestamp,event_type, price, size, side)
         
         else:
             #For now Layering will be scored with Laddering, but phase 2 we need to develop separate scorers
             pass
 
-    def register_cancel(self, timestamp: int,event_type: str, price: float, size: float, side: str) -> None:
+    def register_cancel(self, orderid: str, timestamp: int,event_type: str, price: float, size: float, side: str) -> None:
         #Track Cancelled Orders for reposting detection and behavioural scoring
         """
         Track LAYERING and LADDERING CANCEL and WIPE ORDERS
@@ -106,16 +106,17 @@ class LayeringScoring:
         :param distance_from_best:
         :pram side:
         """
-        #self.layering_detector.register_cancel(timestamp, event_type, price, size, side)
+        self.layering_detector.register_cancel(orderid, timestamp, event_type, price, size, side)
         self.recent_cancels.append({
             'timestamp': timestamp,
+            'orderid': orderid,
             'event_type': event_type,
             'price': price,
             'size': size,
             'side': side,
         })
 
-    def register_fill(self, timestamp: int,event_type: str, price: float, size: float, side: str) -> None:
+    def register_fill(self,orderid: str, timestamp: int,event_type: str, price: float, size: float, side: str) -> None:
         #Track filled orders for behavioral scoring and repost correlation
         """
         Track LAYERING and LADDERING  TRUE and PARTIAL FILLS
@@ -128,9 +129,10 @@ class LayeringScoring:
 
         :returns: None
         """
-        #self.layering_detector.register_fill(timestamp, event_type, price, size, side)
+        self.layering_detector.register_fill(orderid, timestamp, event_type, price, size, side)
         self.recent_orders.append({
             'timestamp': timestamp,
+            'orderid': orderid,
             'event_type': event_type,
             'price': price,
             'size': size,
@@ -206,9 +208,11 @@ class LayeringScoring:
 
         decay = 0.5 ** ((current_time - self.last_time)/ self.decay_half_life)
 
+        raw_score_by_side = {}
         for s in ['ask', 'bid']:
             raw_score = score_by_side[s]
             decayed_score = raw_score * decay + self.last_score_by_side[s] * (1 - decay)
+            raw_score_by_side[s] = decayed_score #Capture raw score before normalization
 
 
             #Track min/max and update for normalization
@@ -225,20 +229,48 @@ class LayeringScoring:
             score_by_side[s] = max(0.0, min(1.0, norm))
 
 
+
             # Track volatility (change in score)
             self.score_volatility_by_side[s] = abs(score_by_side[s] - self.last_score_by_side[s])
         
+
+        #Update state for next tick
+        self._raw_score_by_side = raw_score_by_side # expose for testing and debugging
+        self.last_score_by_side = score_by_side
+        self.last_time = current_time
+
         # Optional debug output
         if self.debug:
-            print(f"[DEBUG] Raw Score: {score_by_side}")
+            print(f"[DEBUG] Raw Score: {raw_score_by_side} ")
+            print(f"[DEBUG] Noramilzed Score: {score_by_side}")
             print(f"[DEBUG] Volatility: {self.score_volatility_by_side}")
             print(f"[DEBUG] Cluster density: {self.cluster_density_by_side}")
             print(f"[DEBUG] Decay factor: {decay}")
 
-        #Update state for next tick
-        self.last_score_by_side = score_by_side
-        self.last_time = current_time
+        
         return score_by_side
+    
+
+    def get_debug_view(self) -> Dict[str, Dict]:
+        return {
+            'base_score': self.base_score,
+            'reference_size': self.reference_size,
+            'decay_half_life': self.decay_half_life,
+            'cluster_window_ms': self.cluster_window_ms,
+            'skew_threshold': self.skew_threshold,
+            'repost_window_ms': self.repost_window_ms,
+            'repost_price_tolerance': self.repost_price_tolerance,
+            'score_bounds': {
+                'min': self.min_score_by_side,
+                'max': self.max_score_by_side
+            },
+            'score_volatility': self.score_volatility_by_side,
+            'cluster_density': self.cluster_density_by_side,
+            'last_score': self.last_score_by_side,
+            'recent_orders': self.recent_orders,
+            'recent_cancels': self.recent_cancels
+        }
+
 
     def reset(self):
         """
