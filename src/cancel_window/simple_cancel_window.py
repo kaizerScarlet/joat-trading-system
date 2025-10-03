@@ -6,8 +6,8 @@ import time
 import math 
 import uuid
 
-from market_data.orderbook import OrderBook
-from cancel_window.order_age_distribution import OrderAgeDistribution
+from market_data.orderbook_protocol import OrderBookProtocol
+from cancel_window.order_age_distribution_protocol import OrderAgeDistributionProtocol
 
 # ====== adaptive_density_tuner.py
 class AdaptiveDensityWindow:
@@ -115,12 +115,12 @@ class SimpleCancelWindow(CancelWindow):
         15. PING_CANCEL -> Orders placed for very short time (ping for liquidity)
     """
     # -----------------------------------------------------------------------------------------------#
-    def __init__(self):
+    def __init__(self, order_age_tracker: OrderAgeDistributionProtocol, order_book: OrderBookProtocol):
         
         self.adaptive = True
         self.window_ms = None
         self.tuner = CancelWindowTuner() if self.adaptive else None
-        self.order_age_tracker = OrderAgeDistribution()
+        self.order_age_tracker = order_age_tracker
 
         self._flags: List[Dict[str,Any]] = []
 
@@ -154,7 +154,7 @@ class SimpleCancelWindow(CancelWindow):
         self.cancel_events = []
         self.fill_events = []
        
-        self.orderbook = OrderBook()   # to be injected/ set externally
+        self.orderbook = order_book   # to be injected/ set externally
         self.midprice = self.orderbook.get_midprice()    #injected externally by orderbook
         #---------------------------------------------------------------------------#
 

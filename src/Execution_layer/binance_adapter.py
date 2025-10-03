@@ -8,7 +8,7 @@ import urllib.parse
 from urllib.parse import urlencode
 from typing import Optional, Callable, Dict, Any
 import aiohttp
-from dynamic_risk_engine.throttle_cooldown_manager import ThrottleCooldownManager
+from dynamic_risk_engine.throttle_cooldown_manager_protocol import ThrottleCooldownManagerProtocol
 
 DEFAULT_RECV_WINDOW = 5000 #ms
 DEFAULT_SYMBOL = "BTCUSDT"
@@ -28,6 +28,7 @@ class BinanceExecutionAdapter:
 
     def __init__(
             self,
+            throttle: ThrottleCooldownManagerProtocol,
             symbol: str = "BTCUSDT",
             api_key: str = None,
             api_secret: str = None,
@@ -44,7 +45,7 @@ class BinanceExecutionAdapter:
 
 
         #Optional integration objects
-        self.throttle = ThrottleCooldownManager()
+        self.throttle = throttle
         self.on_fill_callback: Optional[Callable[[Dict[str, Any]], None]] = None
 
         self.recv_window = kwargs.get("default_recv_window", DEFAULT_RECV_WINDOW)

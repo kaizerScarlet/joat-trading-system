@@ -2,27 +2,27 @@ import time
 from datetime import datetime
 from typing import Dict, Optional, Tuple, Any
 import logging
-from alpha_scoring.alpha_pipeline import AlphaSignalPipeline
-from cancel_window.simple_cancel_window import SimpleCancelWindow
-from dynamic_risk_engine.dynamic_risk_engine import DynamicRiskEngine
-from dynamic_risk_engine.throttle_cooldown_manager import ThrottleCooldownManager
-from dynamic_risk_engine.performance_tracker import PerformanceTracker
-from Execution_layer.binance_adapter import BinanceExecutionAdapter
+from alpha_scoring.alpha_pipeline_protocol import AlphaSignalPipelineProtocol
+from cancel_window.simple_cancel_window_protocol import CancelWindowProtocol
+from dynamic_risk_engine.dynamic_risk_engine_protocol import DynamicRiskEngineProtocol
+from dynamic_risk_engine.throttle_cooldown_manager_protocol import ThrottleCooldownManagerProtocol
+from dynamic_risk_engine.performance_tracker_protocol import PerformanceTrackerProtocol
+from Execution_layer.binance_adapter_protocol import BinanceExecutionAdapterProtocol
 from Execution_layer.mock_adapter import MockExchangeAdapter #For testing and dry runs
-from dynamic_risk_engine.signal_confidence_calibrator import SignalConfidenceCalibrator
-from dynamic_risk_engine.dynamic_position_sizer import DynamicPositionSizer
-from market_data.orderbook import OrderBook
-from dynamic_risk_engine.daily_drawdown_manager import DailyDrawdownManager
-from dynamic_risk_engine.cognitive_market_regime_classifier import CognitiveMarketRegimeClassifier, MarketRegime
-from Execution_layer.adaptive_sl_tp import AdaptiveSLTP
-from Execution_layer.stealth_router import StealthRouter
-from Execution_layer.fee_schedule import FeeSchedule
-from Execution_layer.slippage_model import SlippageModel
-from Execution_layer.latency_model import LatencyModel
-from Execution_layer.queue_position_model import QueuePositionModel
-from alpha_scoring.order_age_scorer import OrderAgeDistributionScorer
-from alpha_scoring.Order_layering_scorer import LayeringScoring
-from alpha_scoring.cancel_activity_scorer import CancelActivityScorer
+from dynamic_risk_engine.signal_confidence_calibrator_protocol import SignalConfidenceCalibratorProtocol
+from dynamic_risk_engine.dynamic_position_sizer_protocol import DynamicPositionSizerProtocol
+from market_data.orderbook_protocol import OrderBookProtocol
+from dynamic_risk_engine.daily_drawdown_manager_protocol import DailyDrawdownManagerProtocol
+from dynamic_risk_engine.cognitive_market_regime_classifier_protocol import CognitiveMarketRegimeClassifierProtocol, MarketRegime
+from Execution_layer.adaptive_sl_tp_protocol import AdaptiveSLTPProtocol
+from Execution_layer.stealth_router_protocol import StealthRouterProtocol
+from Execution_layer.fee_schedule_protocol import FeeScheduleProtocol
+from Execution_layer.slippage_model_protocol import SlippageModelProtocol
+from Execution_layer.latency_model_protocol import LatencyModelProtocol
+from Execution_layer.queue_position_model_protocol import QueuePositionModelProtocol
+from alpha_scoring.order_age_distribution_scorer_protocol import OrderAgeDistributionScorerProtocol
+from alpha_scoring.Order_layering_scorer_protocol import LayeringScoringProtocol
+from alpha_scoring.cancel_activity_scorer_protocol import CancelActivityScorerProtocol
 import asyncio
 
 
@@ -51,6 +51,18 @@ class ExecutionCoordinator:
     """
     def __init__(
             self,
+            alpha_pipeline: AlphaSignalPipelineProtocol,
+            throttle_manager: ThrottleCooldownManagerProtocol,
+            exchange_client: BinanceExecutionAdapterProtocol,
+            performance_tracker: PerformanceTrackerProtocol,
+            signal_confidence: SignalConfidenceCalibratorProtocol,
+            dynamic_position_sizer: DynamicPositionSizerProtocol,
+            cancel_window: CancelWindowProtocol,
+            order_book: OrderBookProtocol,
+            cancel_activity_scorer: CancelActivityScorerProtocol,
+            layering_scorer: LayeringScoringProtocol,
+            order_age_scorer: OrderAgeDistributionScorerProtocol,
+            queue_position_model: QueuePositionModelProtocol,
             config: Optional[Dict] = None
     ):
         """
@@ -62,24 +74,24 @@ class ExecutionCoordinator:
             performance_tracker: PerformanceTracker instance
             config: Optional dict with execution settings
         """
-        self.alpha_pipeline = AlphaSignalPipeline()
-        self.risk_engine = DynamicRiskEngine(daily_drawdown_limit=0.25)
-        self.throttle_manager = ThrottleCooldownManager()
-        self.drawdown_manager = DailyDrawdownManager(daily_drawdown_limit=0.25)
-        self.exchange_client = BinanceExecutionAdapter()
-        self.performance_tracker = PerformanceTracker()
-        self.confidence = SignalConfidenceCalibrator()
-        self.dynamic_position_sizer = DynamicPositionSizer()
-        self.cancel_window = SimpleCancelWindow()
-        self.orderbook = OrderBook()
+        self.alpha_pipeline = alpha_pipeline
+        self.risk_engine = DynamicRiskEngineProtocol(daily_drawdown_limit=0.25)
+        self.throttle_manager = throttle_manager
+        self.drawdown_manager = DailyDrawdownManagerProtocol(daily_drawdown_limit=0.25)
+        self.exchange_client = exchange_client
+        self.performance_tracker = performance_tracker
+        self.confidence = signal_confidence
+        self.dynamic_position_sizer = dynamic_position_sizer
+        self.cancel_window = cancel_window
+        self.orderbook = order_book
 
-        self.regime_classifier = CognitiveMarketRegimeClassifier(self.orderbook, self.confidence, self.cancel_window)
-        self.spoofing_detector = CancelActivityScorer()
-        self.layering_scorer = LayeringScoring()
-        self.order_age_scorer= OrderAgeDistributionScorer()
+        self.regime_classifier = CognitiveMarketRegimeClassifierProtocol(self.orderbook, self.confidence, self.cancel_window)
+        self.spoofing_detector = cancel_activity_scorer
+        self.layering_scorer = layering_scorer
+        self.order_age_scorer= order_age_scorer
 
         #Instantiate adaptive SL/TP and give it the orderbook so it can fetch microstructure score
-        self.sl_and_tp = AdaptiveSLTP(
+        self.sl_and_tp = AdaptiveSLTPProtocol(
              atr_window = 14,
              base_atr_multiplier=1.5,
              vol_multiplier=2.0
@@ -112,7 +124,7 @@ class ExecutionCoordinator:
         self.exchange_client.on_fill_callback = self._on_fill
 
         #Stealth router
-        self.stealth_router = StealthRouter(
+        self.stealth_router = StealthRouterProtocol(
              exchange_client=self.exchange_client,
              symbol=(config or {}).get("symbol", "BTCUSDT"),
              min_slice_usd=50,
@@ -122,23 +134,23 @@ class ExecutionCoordinator:
         )
 
         # -----Execution Frictions config --------
-        self.fees = FeeSchedule(
+        self.fees = FeeScheduleProtocol(
              maker_bps=(self.config.get("maker_bps", 8.0)),
              taker_bps=(self.config.get("taker_bps", 10.0)),
         )
 
-        self.latency = LatencyModel(
+        self.latency = LatencyModelProtocol(
              base_ms=self.config.get("latency_base_ms", 20.0),
              jitter_ms=self.config.get("latency_jitter_ms", 15.0),
              p_tail=self.config.get("latency_tail_p", 0.05),
              tail_multiplier=self.config.get("latency_tail_mult", 3.0),
         )
 
-        self.slippage_model = SlippageModel(
+        self.slippage_model = SlippageModelProtocol(
              impact_coeff=self.config.get("impact_coeff", 0.5)
         )
 
-        self.queue_model = QueuePositionModel()
+        self.queue_model = queue_position_model
          
 
     # Startup reconciliation (loaction: ExecutionCoordiantor)

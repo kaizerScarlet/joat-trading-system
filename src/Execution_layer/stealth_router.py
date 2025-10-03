@@ -2,15 +2,15 @@ import asyncio
 import random
 from typing import Optional
 import logging
-from market_data.orderbook import OrderBook
-from Execution_layer.fee_schedule import FeeSchedule
-from Execution_layer.slippage_model import SlippageModel
-from Execution_layer.queue_position_model import QueuePositionModel 
-from Execution_layer.binance_adapter import BinanceExecutionAdapter
-from Execution_layer.smart_pricing_model import SmartRepricingModel
-from dynamic_risk_engine.cognitive_market_regime_classifier import CognitiveMarketRegimeClassifier, MarketRegime
-from dynamic_risk_engine.signal_confidence_calibrator import SignalConfidenceCalibrator
-from cancel_window.simple_cancel_window import SimpleCancelWindow
+from market_data.orderbook_protocol import OrderBookProtocol
+from Execution_layer.fee_schedule_protocol import FeeScheduleProtocol
+from Execution_layer.slippage_model_protocol import SlippageModelProtocol
+from Execution_layer.queue_position_model_protocol import QueuePositionModelProtocol 
+from Execution_layer.binance_adapter_protocol import BinanceExecutionAdapterProtocol
+from Execution_layer.smart_pricing_model_protocol import SmartRepricingModelProtocol
+from dynamic_risk_engine.cognitive_market_regime_classifier_protocol import CognitiveMarketRegimeClassifierProtocol, MarketRegime
+from dynamic_risk_engine.signal_confidence_calibrator_protocol import SignalConfidenceCalibratorProtocol
+from cancel_window.simple_cancel_window_protocol import CancelWindowProtocol
 
 
 
@@ -50,7 +50,7 @@ class StealthRouter:
         :param queue_model: model with .estimate() for fill probability (Optional)
         """
 
-        self.exchange_client = exchange_client or BinanceExecutionAdapter()
+        self.exchange_client = exchange_client or BinanceExecutionAdapterProtocol()
         self.symbol = symbol
         self.min_slice_usd = min_slice_usd
         self.max_slice_usd = max_slice_usd
@@ -59,11 +59,11 @@ class StealthRouter:
         self.qty_precision = qty_precison
         self.max_slices = max_slices
         self.slippage_bps = slippage_bps / 10000.0 #convert bps to fraction
-        self.queue_model = queue_model or QueuePositionModel()
-        self.regime_classifier = regime_classifier or CognitiveMarketRegimeClassifier(orderbook=OrderBook(), signal_calibrator=SignalConfidenceCalibrator(), cancel_window=SimpleCancelWindow())
+        self.queue_model = queue_model or QueuePositionModelProtocol()
+        self.regime_classifier = regime_classifier or CognitiveMarketRegimeClassifierProtocol(orderbook=OrderBookProtocol(), signal_calibrator=SignalConfidenceCalibratorProtocol(), cancel_window=CancelWindowProtocol())
         self.execution_log = [] #Post Trade analysis log
-        self.repricing_model = repricing_model or SmartRepricingModel(tick_size=self.tick_size, slippage_bps=slippage_bps)
-        self.slippage_model = slippage_model or SlippageModel()
+        self.repricing_model = repricing_model or SmartRepricingModelProtocol(tick_size=self.tick_size, slippage_bps=slippage_bps)
+        self.slippage_model = slippage_model or SlippageModelProtocol()
     
     def now_ms(self):
         import time
@@ -73,8 +73,8 @@ class StealthRouter:
     async def execute_parent_order(self, side:str, total_qty: float,
                                    order_type: str, limit_price: Optional[float]=None,
                                    fee_schedule = None, #New: FeeSchedule (Optional)
-                                   slippage_model = SlippageModel(), #New: SlippageModel (Optional)
-                                   orderbook = OrderBook, #New: OrderBook (Optional)
+                                   slippage_model = SlippageModelProtocol(), #New: SlippageModel (Optional)
+                                   orderbook = OrderBookProtocol, #New: OrderBook (Optional)
                                    mode: str = "normal",    #New: normal | hybrid
                                    hybrid_threshold: float = 0.3, # Fill prob cutoff
                                    hybrid_horizon: int = 5, # Seconds to evaluate fill prob
@@ -295,7 +295,7 @@ class StealthRouter:
         return placed_order_ids
     
 
-    async def _monitor_slice(self, slice_info, side, qty, orderbook:OrderBook , horizon_sec: int, threshold: float):
+    async def _monitor_slice(self, slice_info, side, qty, orderbook:OrderBookProtocol , horizon_sec: int, threshold: float):
         """
         Monitor a passive slice; cancel/replace or cross if fill prob drops below threshold.
         """

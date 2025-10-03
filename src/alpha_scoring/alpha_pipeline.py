@@ -1,7 +1,7 @@
-from alpha_scoring.cancel_activity_scorer import CancelActivityScorer
-from alpha_scoring.order_age_scorer import OrderAgeDistributionScorer
-from alpha_scoring.Order_layering_scorer import LayeringScoring
-from alpha_scoring.AlphaBlender import AlphaBlender
+from alpha_scoring.cancel_activity_scorer_protocol import CancelActivityScorerProtocol
+from alpha_scoring.order_age_distribution_scorer_protocol import OrderAgeDistributionScorerProtocol
+from alpha_scoring.Order_layering_scorer_protocol import LayeringScoringProtocol
+from alpha_scoring.Alphablender_protocol import AlphaBlenderProtocol
 
 from typing import Dict, Any
 
@@ -13,16 +13,17 @@ class AlphaSignalPipeline:
     Supports adaptive feedback to refine weights based on PnL outcomes.
     """
 
-    def __init__(self):
-        self.cancel_scorer = CancelActivityScorer()
-        self.layering_scorer = LayeringScoring(reference_size=5.0, base_score=1.0)
-        self.age_scorer = OrderAgeDistributionScorer()
+    def __init__(self,
+                  cancel_scorer : CancelActivityScorerProtocol,
+                  age_scorer: OrderAgeDistributionScorerProtocol,
+                  layering_scorer: LayeringScoringProtocol,
+                  blender: AlphaBlenderProtocol, 
+                  ):
+        self.cancel_scorer = cancel_scorer
+        self.layering_scorer = layering_scorer
+        self.age_scorer = age_scorer
 
-        self.blender = AlphaBlender(
-            weights={'cancel_activity': 0.4, 'layering': 0.3, 'order_age': 0.3},
-            blending_method='weighted_average',  # Options: 'weighted_average', 'max_score', 'min_score'
-            adaptive=True
-        )
+        self.blender = blender
 
     def update_market(self, timestamp: int, market_snapshot: Dict[str, Any]) -> None:
         """

@@ -1,5 +1,19 @@
 import pytest 
-from alpha_scoring.AlphaBlender import AlphaBlender 
+from alpha_scoring.AlphaBlender import AlphaBlender
+from alpha_scoring.Alphablender_protocol import AlphaBlenderProtocol
+
+#Test Protocol compliance
+def  test_blender_protoocol_compliance():
+    blender: AlphaBlenderProtocol = AlphaBlender(
+        weights = {'cancel_activity': 0.5, 'layering': 0.3, 'order_age': 0.2},
+        blending_method = 'weighted average',
+        adaptive = False
+    )
+    assert hasattr(blender, 'compute_alpha_score')
+    assert hasattr(blender, 'update_signals')
+    assert hasattr(blender, 'update_trade_feedback')
+    assert hasattr(blender, 'get_debug_view')
+    assert hasattr(blender, 'reset')
 
 
 def test_weighted_average_static():

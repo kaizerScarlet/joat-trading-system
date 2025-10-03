@@ -1,17 +1,17 @@
 from datetime import datetime
 from typing import List, Dict
-from Execution_layer.binance_adapter import BinanceExecutionAdapter
+from Execution_layer.binance_adapter_protocol import BinanceExecutionAdapterProtocol
 
 class DailyDrawdownManager:
     """
     Manages daily drawdown limits for trading strategies.
     when limits are hit, it can trigger alerts or stop trading.
     """
-    def __init__(self, daily_drawdown_limit: float):
+    def __init__(self, daily_drawdown_limit: float, binance_adapter: BinanceExecutionAdapterProtocol):
         """
         :param daily drawdown_limit: Maximum allowed drawdown for the day (in base currency or % of account balance)
         """
-        self.account_balance = BinanceExecutionAdapter()
+        self.account_balance = binance_adapter
         self._drawdown_ratio = daily_drawdown_limit # Store raw ratio
         self.daily_drawdown_limit = None # Will be set later
         self.day_pnls : Dict[str, List[float]] = {}  # Maps date to list of daily PnLs

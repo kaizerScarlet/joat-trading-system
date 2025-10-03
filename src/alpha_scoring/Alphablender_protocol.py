@@ -1,5 +1,6 @@
-from typing import Protocol, Dict, Optional
+from typing import Protocol, Dict, Optional, runtime_checkable
 
+@runtime_checkable
 class AlphaBlenderProtocol(Protocol):
     def update_signals(
         self,
@@ -23,6 +24,9 @@ class AlphaBlenderProtocol(Protocol):
     ) -> None:
         """Updates signal performance tracking after a trade and recalculates dynamic weights."""
 
+    def _recalculate_dynamic_weights(self, side: str) -> None:
+        """Recomputes adaptive weights based on historical signal performance for the given side."""
+    
     def get_debug_view(self) -> Dict[str, Dict]:
         """Returns detailed internal state for introspection (weights, signals, scores, performance)."""
 

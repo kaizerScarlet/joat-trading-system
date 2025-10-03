@@ -1,6 +1,6 @@
 from typing import Dict, List
 import math
-from cancel_window.simple_cancel_window import SimpleCancelWindow
+from cancel_window.simple_cancel_window_protocol import CancelWindowProtocol
 
 
 class CancelActivityScorer:
@@ -9,13 +9,13 @@ class CancelActivityScorer:
     Designed to detect aggressive canceling behaviour (spoofing-like) in microstructure
     """
 
-    def __init__(self, reference_size: float = 5.0, tick_penality: float = 0.1):
+    def __init__(self, window_ms_tuner: CancelWindowProtocol, reference_size: float = 5.0, tick_penality: float = 0.1):
         """
         :param window_ms: Time window in milliseconds to consider recent activity
         :param reference_size: Used to normalize order size
         :param tick_penalty: Reduces weight of orders further from the top of book
         """
-        self.window_ms_tuner = SimpleCancelWindow()
+        self.window_ms_tuner = window_ms_tuner
         self.window_ms = self.window_ms_tuner.get_window_ms()
         self.reference_size = reference_size
         self.tick_penalty = tick_penality
@@ -131,6 +131,41 @@ class CancelActivityScorer:
             scores[side] = max(0.5, min(1.0, norm))
 
         return scores
+    
+    def get_debug_view(self) -> Dict[str, Dict]:
+        """
+        Returns a detailed snapshot of internal state for diagnostics and introspection.
+        Includes event buffers, EMA values, score bounds, and current alpha scores.
+        """
+        latest_ts = max(
+            [e['timestamp'] for side in self.order_events_by_side.values() for e in side],
+            default=0
+        )
+
+
+        return {
+            'window_ms': self.window_ms,
+            'reference_size': self.reference_size,
+            'tick_penalty': self.tick_penalty,
+            'event_buffers': {
+                'ask': self.order_events_by_side['ask'],
+                'bid': self.order_events_by_side['bid']
+            },
+            'ema_scores': {
+                'ask': self.alpha_ema_by_side['ask'],
+                'bid': self.alpha_ema_by_side['bid']
+            },
+            'score_bounds': {
+                'min': self.min_score_by_side,
+                'max': self.max_score_by_side
+            },
+            'base_weights': self.base_weights,
+            'normalized_scores': {
+                'ask': self.compute_score(current_time=latest_ts, side='ask')['ask'],
+                'bid': self.compute_score(current_time=latest_ts, side='bid')['bid']
+            }
+
+        }
 
 
     def reset(self):

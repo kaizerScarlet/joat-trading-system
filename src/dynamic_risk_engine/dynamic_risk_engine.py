@@ -1,12 +1,12 @@
-from dynamic_risk_engine.performance_tracker import PerformanceTracker
-from dynamic_risk_engine.daily_drawdown_manager import DailyDrawdownManager
-from dynamic_risk_engine.signal_confidence_calibrator import SignalConfidenceCalibrator
-from dynamic_risk_engine.dynamic_position_sizer import DynamicPositionSizer
-from dynamic_risk_engine.throttle_cooldown_manager import ThrottleCooldownManager
-from Execution_layer.binance_adapter import BinanceExecutionAdapter
-from market_data.orderbook import OrderBook
-from dynamic_risk_engine.cognitive_market_regime_classifier import  CognitiveMarketRegimeClassifier, MarketRegime
-from cancel_window.simple_cancel_window import SimpleCancelWindow
+from dynamic_risk_engine.performance_tracker_protocol import PerformanceTrackerProtocol
+from dynamic_risk_engine.daily_drawdown_manager_protocol import DailyDrawdownManagerProtocol
+from dynamic_risk_engine.signal_confidence_calibrator_protocol import SignalConfidenceCalibratorProtocol
+from dynamic_risk_engine.dynamic_position_sizer_protocol import DynamicPositionSizerProtocol
+from dynamic_risk_engine.throttle_cooldown_manager_protocol import ThrottleCooldownManagerProtocol
+from Execution_layer.binance_adapter_protocol import BinanceExecutionAdapterProtocol
+from market_data.orderbook_protocol import OrderBookProtocol
+from dynamic_risk_engine.cognitive_market_regime_classifier_protocol import  CognitiveMarketRegimeClassifierProtocol, MarketRegime
+from cancel_window.simple_cancel_window_protocol import CancelWindowProtocol
 from datetime import datetime 
 
 
@@ -17,22 +17,30 @@ class DynamicRiskEngine:
     Governs whether trades can proceed based on how large they should be
     """
 
-    def __init__(self,daily_drawdown_limit: float):
+    def __init__(self,daily_drawdown_limit: float,
+                  performance_tracker: PerformanceTrackerProtocol,
+                  signal_confidence: SignalConfidenceCalibratorProtocol,
+                  dynamic_position_sizer: DynamicPositionSizerProtocol,
+                  throttle_cooldown_manager: ThrottleCooldownManagerProtocol,
+                  binance_adapter: BinanceExecutionAdapterProtocol,
+                  orderbook: OrderBookProtocol,
+                  cancel_window: CancelWindowProtocol,
+                  ):
 
         """
         :param initial_balance: Starting balance for the risk engine
         :param max_risk_per_trade: Maximum risk allowed per trade as a fraction of the balance
         """
-        self.performance_tracker = PerformanceTracker()
-        self.daily_drawdown_manager = DailyDrawdownManager(daily_drawdown_limit)  # 25% daily drawdown limit
-        self.signal_confidence_calibrator = SignalConfidenceCalibrator()
-        self.dynamic_position_sizer = DynamicPositionSizer()
-        self.throttle_cooldown_manager = ThrottleCooldownManager()
-        self.binance_adapter = BinanceExecutionAdapter()
+        self.performance_tracker = performance_tracker
+        self.daily_drawdown_manager = DailyDrawdownManagerProtocol(daily_drawdown_limit)  # 25% daily drawdown limit
+        self.signal_confidence_calibrator = signal_confidence
+        self.dynamic_position_sizer = dynamic_position_sizer
+        self.throttle_cooldown_manager = throttle_cooldown_manager
+        self.binance_adapter = binance_adapter
 
-        self.orderbook = OrderBook()
-        self.cancel_window = SimpleCancelWindow()
-        self.market_regime_classifier =  CognitiveMarketRegimeClassifier(
+        self.orderbook = orderbook
+        self.cancel_window = cancel_window
+        self.market_regime_classifier =  CognitiveMarketRegimeClassifierProtocol(
             orderbook=self.orderbook,
             signal_calibrator=self.signal_confidence_calibrator,
             cancel_window=self.cancel_window
@@ -130,7 +138,7 @@ class DynamicRiskEngine:
         self.daily_drawdown_manager.reset_daily_drawdown(datetime.now())
         self.signal_confidence_calibrator.reset()
 
-        self.dynamic_position_sizer = DynamicPositionSizer()
+        self.dynamic_position_sizer = DynamicPositionSizerProtocol()
         self.dynamic_position_sizer.max_risk_per_trade = self.max_risk_per_trade
         self.dynamic_position_sizer.account_balance = self.binance_adapter
         self.dynamic_position_sizer.drawdown.account_balance = self.binance_adapter
@@ -139,7 +147,7 @@ class DynamicRiskEngine:
         self.daily_drawdown_manager.account_balance = self.binance_adapter
         await self.daily_drawdown_manager.initialize()
 
-        self.throttle_cooldown_manager =  ThrottleCooldownManager()
+        self.throttle_cooldown_manager =  ThrottleCooldownManagerProtocol()
         self.current_regime = MarketRegime.UNKNOWN
 
 

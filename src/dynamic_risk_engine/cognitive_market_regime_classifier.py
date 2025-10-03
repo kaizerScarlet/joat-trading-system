@@ -1,9 +1,9 @@
 from enum import Enum
 from collections import deque
 from datetime import datetime
-from market_data.orderbook import OrderBook
-from dynamic_risk_engine.signal_confidence_calibrator import SignalConfidenceCalibrator
-from cancel_window.simple_cancel_window import SimpleCancelWindow
+from market_data.orderbook_protocol import OrderBookProtocol
+from dynamic_risk_engine.signal_confidence_calibrator_protocol import SignalConfidenceCalibratorProtocol
+from cancel_window.simple_cancel_window_protocol import CancelWindowProtocol
 
 
 
@@ -16,7 +16,7 @@ class MarketRegime(Enum):
 
 
 class CognitiveMarketRegimeClassifier:
-    def __init__(self, orderbook: OrderBook, signal_calibrator: SignalConfidenceCalibrator, cancel_window: SimpleCancelWindow):
+    def __init__(self, orderbook: OrderBookProtocol, signal_calibrator: SignalConfidenceCalibratorProtocol, cancel_window: CancelWindowProtocol):
         self.orderbook = orderbook
         self.signal_calibrator = signal_calibrator
         self.cancel_window = cancel_window

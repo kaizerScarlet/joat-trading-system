@@ -6,10 +6,10 @@ import time
 from typing import List, Tuple
 from collections import deque
 import asyncio
-from dynamic_risk_engine.cognitive_market_regime_classifier import CognitiveMarketRegimeClassifier, MarketRegime 
-from dynamic_risk_engine.signal_confidence_calibrator import SignalConfidenceCalibrator
-from cancel_window.simple_cancel_window import SimpleCancelWindow
-from market_data.orderbook import OrderBook
+from dynamic_risk_engine.cognitive_market_regime_classifier_protocol import CognitiveMarketRegimeClassifierProtocol, MarketRegime 
+from dynamic_risk_engine.signal_confidence_calibrator_protocol import SignalConfidenceCalibratorProtocol
+from cancel_window.simple_cancel_window_protocol import CancelWindowProtocol
+from market_data.orderbook_protocol import OrderBookProtocol
 
 class ThrottleCooldownManager:
     """
@@ -25,6 +25,9 @@ class ThrottleCooldownManager:
     """
     def __init__(
             self,
+            confidence: SignalConfidenceCalibratorProtocol,
+            cancel_window: CancelWindowProtocol,
+            orderbook: OrderBookProtocol,
             max_losses=3, 
             cooldown_seconds=60,
             max_trades_per_minute=3,
@@ -83,12 +86,12 @@ class ThrottleCooldownManager:
         self.daily_order_count = 0
         self.last_reset = time.time()
 
-        self.confidence = SignalConfidenceCalibrator()
-        self.cancel_window = SimpleCancelWindow()
-        self.orderbook = OrderBook()
+        self.confidence = confidence
+        self.cancel_window = cancel_window
+        self.orderbook = orderbook
 
         #Regime Classifier (for potential adaptive throttling)
-        self.regime_classifier = CognitiveMarketRegimeClassifier(self.orderbook, self.confidence, self.cancel_window)
+        self.regime_classifier = CognitiveMarketRegimeClassifierProtocol(self.orderbook, self.confidence, self.cancel_window)
         
 #
 #   Cooldown and Loss Streak Control
