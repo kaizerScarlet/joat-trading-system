@@ -14,5 +14,8 @@ class DynamicPositionSizerProtocol(Protocol):
     async def reset(self) -> None:
         """Resets the position sizer to initial state."""
 
+    def _compute_max_risk_per_trade(self) -> float:
+        """return max risk per trade"""
+
     def get_drawdown_throttle(self) -> float:
         """Returns throttle factor based on current drawdown severity."""

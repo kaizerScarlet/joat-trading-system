@@ -13,6 +13,9 @@ class DailyDrawdownManagerProtocol(Protocol):
     def calculate_daily_drawdown(self, timestamp: datetime) -> float:
         """Calculates peak-to-trough drawdown for the given day."""
 
+    def alert_trading_halted(self, timestamp: datetime)-> None:
+        """ Alert that trading has been halted for the day due to drawdown limit"""
+        
     def is_trading_halted(self, timestamp: datetime) -> bool:
         """Returns True if trading is halted for the given day."""
 

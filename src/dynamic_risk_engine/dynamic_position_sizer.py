@@ -43,7 +43,7 @@ class DynamicPositionSizer:
         else:
             return 0.9 # Light throttle
 
-    def _compute_max_risk_per_trade(self):
+    def _compute_max_risk_per_trade(self) -> float:
         win_rate = self.win_rate.win_rate()
         rrr = self.win_rate.average_rrr()
         

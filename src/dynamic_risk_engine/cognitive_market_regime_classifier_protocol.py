@@ -10,6 +10,12 @@ class MarketRegime(Enum):
 
 @runtime_checkable
 class CognitiveMarketRegimeClassifierProtocol(Protocol):
+    def classify_environment(self) -> MarketRegime:
+        """Classifies current market regime"""
+        
+    def reinforce_regime(self, base_regime: MarketRegime)-> MarketRegime:
+        """Reinforces market Regime"""
+
     def update_regime(self) -> MarketRegime:
         """Classify and reinforces the current market regime, logs drift and overlays."""
     

@@ -2,6 +2,9 @@ from typing import Protocol, Dict, runtime_checkable
 
 @runtime_checkable
 class OrderAgeDistributionProtocol(Protocol):
+    def _prune(self, current_time: int):
+        """Hybrid pruning: keep only events within retention window + cap max size"""
+        
     def register_event(self, orderid: str, timestamp: int, price: float, size: float, side: str) -> None:
         """Registers a new order with its creation timestamp."""
 

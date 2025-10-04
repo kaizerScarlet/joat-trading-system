@@ -14,6 +14,12 @@ class OrderLayeringDetectionProtocol(Protocol):
     def detect_layering(self) -> List[Dict[str, Any]]:
         """Detects suspicious layering clusters based on price adjacency, timing, and cancel behavior."""
 
+    def _prune(self):
+        """Hybrid pruning: keep only events within retention window """
+
+    def _normalize_side(self, side: str) -> str:
+        """Return normalized side (input: a -> output: ask) or (input: b -> output: bid)"""
+    
     def get_layering_score(self) -> float:
         """Returns a normalized layering score (0.0 to 1.0) based on aggression and recency."""
 

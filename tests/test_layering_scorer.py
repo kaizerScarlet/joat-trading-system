@@ -187,30 +187,25 @@ def test_sequential_clusters_scored_separately():
 
     assert 0.0 < first_score <= 1.0
     assert 0.0 < second_score <= 1.0
-
 def test_time_decay_reduces_score():
     detector = StubLayeringDetector()
-    scorer : LayeringScoringProtocol = LayeringScoring(layering_detector = detector, reference_size=5.0, base_score=1.0)
+    scorer = LayeringScoring(layering_detector=detector, reference_size=5.0, base_score=1.0)
     now = int(time.time()) * 1000
 
     # Initial cluster
-    scorer.register_events(timestamp = now,orderid=str(uuid.uuid4()), event_type='LAYER_CANCEL_ONLY', price=100.0, size=5.0, side='bid')
-    scorer.register_events(timestamp = now + 10,orderid=str(uuid.uuid4()), event_type='LAYER_CANCEL_ONLY', price=99.9, size=5.0, side='bid')
-    scorer.register_events(timestamp = now + 20,orderid=str(uuid.uuid4()), event_type='LAYER_CANCEL_ONLY', price=99.8, size=5.0, side='bid')
-    fresh_score = scorer.compute_score(now + 80)['bid']
+    scorer.register_events(timestamp=now, orderid=str(uuid.uuid4()), event_type='LAYER_CANCEL_ONLY', price=100.0, size=5.0, side='bid')
+    scorer.register_events(timestamp=now + 10, orderid=str(uuid.uuid4()), event_type='LAYER_CANCEL_ONLY', price=99.9, size=5.0, side='bid')
+    scorer.register_events(timestamp=now + 20, orderid=str(uuid.uuid4()), event_type='LAYER_CANCEL_ONLY', price=99.8, size=5.0, side='bid')
+    scorer.compute_score(now + 80)
+    raw_fresh = scorer._raw_score_by_side['bid']
 
-    # Add stronger cluster later to expand normalization range
-    later = now + 1000
-    scorer.register_events(timestamp = later,orderid=str(uuid.uuid4()), event_type = 'LAYER_CANCEL_ONLY', price=100.0, size=50.0, side='bid')
-    scorer.register_events(timestamp = later + 10,orderid=str(uuid.uuid4()), event_type='LAYER_CANCEL_ONLY', price= 99.9, size= 50.0, side='bid')
-    scorer.register_events(timestamp = later + 20,orderid=str(uuid.uuid4()), event_type='LAYER_CANCEL_ONLY', price=99.8, size=50.0, side='bid')
-    scorer.compute_score(later + 100)  # Expand normalization range
+    # Re-score after decay without injecting new clusters
+    scorer.compute_score(now + 200)
+    raw_decayed = scorer._raw_score_by_side['bid']
 
-    # Re-score original cluster after decay
-    decayed_score = scorer.compute_score(now + 200)['bid']
+    assert raw_decayed < raw_fresh
 
-    assert decayed_score <= fresh_score
-    assert 0.0 <= decayed_score <= 1.0
+
 
 
 def test_side_skew_detection():

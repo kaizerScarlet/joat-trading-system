@@ -2,6 +2,9 @@ from typing import Protocol, Dict, Any, List, Tuple, Optional, runtime_checkable
 
 @runtime_checkable
 class CancelWindowProtocol(Protocol):
+    def _next_id(self) -> str:
+        """Generates Unique ID for orders"""
+        
     def process_l2_update(self, msg: Dict[str, Any]) -> None:
         """Processes L2 depth updates and detects cancel-based spoofing, iceberg, laddering, and density flags."""
 
