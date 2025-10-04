@@ -1,8 +1,9 @@
 import pytest 
 from cancel_window.order_age_distribution import OrderAgeDistribution
+from cancel_window.order_age_distribution_protocol import OrderAgeDistributionProtocol
 
 def test_order_age_distribution():
-    tracker = OrderAgeDistribution()
+    tracker : OrderAgeDistributionProtocol = OrderAgeDistribution()
 
     # Register some active orders
     tracker.register_event(orderid="order_1", timestamp=150, price=1000, size=5, side='a')
@@ -28,3 +29,104 @@ def test_order_age_distribution():
     # Reset the tracker
     tracker.reset()
     assert len(tracker.active_orders) == 0
+
+
+
+
+import pytest
+from cancel_window.order_age_distribution import OrderAgeDistribution
+
+def test_detect_bursts_flags_short_lived_activity():
+    tracker : OrderAgeDistributionProtocol = OrderAgeDistribution()
+    now = 1000
+
+    # Register and cancel short-lived orders
+    for i in range(3):
+        oid = f"order_{i}"
+        tracker.register_event(orderid=oid, timestamp=now + i * 10, price=100.0, size=5.0, side='bid')
+        tracker.cancel_order(orderid=oid, timestamp=now + i * 10 + 100, event_type="CANCEL", price=100.0, size=5.0, distance_from_best=0.1, side='bid')
+
+    burst_flags = tracker.detect_bursts(age_threshold_ms=200, burst_window_ms=500)
+    assert burst_flags['burst_detected_bid'] is True
+    assert burst_flags['burst_detected_ask'] is False
+
+def test_detects_single_short_lived_burst():
+    tracker: OrderAgeDistributionProtocol = OrderAgeDistribution()
+    now = 1000
+
+    # 4 short-lived orders spaced within 400ms → 1 burst
+    for i in range(4):
+        ts = now + i * 100
+        oid = f"burst_order_{i}"
+        tracker.register_event(orderid=oid, timestamp=ts, price=101.0, size=5.0, side='ask')
+        tracker.cancel_order(orderid=oid, timestamp=ts + 100, event_type="CANCEL", price=101.0, size=5.0, distance_from_best=0.1, side='ask')
+
+    bursts = tracker.detect_short_lived_bursts(age_threshold_ms=300, cluster_window_ms=500)
+    assert bursts['ask'] == 1
+    assert bursts.get('bid', 0) == 0
+
+def test_detects_two_separate_short_lived_bursts():
+    tracker: OrderAgeDistributionProtocol = OrderAgeDistribution()
+    now = 1000
+
+    # Burst 1
+    for i in range(3):
+        ts = now + i * 100
+        oid = f"burst1_order_{i}"
+        tracker.register_event(orderid=oid, timestamp=ts, price=101.0, size=5.0, side='ask')
+        tracker.cancel_order(orderid=oid, timestamp=ts + 100, event_type="CANCEL", price=101.0, size=5.0, distance_from_best=0.1, side='ask')
+
+    # Burst 2 (spaced 1000ms later)
+    for i in range(3):
+        ts = now + 1000 + i * 100
+        oid = f"burst2_order_{i}"
+        tracker.register_event(orderid=oid, timestamp=ts, price=101.0, size=5.0, side='ask')
+        tracker.cancel_order(orderid=oid, timestamp=ts + 100, event_type="CANCEL", price=101.0, size=5.0, distance_from_best=0.1, side='ask')
+
+    bursts = tracker.detect_short_lived_bursts(age_threshold_ms=300, cluster_window_ms=500)
+    assert bursts['ask'] == 2
+    assert bursts.get('bid', 0) == 0
+
+
+def test_get_order_age_bias_returns_normalized_score():
+    tracker : OrderAgeDistributionProtocol = OrderAgeDistribution()
+    now = 1000
+
+    # Aggressive short-lived cancels
+    for i in range(3):
+        oid = f"order_{i}"
+        tracker.register_event(orderid=oid, timestamp=now + i * 10, price=100.0, size=5.0, side='bid')
+        tracker.cancel_order(orderid=oid, timestamp=now + i * 10 + 100, event_type="CANCEL", price=100.0, size=5.0, distance_from_best=0.1, side='bid')
+
+    bias = tracker.get_order_age_bias()
+    assert bias < 0.0  # Indicates aggressive behavior
+
+def test_get_age_distribution_returns_histogram():
+    tracker : OrderAgeDistributionProtocol = OrderAgeDistribution()
+    now = 1000
+
+    # Mixed age orders
+    tracker.register_event(orderid="o1", timestamp=now, price=100.0, size=5.0, side='bid')
+    tracker.cancel_order(orderid="o1", timestamp=now + 250, event_type="CANCEL", price=100.0, size=5.0, distance_from_best=0.1, side='bid')
+
+    tracker.register_event(orderid="o2", timestamp=now + 500, price=100.0, size=5.0, side='bid')
+    tracker.fill_order(orderid="o2", timestamp=now + 1500, event_type="FILL", price=100.0, size=5.0, distance_from_best=0.1, side='bid')
+
+    histogram = tracker.get_age_distribution(bucket_ms=500)
+    assert histogram[0] == 1  # First order aged 250ms
+    assert histogram[2] == 1  # Second order aged 1000ms
+
+def test_get_recent_short_lived_ratio_computes_correctly():
+    tracker : OrderAgeDistributionProtocol = OrderAgeDistribution()
+    now = 1000
+
+    # Short-lived
+    tracker.register_event(orderid="o1", timestamp=now, price=100.0, size=5.0, side='bid')
+    tracker.cancel_order(orderid="o1", timestamp=now + 200, event_type="CANCEL", price=100.0, size=5.0, distance_from_best=0.1, side='bid')
+
+    # Long-lived
+    tracker.register_event(orderid="o2", timestamp=now, price=100.0, size=5.0, side='bid')
+    tracker.fill_order(orderid="o2", timestamp=now + 2000, event_type="FILL", price=100.0, size=5.0, distance_from_best=0.1, side='bid')
+
+    ratio = tracker.get_recent_short_lived_ratio(threshold_ms=300, window_ms=3000)
+    assert 0.4 < ratio < 0.6  # 1 short-lived out of 2 total
