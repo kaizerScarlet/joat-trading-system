@@ -189,5 +189,21 @@ class CognitiveMarketRegimeClassifier:
 
         return "NORMAL"
 
+    def get_scoring_weights(self) -> tuple[float, float, float, float]:
+        """
+        Returns weights for the four components used in cancel impact scoring.
+        Adjust these weights based on your strategy's sensitivity to each factor.
+        """
+        regime = self.get_current_regime()
+        if regime == MarketRegime.TRENDING:
+            return (0.3, 0.4, 0.2, 0.1)
+        if regime == MarketRegime.MEAN_REVERTING:
+            return (0.4, 0.3, 0.2, 0.1)
+        if regime == MarketRegime.VOLATILE:
+            return (0.2, 0.2, 0.3, 0.3)
+        if regime == MarketRegime.ILLIQUID:
+            return (0.5, 0.1, 0.1, 0.3)
+        else:
+            return (0.5, 0.2, 0.1, 0.2)
 
 

@@ -6,6 +6,7 @@ import time
 import math 
 import uuid
 
+from dynamic_risk_engine.cognitive_market_regime_classifier_protocol import CognitiveMarketRegimeClassifierProtocol, MarketRegime
 from market_data.orderbook_protocol import OrderBookProtocol
 from cancel_window.order_age_distribution_protocol import OrderAgeDistributionProtocol
 
@@ -115,7 +116,7 @@ class SimpleCancelWindow(CancelWindow):
         15. PING_CANCEL -> Orders placed for very short time (ping for liquidity)
     """
     # -----------------------------------------------------------------------------------------------#
-    def __init__(self, order_age_tracker: OrderAgeDistributionProtocol, order_book: OrderBookProtocol):
+    def __init__(self, order_age_tracker: OrderAgeDistributionProtocol, order_book: OrderBookProtocol, classifier: CognitiveMarketRegimeClassifierProtocol):
         
         self.adaptive = True
         self.window_ms = None
@@ -154,6 +155,7 @@ class SimpleCancelWindow(CancelWindow):
         self.cancel_events = []
         self.fill_events = []
        
+        self.regime_classifier = classifier # to be injected/ set externally
         self.orderbook = order_book   # to be injected/ set externally
         self.midprice = self.orderbook.get_midprice()    #injected externally by orderbook
         #---------------------------------------------------------------------------#
@@ -543,7 +545,17 @@ class SimpleCancelWindow(CancelWindow):
         if now == 0:
             """Sanity check - no cancels recorded yet"""
             return {}
-        cutoff = now - self.get_window_ms()
+        #Regime aware window override
+        window_ms = self.get_window_ms()
+        if hasattr(self, 'regime_classifier') and self.regime_classifier:
+            regime = self.regime_classifier.get_current_regime()
+            stability = self.regime_classifier.get_regime_stability()
+            #Optional: blend with default window if regime is unstable
+            default_window = window_ms
+            regime_window = int(window_ms * (1.0 +  (1.0 - stability) * 0.5)) #Widen window if unstable
+            window_ms = regime_window
+
+        cutoff = now - window_ms
         cancel_density: Dict[Tuple[str, float], int] = {}
 
         for key, timestamps in self.cancel_timestamps.items():
@@ -832,11 +844,11 @@ class SimpleCancelWindow(CancelWindow):
         norm_density =(density.get(price, 0) / total_cancels)**1.5
 
         # ------ Step 2: Distance from Midprice -----
-        if self.update_midprice() is None:
+        mp = self.update_midprice()
+        if mp is None:
             dist_from_mid = 0.5 # Neutral
         else:
             max_rel_dist = 0.02 #2%
-            mp = self.update_midprice()
             # Guard mp == 0 to avoid division warnings in synthetic tests.
             rel_dis = abs(price - mp) / (mp if mp else 1e-9)
             dist_from_mid = max(0.0, 1.0 - min(1.0, rel_dis / max_rel_dist)) # mapped to [0,1]
@@ -851,11 +863,22 @@ class SimpleCancelWindow(CancelWindow):
             size_at_price = self.orderbook.get_level_size(price, side) or 1e-9
         except Exception:
             size_at_price = 1e-9
-            
+
         inv_book_depth = min(1.0 / size_at_price, 1.0)
 
+        # -----Step 5: Regime-Aware Weights ----
+        if hasattr(self, 'regime_classifier') and self.regime_classifier:
+            stability = self.regime_classifier.get_regime_stability()
+            base_weights = self.regime_classifier.get_scoring_weights()
+            default_weights = (0.5, 0.2, 0.1, 0.2) #Default weights
+            w1, w2, w3, w4 = tuple(
+                stability * bw + (1.0 - stability) * dw
+                for bw, dw in zip(base_weights, default_weights)
+            )
         # -----Weighted Combination -------
-        w1, w2, w3, w4 = 0.5, 0.2, 0.1, 0.2
+        else:
+            w1, w2, w3, w4 = 0.5, 0.2, 0.1, 0.2
+
         score = (
             w1 * norm_density +
             w2 * dist_from_mid +

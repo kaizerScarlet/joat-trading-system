@@ -33,3 +33,9 @@ class CognitiveMarketRegimeClassifierProtocol(Protocol):
 
     def get_behavioral_overlay(self) -> str:
         """Returns overlay label like 'LIQUIDITY_VACUUM, 'MOMENTUM_EXHAUSTION', or 'NORMAL'."""
+
+    def get_scoring_weights(self) -> tuple[float, float, float, float]:
+        """
+        Returns weights for the four components used in cancel impact scoring.
+        Adjust these weights based on your strategy's sensitivity to each factor.
+        """
