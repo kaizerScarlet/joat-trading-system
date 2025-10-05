@@ -566,7 +566,7 @@ class SimpleCancelWindow(CancelWindow):
         
         return cancel_density
     
-    def set_cancel_density_params(self, initial_threshold: int, initial_window_ms: int) -> None:
+    def set_cancel_density_params(self, initial_threshold: int = 3, initial_window_ms: int = 75) -> None:
         self.cancel_density_threshold_bid = AdaptiveThreshold(initial_threshold=initial_threshold) #Example: 3 cancels in the last 100ms
         self.cancel_density_threshold_ask = AdaptiveThreshold(initial_threshold=initial_threshold)
 
