@@ -1,10 +1,11 @@
 import time #will need to change this at production so that it is the server time taken not my machine time
 import pytest 
+from cancel_window.simple_cancel_window_protocol import CancelWindowProtocol
 from cancel_window.simple_cancel_window import SimpleCancelWindow
 
 #test fast cancel on bid side
 def test_fast_cancel_flag_bid():
-    cw = SimpleCancelWindow()
+    cw : CancelWindowProtocol = SimpleCancelWindow()
 
     #add level at t0
     cw.process_l2_update({"E": 1000, "b": [["30000", "1.0"]], "a": []})
@@ -18,7 +19,7 @@ def test_fast_cancel_flag_bid():
 
 #test fast cancel on ask side
 def test_fast_cancel_flag_ask():
-    cw = SimpleCancelWindow()
+    cw : CancelWindowProtocol = SimpleCancelWindow()
 
     #add level at t0
     cw.process_l2_update({"E": 1000, "b": [],   "a": [["30000", "1.0"]]})
@@ -34,7 +35,7 @@ def test_fast_cancel_flag_ask():
 
 #Test True fill flag on ask side
 def test_true_fill_flag_ask():
-    cw = SimpleCancelWindow()
+    cw : CancelWindowProtocol = SimpleCancelWindow()
     #1. add order
     cw.process_l2_update({"E": 1000, "a": [["30050", "2.0"]], "b":[]})
     #2. Cancel order 20ms later
@@ -52,7 +53,7 @@ def test_true_fill_flag_ask():
 
 #Test True fill flag bid
 def test_true_fill_flag_bid():
-    cw = SimpleCancelWindow()
+    cw : CancelWindowProtocol = SimpleCancelWindow()
     #1. add order
     cw.process_l2_update({"E": 1000, "b": [["30050", "2.0"]], "a":[]})
     #2. Cancel order 20ms later
@@ -75,7 +76,7 @@ def test_partial_fill_flag_bid():
     Order is added -> partially removed via  trade smaller than original size
     in <window_ms. Expect PARTIAL_FILL, not TRUE_FILL.
     """
-    cw = SimpleCancelWindow()
+    cw : CancelWindowProtocol = SimpleCancelWindow()
     #1. add 2 BTC ask @ 30 070
     cw.process_l2_update({"E": 1_000, "b": [["30070", "2.0"]], "a":[]})
 
@@ -103,7 +104,7 @@ def test_partial_fill_flag_ask():
     Order is added -> partially removed via  trade smaller than original size
     in <window_ms. Expect PARTIAL_FILL, not TRUE_FILL.
     """
-    cw = SimpleCancelWindow()
+    cw : CancelWindowProtocol = SimpleCancelWindow()
     #1. add 2 BTC ask @ 30 070
     cw.process_l2_update({"E": 1_000, "a": [["30070", "2.0"]], "b":[]})
 
@@ -126,7 +127,7 @@ def test_partial_fill_flag_ask():
 
 # Test iceberg cancel flag emitted ask side
 def test_iceberg_cancel_flag_emitted_ask():
-    cw = SimpleCancelWindow()
+    cw : CancelWindowProtocol = SimpleCancelWindow()
 
     base_ts = 100000
     #simulate  3 quick size reductions at same price, no  trades
@@ -150,7 +151,7 @@ def test_iceberg_cancel_flag_emitted_ask():
 
 #Test iceberg cancel flag emitted bid side
 def test_iceberg_cancel_flag_emitted_bid():
-    cw = SimpleCancelWindow()
+    cw : CancelWindowProtocol = SimpleCancelWindow()
 
     base_ts = 100000
     #simulate  3 quick size reductions at same price, no  trades
@@ -176,7 +177,7 @@ def test_iceberg_cancel_flag_emitted_bid():
 
 #Test no iceberg if only one reduction ask
 def test_no_iceberg_if_only_one_reduction_ask():
-    cw = SimpleCancelWindow()
+    cw : CancelWindowProtocol = SimpleCancelWindow()
 
     base_ts = 100000
     #simulate  3 quick size reductions at same price, no  trades
@@ -194,7 +195,7 @@ def test_no_iceberg_if_only_one_reduction_ask():
 
 #Test no iceberg if only one reduction bid
 def test_no_iceberg_if_only_one_reduction_bid():
-    cw = SimpleCancelWindow()
+    cw : CancelWindowProtocol = SimpleCancelWindow()
 
     base_ts = 100000
     #simulate  3 quick size reductions at same price, no  trades
@@ -213,7 +214,7 @@ def test_no_iceberg_if_only_one_reduction_bid():
 
 #Test no iceberg if cancel outside window on the ask side
 def test_no_iceberg_if_cancel_outside_window_ask():
-    cw = SimpleCancelWindow()
+    cw : CancelWindowProtocol = SimpleCancelWindow()
 
     base_ts = 100000
     #simulate  3 quick size reductions at same price, no  trades
@@ -231,7 +232,7 @@ def test_no_iceberg_if_cancel_outside_window_ask():
 
 #Test no iceberg if cancel outside window on the bid side
 def test_no_iceberg_if_cancel_outside_window_bid():
-    cw = SimpleCancelWindow()
+    cw : CancelWindowProtocol = SimpleCancelWindow()
 
     base_ts = 100000
     #simulate  3 quick size reductions at same price, no  trades
@@ -249,7 +250,7 @@ def test_no_iceberg_if_cancel_outside_window_bid():
 
 #Test Cancel Density flag ask side
 def test_high_cancel_density_flag_ask():
-    cw = SimpleCancelWindow()
+    cw : CancelWindowProtocol = SimpleCancelWindow()
     cw.set_cancel_density_params(initial_threshold=3, initial_window_ms=100)
 
     base_ts = 100000
@@ -278,7 +279,7 @@ def test_high_cancel_density_flag_ask():
 
 #Test Cancel Density flag bid side
 def test_high_cancel_density_flag_bid():
-    cw = SimpleCancelWindow()
+    cw : CancelWindowProtocol = SimpleCancelWindow()
     cw.set_cancel_density_params(initial_threshold=3, initial_window_ms=100)
 
     base_ts = 100000
@@ -307,7 +308,7 @@ def test_high_cancel_density_flag_bid():
 #@pytest.mark.skip(reason="REGISTER_CANCEL missing positional arguments, correct it first")
 #Test Compute cancel density correctly
 def test_cancel_density_computation():
-    cw = SimpleCancelWindow()
+    cw : CancelWindowProtocol = SimpleCancelWindow()
     # Simple 10 cancels at level 100, 5 at  101, 1 at 102
     for _ in range(10):
         cw.register_cancel(price=100.0, side='ask', timestamp=123456789, size=1.0)
@@ -324,7 +325,7 @@ def test_cancel_density_computation():
 #@pytest.mark.skip(reason="REGISTER_CANCEL missing positional arguments, correct it first")
 #Test Normalize Cancel Density
 def test_normalized_cancel_density():
-    cw = SimpleCancelWindow()
+    cw : CancelWindowProtocol = SimpleCancelWindow()
     for price, count in [(100.0, 10), (101.0, 5), (102.0, 1)]:
         for _ in range(count):
            cw.register_cancel(price=price, side='ask', timestamp=0, size=1.0)
@@ -340,7 +341,7 @@ def test_normalized_cancel_density():
 #@pytest.mark.skip(reason="REGISTER_CAMCEL missing positional arguments, correct it")
 #Test Clear Density after Flush
 def test_cancel_density_flush():
-    window = SimpleCancelWindow()
+    window : CancelWindowProtocol = SimpleCancelWindow()
     window.register_cancel(price=100.0,side='ask', timestamp=0, size=5.0)
 
     window.flush()
@@ -351,7 +352,7 @@ def test_cancel_density_flush():
 
 # Test for Icerberg Cancels
 def test_iceberg_cancel_detection():
-    cw = SimpleCancelWindow()
+    cw : CancelWindowProtocol = SimpleCancelWindow()
     ts = 100
     for _ in range(5):
         cw.register_cancel(price= 101.0, side='ask', timestamp=ts, size=2.5)
@@ -371,7 +372,7 @@ class MockOrderBook:
         return 1000.0
 #@pytest.mark.skip(reason="UPDATE_BOOK, COMPUTE_IMPACT_SCORE not implemented yet, also has incorrect parameters for REGISTER_CANCEL")
 def test_high_impact_cancel():
-    cw = SimpleCancelWindow()
+    cw : CancelWindowProtocol = SimpleCancelWindow()
     cw.update_midprice(mid_price=100.0)
     #cw.orderbook = MockOrderBook() #Inject Mock dependency
     cw.fill_events = [{'price': 101.0, 'side':'ask'}] * 3
@@ -386,7 +387,7 @@ def test_high_impact_cancel():
 #Test case 2: Far from mid + low = low score
 #@pytest.mark.skip(reason="UPDATE_BOOK, COMPUTE_CANCEL_IMPACT_SCORE npt implemented yet, aslo has incorrect parameters for REGISTER_CANCEL")
 def test_low_impact_cancel():
-    cw = SimpleCancelWindow()
+    cw : CancelWindowProtocol = SimpleCancelWindow()
     cw.update_midprice(mid_price=100.0)
     
     #cw.orderbook = MockOrderBook() #Inject Mock dependency
@@ -401,7 +402,7 @@ def test_low_impact_cancel():
 #Test Case 3: Score adjusts After Book Update
 #@pytest.mark.skip(reason="UPDATE_BOOK, COMPUTE_CANCEL_IMPACT_SCORE not implemented yet, also has incorrect parameters for REGISTER_CANCEL")
 def test_score_changes_with_book():
-    cw = SimpleCancelWindow()
+    cw : CancelWindowProtocol = SimpleCancelWindow()
     cw.update_midprice(mid_price=100.0)
     #cw.orderbook = MockOrderBook() #Inject Mock dependency
     cw.fill_events = [{'price': 101.0, 'side':'ask'}] * 3
@@ -415,6 +416,18 @@ def test_score_changes_with_book():
 
 
 
+def test_snapshot_state_integrity():
+    window = SimpleCancelWindow(...)
+    window.bids = {30000.0: 1.0}
+    window.asks = {30001.0: 1.0}
+    window.cancel_cache = {("bid", 30000.0): (1000, 1.0)}
+    window._flags.append({"type": "TEST_FLAG"})
+    snapshot = window.snapshot_state()
+    assert snapshot["flag_count"] == 1
+    assert snapshot["bids"] == 1
+    assert snapshot["asks"] == 1
+    assert snapshot["cancel_cache"] == 1
+    assert snapshot["flags"][0]["type"] == "TEST_FLAG"
 
 
 
@@ -423,7 +436,7 @@ def test_score_changes_with_book():
 @pytest.mark.skip(reason="CancelConfig() function not implemented yet")
 def test_config_load():
     config = CancelConfig(window_size = 2.0, density_thresh=0.2)
-    cw = SimpleCancelWindow(config=config)
+    cw : CancelWindowProtocol = SimpleCancelWindow(config=config)
     assert cw.config.density_thresh == 0.2
 
 

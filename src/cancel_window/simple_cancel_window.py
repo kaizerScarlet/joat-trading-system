@@ -510,7 +510,6 @@ class SimpleCancelWindow(CancelWindow):
         #returns current flags only (Non-destructive)
         #Use to inspect flags multiple times or during testing/debugging
         flags = self._flags[:]
-        self._flags.clear()
         return flags
     
 
@@ -530,7 +529,7 @@ class SimpleCancelWindow(CancelWindow):
             "bids": len(self.bids),
             "asks": len(self.asks),
             "cancel_cache": len(self.cancel_cache),
-            "flags": self.get_flags(),
+            "flags": self._flags[:],
             "cancel_density": self.compute_cancel_density()
             
 
@@ -541,6 +540,9 @@ class SimpleCancelWindow(CancelWindow):
         Compute how many cancels occured at each (side, price) level in the past window 'self.get_window_ms()'
         """
         now = max((ts for timestamps in self.cancel_timestamps.values() for ts in timestamps), default=0)
+        if now == 0:
+            """Sanity check - no cancels recorded yet"""
+            return {}
         cutoff = now - self.get_window_ms()
         cancel_density: Dict[Tuple[str, float], int] = {}
 
@@ -553,10 +555,10 @@ class SimpleCancelWindow(CancelWindow):
         return cancel_density
     
     def set_cancel_density_params(self, initial_threshold: int, initial_window_ms: int) -> None:
-        self.cancel_density_threshold_bid = AdaptiveThreshold(initial_threshold=3) #Example: 3 cancels in the last 100ms
-        self.cancel_density_threshold_ask = AdaptiveThreshold(initial_threshold=3)
+        self.cancel_density_threshold_bid = AdaptiveThreshold(initial_threshold=initial_threshold) #Example: 3 cancels in the last 100ms
+        self.cancel_density_threshold_ask = AdaptiveThreshold(initial_threshold=initial_threshold)
 
-        self.cancel_density_window_ms = AdaptiveDensityWindow(initial_window_ms=75) #Timewindow to evaluate density 
+        self.cancel_density_window_ms = AdaptiveDensityWindow(initial_window_ms=initial_window_ms) #Timewindow to evaluate density 
 
 
 
@@ -664,7 +666,6 @@ class SimpleCancelWindow(CancelWindow):
                 'price': price,
                 'side': side,
                 'size': size,
-                'timestamp': timestamp
             })
             #Pass along to OrderAgeDistribution to tag
             self.order_age_tracker.cancel_order(orderid=orderid, timestamp=timestamp, event_type='REPOSTING_BEHAVIOUR', price=price, size=size, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
@@ -690,7 +691,6 @@ class SimpleCancelWindow(CancelWindow):
                 'side': side,
                 'size': size,
                 'price_levels': list(active_levels),
-                'timestamp': int(time.time()*1000)
             })
             #Pass along to OrderAgeDistribution to tag
             self.order_age_tracker.cancel_order(orderid=orderid, timestamp=timestamp, event_type='LAYER_WIPE', price=price, size=size, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
@@ -847,7 +847,11 @@ class SimpleCancelWindow(CancelWindow):
 
         # ------Step 4: Inverse Book Depth at Price ----
         """Still need to implement the orderbook.get_level_size(price, size)"""
-        size_at_price = self.orderbook.get_level_size(price, side) or 1e-9
+        try:
+            size_at_price = self.orderbook.get_level_size(price, side) or 1e-9
+        except Exception:
+            size_at_price = 1e-9
+            
         inv_book_depth = min(1.0 / size_at_price, 1.0)
 
         # -----Weighted Combination -------
