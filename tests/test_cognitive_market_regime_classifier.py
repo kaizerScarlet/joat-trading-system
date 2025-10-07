@@ -39,6 +39,7 @@ class MockCognitiveMarketRegimeClassifier(CognitiveMarketRegimeClassifierProtoco
         return MarketRegime.UNKNOWN
     def reinforce_regime(self, base_regime: MarketRegime) -> MarketRegime:
         return base_regime
+    
 
 
 class DummyOrderAgeTracker(OrderAgeDistributionProtocol):
