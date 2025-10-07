@@ -15,6 +15,18 @@ class DummyOrderBook(OrderBookProtocol):
         return 1.0
     def update_midprice(self) -> float:
         return 30000.0
+    def get_update_rate(self) -> float:
+        return 1.0
+    def get_liquidity_within_bps(self, side: str, bps: float) -> float:
+        return 1000.0
+    def get_volatility_estimate(self) -> float:
+        return 0.01
+    def get_estimated_volume(self, side: str) -> float:
+        return 1000.0
+    def get_best_price(self, side: str) -> float:
+        return 30000.0 if side == 'bid' else 30001.0
+    def get_midprice(self) -> float:
+        return 30000.5
 
 class DummyRegimeClassifier(CognitiveMarketRegimeClassifierProtocol):
     def get_current_regime(self): return MarketRegime.UNKNOWN
@@ -334,7 +346,7 @@ def test_high_cancel_density_flag_ask():
     #5. Add
     cw.process_l2_update({"E": base_ts + 50, "a": [["30090", "2.0"]], "b": []})
     #6. Cancel
-    cw.process_l2_update({"E": base_ts + 30, "a": [["30090", "0"]], "b": []})
+    cw.process_l2_update({"E": base_ts + 60, "a": [["30090", "0"]], "b": []})
     
     flags = cw.flush_flags()
     
@@ -342,6 +354,29 @@ def test_high_cancel_density_flag_ask():
     density_flags = [f for f in flags if f["type"] ==  "HIGH_CANCEL_DENSITY"]
     assert len(density_flags) > 0
     print("Test Passed. High_CANCEL_DENSITY triggered", density_flags)
+
+def test_high_cancel_density_flag_ask2():
+    cw = SimpleCancelWindow(
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier()
+    )
+    cw.set_cancel_density_params(initial_threshold=3, initial_window_ms=100)
+
+    base_ts = 100000
+    # Add and cancel 3 times within 100ms
+    cw.process_l2_update({"E": base_ts, "a": [["30090", "5.0"]], "b": []})
+    cw.process_l2_update({"E": base_ts + 10, "a": [["30090", "0"]], "b": []})
+    cw.process_l2_update({"E": base_ts + 20, "a": [["30090", "2.0"]], "b": []})
+    cw.process_l2_update({"E": base_ts + 30, "a": [["30090", "0"]], "b": []})
+    cw.process_l2_update({"E": base_ts + 40, "a": [["30090", "2.0"]], "b": []})
+    cw.process_l2_update({"E": base_ts + 60, "a": [["30090", "0"]], "b": []})
+
+    flags = cw.flush_flags()
+    print(flags)
+    density_flags = [f for f in flags if f["type"] == "CANCEL_DENSITY_SPIKE"]
+    assert len(density_flags) > 0
+
 
 
 
@@ -367,14 +402,35 @@ def test_high_cancel_density_flag_bid():
     #5. Add
     cw.process_l2_update({"E": base_ts + 50, "b": [["30090", "2.0"]], "a": []})
     #6. Cancel
-    cw.process_l2_update({"E": base_ts + 30, "b": [["30090", "0"]], "a": []})
+    cw.process_l2_update({"E": base_ts + 60, "b": [["30090", "0"]], "a": []})
     
     flags = cw.flush_flags()
     
     #Should contain HIGH_CANCEL_DENSITY
-    density_flags = [f for f in flags if f["type"] ==  "HIGH_CANCEL_DENSITY"]
+    density_flags = [f for f in flags if f["type"] ==  "CANCEL_DENSITY_SPIKE"]
     assert len(density_flags) > 0
     print("Test Passed. High_CANCEL_DENSITY triggered", density_flags)
+def test_high_cancel_density_flag_bid3():
+    cw = SimpleCancelWindow(
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier()
+    )
+    cw.set_cancel_density_params(initial_threshold=3, initial_window_ms=100)
+
+    base_ts = 100000
+    cw.process_l2_update({"E": base_ts, "b": [["30090", "5.0"]], "a": []})
+    cw.process_l2_update({"E": base_ts + 10, "b": [["30090", "0"]], "a": []})
+    cw.process_l2_update({"E": base_ts + 20, "b": [["30090", "2.0"]], "a": []})
+    cw.process_l2_update({"E": base_ts + 30, "b": [["30090", "0"]], "a": []})
+    cw.process_l2_update({"E": base_ts + 40, "b": [["30090", "2.0"]], "a": []})
+    cw.process_l2_update({"E": base_ts + 60, "b": [["30090", "0"]], "a": []})
+
+    flags = cw.flush_flags()
+    print(flags)
+    density_flags = [f for f in flags if f["type"] == "CANCEL_DENSITY_SPIKE"]
+    assert len(density_flags) > 0
+
 
 
 #@pytest.mark.skip(reason="REGISTER_CANCEL missing positional arguments, correct it first")
