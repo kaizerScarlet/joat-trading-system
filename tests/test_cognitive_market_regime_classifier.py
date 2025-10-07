@@ -6,12 +6,47 @@ from dynamic_risk_engine.cognitive_market_regime_classifier import (
 from market_data.orderbook import OrderBook
 from dynamic_risk_engine.signal_confidence_calibrator import SignalConfidenceCalibrator
 from cancel_window.simple_cancel_window import SimpleCancelWindow
+from cancel_window.order_age_distribution_protocol import OrderAgeDistributionProtocol
+from market_data.orderbook_protocol import OrderBookProtocol
+from dynamic_risk_engine.cognitive_market_regime_classifier_protocol import CognitiveMarketRegimeClassifierProtocol
+
+class DummyOrderAgeTracker(OrderAgeDistributionProtocol):
+    def get_order_age(self, price: float, side: str) -> float:
+        return 0.0
+
+class DummyOrderBook(OrderBookProtocol):
+    def __init__(self):
+        self.price_history =[]
+        self.bids = {}
+        self.asks = {}
+        self.last_update_ts = None
+    def get_level_size(self, price: float, side: str) -> float:
+        return 1.0
+    def _update_midprice(self) -> float:
+        return 30000.0
+    def get_update_rate(self) -> float:
+        return 1.0
+    def get_liquidity_within_bps(self, side: str, bps: float) -> float:
+        return 1000.0
+    def get_volatility_estimate(self) -> float:
+        return 0.01
+    def get_estimated_volume(self, side: str) -> float:
+        return 1000.0
+    def get_best_price(self, side: str) -> float:
+        return 30000.0 if side == 'bid' else 30001.0
+    def get_midprice(self) -> float:
+        return 30000.5
+
+class DummyRegimeClassifier(CognitiveMarketRegimeClassifierProtocol):
+    def get_current_regime(self): return MarketRegime.UNKNOWN
+    def get_regime_stability(self): return 1.0
+    def get_scoring_weights(self): return (0.5, 0.2, 0.1, 0.2)
 
 @pytest.fixture
 def setup_classifier():
-    orderbook = OrderBook()
+    orderbook = DummyOrderBook()
     signal_calibrator = SignalConfidenceCalibrator()
-    cancel_window = SimpleCancelWindow()
+    cancel_window = SimpleCancelWindow(order_age_tracker=DummyOrderAgeTracker(), order_book=DummyOrderBook(), classifier=DummyRegimeClassifier())
     classifier = CognitiveMarketRegimeClassifier(orderbook, signal_calibrator, cancel_window)
     return classifier, orderbook, signal_calibrator, cancel_window
 
@@ -23,6 +58,8 @@ def test_environment_trending(setup_classifier):
     ob.bids = {99.95: 300, 99.9: 200}
     ob.asks = {100.05: 100, 100.1: 50}
     ob.last_update_ts = time.time() - 0.1
+    ob.get_volatility_estimate = lambda: 0.02
+    ob.get_order_imbalance = lambda: 0.7
     ob._update_midprice()
     assert classifier.classify_environment() == MarketRegime.TRENDING
 
@@ -32,6 +69,7 @@ def test_environment_mean_reverting(setup_classifier):
     ob.bids = {99.95: 300, 99.9: 200}
     ob.asks = {100.05: 300, 100.1: 200}
     ob.last_update_ts = time.time() - 0.1
+    ob.get_volatility_estimate = lambda: 0.004
     ob._update_midprice()
     assert classifier.classify_environment() == MarketRegime.MEAN_REVERTING
 
@@ -41,6 +79,8 @@ def test_environment_volatile(setup_classifier):
     ob.bids = {99.95: 200}
     ob.asks = {100.05: 200}
     ob.last_update_ts = time.time() - 0.1
+    ob.get_volatility_estimate = lambda: 0.04
+    ob.get_order_imbalance = lambda: 0.4
     ob._update_midprice()
     assert classifier.classify_environment() == MarketRegime.VOLATILE
 
@@ -49,6 +89,9 @@ def test_environment_illiquid(setup_classifier):
     ob.bids = {99.5: 1}
     ob.asks = {100.5: 1}
     ob.last_update_ts = time.time() - 5
+    ob.price_history.extend([99.5, 100.5])
+    ob.get_liquidity_within_bps = lambda side, bps: 30.0  # Total = 60.0
+    ob.get_update_rate = lambda: 0.2
     ob._update_midprice()
     assert classifier.classify_environment() == MarketRegime.ILLIQUID
 
@@ -58,6 +101,9 @@ def test_environment_unknown(setup_classifier):
     ob.bids.clear()
     ob.asks.clear()
     ob.last_update_ts = None
+    ob.get_liquidity_within_bps = lambda side, bps: 30.0
+    ob.get_update_rate = lambda: 0.2
+
     ob._update_midprice()
 
     # Patch: Ensure classifier checks for emptiness first
@@ -82,6 +128,8 @@ def test_reinforce_to_volatile_on_high_spoof_score(setup_classifier):
     # Step 3: Recent update
     ob.last_update_ts = time.time() - 0.1
     ob._update_midprice()
+    ob.get_volatility_estimate = lambda: 0.04
+
 
     # Step 4: Fill events at spoofed price
     cw.fill_events = [{'price': 100, 'side': 'bid'}] * 10
@@ -138,6 +186,8 @@ def test_reinforce_to_trending_on_high_confidence_and_imbalance(setup_classifier
     ob.asks = {100.05: 10}
     ob.price_history.extend([100, 101, 102])
     ob.last_update_ts = time.time() - 0.1
+    ob.get_order_imbalance = lambda: 0.7
+
     ob._update_midprice()
     assert classifier.reinforce_regime(MarketRegime.UNKNOWN) == MarketRegime.TRENDING
 
@@ -146,6 +196,11 @@ def test_reinforce_to_illiquid_on_low_liquidity_and_update_rate(setup_classifier
     ob.bids = {99.5: 1}
     ob.asks = {100.5: 1}
     ob.last_update_ts = time.time() - 5
+    ob.price_history.extend([99.5, 100.5])  # Ensure price history is non-empty
+    ob.get_liquidity_within_bps = lambda side, bps: 30.0
+    ob.get_update_rate = lambda: 0.2
+    ob.midprice = 100.0
+
     ob._update_midprice()
     assert classifier.reinforce_regime(MarketRegime.TRENDING) == MarketRegime.ILLIQUID
 
@@ -236,6 +291,8 @@ def test_regime_drift_from_mean_reverting_to_volatile(setup_classifier):
     ob.asks = {100.1: 100}
     ob.last_update_ts = time.time() - 0.1
     ob._update_midprice()
+    ob.get_volatility_estimate = lambda: 0.04
+
 
     cw.fill_events = [{'price': 100, 'side': 'ask'}] * 50
     cw._flags = [{
@@ -266,6 +323,8 @@ def test_behavioral_overlay_liquidity_vacuum(setup_classifier):
     ob.asks = {100.1: 100}
     ob.last_update_ts = time.time() - 0.1
     ob._update_midprice()
+    ob.get_volatility_estimate = lambda: 0.04
+
 
     cw.fill_events = [{'price': 100, 'side': 'bid'}] * 50
     cw._flags = [{
@@ -295,6 +354,8 @@ def test_behavioral_overlay_momentum_exhaustion(setup_classifier):
     ob.price_history.extend([100, 110, 90, 115])
     ob.last_update_ts = time.time() - 0.1
     ob._update_midprice()
+    ob.get_volatility_estimate = lambda: 0.04
+
 
     overlay = classifier.get_behavioral_overlay()
     assert overlay == "MOMENTUM_EXHAUSTION"
@@ -308,6 +369,8 @@ def test_behavioral_overlay_choppy_noise(setup_classifier):
     ob.price_history.extend([100, 100.01, 99.99, 100.02])
     ob.last_update_ts = time.time() - 0.1
     ob._update_midprice()
+    ob.get_volatility_estimate = lambda: 0.003
+
 
     overlay = classifier.get_behavioral_overlay()
     assert overlay == "CHOPPY_NOISE"

@@ -314,40 +314,6 @@ class SimpleCancelWindow(CancelWindow):
                        
                         # Record cancel timestamp
                         self.cancel_timestamps.setdefault(key, []).append(ts)
-
-
-
-                        if self.active_ladder and ts - self.active_ladder['timestamp'] > 300:
-            self.active_ladder = None
-        
-        #Detect excessive cancel density
-        density = self.compute_cancel_density()  #you can parameterize this too
-        for (side, price), count in density.items():
-            
-            vol = self.orderbook.get_estimated_volume(side)
-            volty = self.orderbook.get_volatility_estimate()
-            threshold = self.cancel_density_threshold_bid if side == "bid" else self.cancel_density_threshold_ask
-            threshold.update(vol, volty)
-
-            if count >= threshold.get_threshold(): #Set a meaningful threshold
-                orderid = self._next_id() #Auto generate
-                self._flags.append({
-                    "timestamp": msg["E"],
-                    'orderid': orderid,
-                    "type": "CANCEL_DENSITY_SPIKE",
-                    "side": side,
-                    "price": price,
-                    "cancel_count": count,
-                    "window_ms": self.cancel_density_window_ms.get_current_window(),
-                    "context": {
-                                    "window_ms": self.get_window_ms(),
-                                    "Cancel Density": self.get_cancel_density(side)
-                                }
-                })
-
-
-
-
                         #check for high cancel density
                         recent_cancels = [
                             t for t in self.cancel_timestamps[key]
@@ -408,7 +374,33 @@ class SimpleCancelWindow(CancelWindow):
         _handle("ask", self.asks, asks_updates)
 
 
+        if self.active_ladder and ts - self.active_ladder['timestamp'] > 300:
+            self.active_ladder = None
         
+        #Detect excessive cancel density
+        density = self.compute_cancel_density()  #you can parameterize this too
+        for (side, price), count in density.items():
+            
+            vol = self.orderbook.get_estimated_volume(side)
+            volty = self.orderbook.get_volatility_estimate()
+            threshold = self.cancel_density_threshold_bid if side == "bid" else self.cancel_density_threshold_ask
+            threshold.update(vol, volty)
+
+            if count >= threshold.get_threshold(): #Set a meaningful threshold
+                orderid = self._next_id() #Auto generate
+                self._flags.append({
+                    "timestamp": msg["E"],
+                    'orderid': orderid,
+                    "type": "CANCEL_DENSITY_SPIKE",
+                    "side": side,
+                    "price": price,
+                    "cancel_count": count,
+                    "window_ms": self.cancel_density_window_ms.get_current_window(),
+                    "context": {
+                                    "window_ms": self.get_window_ms(),
+                                    "Cancel Density": self.get_cancel_density(side)
+                                }
+                })
     
     # --------------------------------------------------------------------------#
     #   TRADES
