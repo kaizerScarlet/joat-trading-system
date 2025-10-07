@@ -3,16 +3,61 @@ import time
 from dynamic_risk_engine.cognitive_market_regime_classifier import (
     CognitiveMarketRegimeClassifier, MarketRegime
 )
-from market_data.orderbook import OrderBook
-from dynamic_risk_engine.signal_confidence_calibrator import SignalConfidenceCalibrator
-from cancel_window.simple_cancel_window import SimpleCancelWindow
+from market_data.orderbook_protocol import OrderBookProtocol
+from dynamic_risk_engine.signal_confidence_calibrator_protocol import SignalConfidenceCalibratorProtocol
+from cancel_window.simple_cancel_window_protocol import CancelWindowProtocol
 from cancel_window.order_age_distribution_protocol import OrderAgeDistributionProtocol
 from market_data.orderbook_protocol import OrderBookProtocol
+from collections import deque
+from datetime import datetime
 from dynamic_risk_engine.cognitive_market_regime_classifier_protocol import CognitiveMarketRegimeClassifierProtocol
+from dynamic_risk_engine.cognitive_market_regime_classifier import MarketRegime
+
+class MockCognitiveMarketRegimeClassifier(CognitiveMarketRegimeClassifierProtocol):
+    def __init__(self):
+        self.regime_history = deque([MarketRegime.UNKNOWN], maxlen=20)
+        self.last_regime = MarketRegime.UNKNOWN
+        self.last_regime_change = datetime.now()
+
+    def get_current_regime(self) -> MarketRegime:
+        return self.last_regime
+
+    def get_regime_stability(self) -> float:
+        current = self.get_current_regime()
+        return round(self.regime_history.count(current) / len(self.regime_history), 2)
+
+    def get_scoring_weights(self) -> tuple[float, float, float, float]:
+        return (0.5, 0.2, 0.1, 0.2)
+
+    def update_regime(self) -> MarketRegime:
+        regime = MarketRegime.TRENDING
+        self.regime_history.append(regime)
+        self.last_regime = regime
+        self.last_regime_change = datetime.now()
+        return regime
+    def classify_environment(self) -> MarketRegime:
+        return MarketRegime.UNKNOWN
+    def reinforce_regime(self, base_regime: MarketRegime) -> MarketRegime:
+        return base_regime
+
 
 class DummyOrderAgeTracker(OrderAgeDistributionProtocol):
     def get_order_age(self, price: float, side: str) -> float:
         return 0.0
+
+class DummyCancelWindow(CancelWindowProtocol):
+    def __init__(self):
+        self.fill_events = []
+        self._flags = []
+        self.orderbook = DummyOrderBook()
+        self.regime_classifier = DummyRegimeClassifier()
+
+    def compute_cancel_impact_score(self, price: float, side: str) -> float:
+        return 0.5  # or simulate logic if needed
+
+    def get_cancel_density(self, side: str) -> dict:
+        return {100: 10000}
+
 
 class DummyOrderBook(OrderBookProtocol):
     def __init__(self):
@@ -36,6 +81,15 @@ class DummyOrderBook(OrderBookProtocol):
         return 30000.0 if side == 'bid' else 30001.0
     def get_midprice(self) -> float:
         return 30000.5
+class DummySignalCalibrator(SignalConfidenceCalibratorProtocol):
+    def __init__(self):
+        self.signal_history = []
+
+    def get_current_confidence(self) -> float:
+        correct = sum(1 for s in self.signal_history if s.get("was_correct"))
+        total = len(self.signal_history) or 1
+        return correct / total
+
 
 class DummyRegimeClassifier(CognitiveMarketRegimeClassifierProtocol):
     def get_current_regime(self): return MarketRegime.UNKNOWN
@@ -44,10 +98,10 @@ class DummyRegimeClassifier(CognitiveMarketRegimeClassifierProtocol):
 
 @pytest.fixture
 def setup_classifier():
-    orderbook = DummyOrderBook()
-    signal_calibrator = SignalConfidenceCalibrator()
-    cancel_window = SimpleCancelWindow(order_age_tracker=DummyOrderAgeTracker(), order_book=DummyOrderBook(), classifier=DummyRegimeClassifier())
-    classifier = CognitiveMarketRegimeClassifier(orderbook, signal_calibrator, cancel_window)
+    orderbook : OrderBookProtocol = DummyOrderBook()
+    signal_calibrator : SignalConfidenceCalibratorProtocol = DummySignalCalibrator()
+    cancel_window : CancelWindowProtocol = DummyCancelWindow()
+    classifier = DummyRegimeClassifier()
     return classifier, orderbook, signal_calibrator, cancel_window
 
 # ------------------ Environment Classification ------------------
