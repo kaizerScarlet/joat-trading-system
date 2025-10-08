@@ -1,6 +1,7 @@
 import asyncio
 import random
 from typing import Optional
+import time
 import logging
 from market_data.orderbook_protocol import OrderBookProtocol
 from Execution_layer.fee_schedule_protocol import FeeScheduleProtocol
@@ -23,20 +24,24 @@ class StealthRouter:
     Now Supports hybrid mode: start passive, monitor queue, reprice or cross if fill prob drops
     """
 
-    def __init__(self, exchange_client = None, symbol: str = "BTCUSDT",
-                 min_slice_usd: float = 50,
-                 max_slice_usd: float = 500,
-                 random_delay_range: tuple = (0.3, 1.5),
-                 tick_size: float = 0.01,
-                 qty_precison: int = 6,
-                 max_slices: int = 20,
-                 slippage_bps: float = 5.0, #max slippage per slice (optional)
-                 queue_model = None,#New: queue model injected for hybrid monitoring
-                 repricing_model = None, #New: repricing model (optional
-                 regime_classifier = None,
-                 slippage_model = None
+    def __init__(self, exchange_client: BinanceExecutionAdapterProtocol,
+                regime_classifier : CognitiveMarketRegimeClassifierProtocol,
+                slippage_model : SlippageModelProtocol,
+                repricing_model : SmartRepricingModelProtocol, #New: repricing model (optional
+             
+                queue_model = QueuePositionModelProtocol,#New: queue model injected for hybrid monitoring
+                symbol: str = "BTCUSDT",
+                min_slice_usd: float = 50,
+                max_slice_usd: float = 500,
+                random_delay_range: tuple = (0.3, 1.5),
+                tick_size: float = 0.01,
+                qty_precison: int = 6,
+                max_slices: int = 20,
+                slippage_bps: float = 5.0, #max slippage per slice (optional)
+                
+           
                  
-                 ):
+                ):
         """
         :param exchange_client: Adapter with place_order() and get_midprice() methods.
         :param symbol: Trading pair (e.g, "BTCUSDT").
@@ -50,7 +55,7 @@ class StealthRouter:
         :param queue_model: model with .estimate() for fill probability (Optional)
         """
 
-        self.exchange_client = exchange_client or BinanceExecutionAdapterProtocol()
+        self.exchange_client = exchange_client
         self.symbol = symbol
         self.min_slice_usd = min_slice_usd
         self.max_slice_usd = max_slice_usd
@@ -59,22 +64,22 @@ class StealthRouter:
         self.qty_precision = qty_precison
         self.max_slices = max_slices
         self.slippage_bps = slippage_bps / 10000.0 #convert bps to fraction
-        self.queue_model = queue_model or QueuePositionModelProtocol()
-        self.regime_classifier = regime_classifier or CognitiveMarketRegimeClassifierProtocol(orderbook=OrderBookProtocol(), signal_calibrator=SignalConfidenceCalibratorProtocol(), cancel_window=CancelWindowProtocol())
+        self.queue_model = queue_model
+        self.regime_classifier = regime_classifier
         self.execution_log = [] #Post Trade analysis log
-        self.repricing_model = repricing_model or SmartRepricingModelProtocol(tick_size=self.tick_size, slippage_bps=slippage_bps)
-        self.slippage_model = slippage_model or SlippageModelProtocol()
+        self.repricing_model = repricing_model
+        self.slippage_model = slippage_model 
     
     def now_ms(self):
-        import time
+
         return int(time.time() * 1000)
 
 
     async def execute_parent_order(self, side:str, total_qty: float,
+                                   orderbook: OrderBookProtocol, #New : OrderBook (Optional)
+                                   slippage_model: SlippageModelProtocol, #New: SlippageModel (Optional)
                                    order_type: str, limit_price: Optional[float]=None,
                                    fee_schedule = None, #New: FeeSchedule (Optional)
-                                   slippage_model = SlippageModelProtocol(), #New: SlippageModel (Optional)
-                                   orderbook = OrderBookProtocol, #New: OrderBook (Optional)
                                    mode: str = "normal",    #New: normal | hybrid
                                    hybrid_threshold: float = 0.3, # Fill prob cutoff
                                    hybrid_horizon: int = 5, # Seconds to evaluate fill prob

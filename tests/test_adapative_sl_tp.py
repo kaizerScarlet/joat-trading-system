@@ -1,11 +1,14 @@
 import pytest
 from Execution_layer.adaptive_sl_tp import AdaptiveSLTP
+from Execution_layer.adaptive_sl_tp import AdaptiveSLTPProtocol
+from market_data.orderbook import OrderBookProtocol
+from alpha_scoring.AlphaBlender import AlphaBlenderProtocol
 
 
 # -----------------------------
 # Mocks for OrderBook & AlphaBlender
 # -----------------------------
-class MockOrderBook:
+class MockOrderBook(OrderBookProtocol):
     def __init__(self, midprice=100.0, volatility=0.01):
         self._mid = midprice
         self._vol = volatility
@@ -16,7 +19,7 @@ class MockOrderBook:
     def get_layering_score(self): return 0.5
 
 
-class MockAlphaBlender:
+class MockAlphaBlender(AlphaBlenderProtocol):
     def __init__(self, bid_score=0.8, ask_score=0.2):
         self._bid_score = bid_score
         self._ask_score = ask_score
@@ -25,7 +28,7 @@ class MockAlphaBlender:
 
 
 def make_sltp(mid=100.0, vol=0.01, alpha_bid=0.8, alpha_ask=0.2):
-    sltp = AdaptiveSLTP(alpha_weights={
+    sltp : AdaptiveSLTPProtocol = AdaptiveSLTP(alpha_weights={
         "order_age": 0.33,
         "cancel_activity": 0.33,
         "layering": 0.34

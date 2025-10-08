@@ -1,4 +1,4 @@
-from typing import Protocol, Dict, runtime_checkable
+from typing import Protocol, Dict, runtime_checkable, Any
 
 @runtime_checkable
 class OrderAgeDistributionProtocol(Protocol):
@@ -34,3 +34,6 @@ class OrderAgeDistributionProtocol(Protocol):
 
     def reset(self) -> None:
         """Resets the order age tracker."""
+    
+    def get_debug_view(self) -> Dict[str, Any]:
+        """Returns internal state for debugging purposes."""

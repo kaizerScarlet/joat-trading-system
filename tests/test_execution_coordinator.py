@@ -2,14 +2,15 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from Execution_layer.execution_coordinator import ExecutionCoordinator
-from Execution_layer.fee_schedule import FeeSchedule
-from Execution_layer.queue_position_model import QueuePositionModel
+from Execution_layer.execution_coordinator_protocol import ExecutionCoordinatorProtocol
+from Execution_layer.fee_schedule_protocol import FeeScheduleProtocol
+from Execution_layer.queue_position_model_protocol import QueuePositionModelProtocol
 
 
 
 @pytest.fixture
 def coordinator():
-    c = ExecutionCoordinator()
+    c : ExecutionCoordinatorProtocol = ExecutionCoordinator()
     # Mock dependencies
 
     c.alpha_pipeline = MagicMock()

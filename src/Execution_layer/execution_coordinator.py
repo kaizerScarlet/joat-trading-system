@@ -52,8 +52,12 @@ class ExecutionCoordinator:
     def __init__(
             self,
             alpha_pipeline: AlphaSignalPipelineProtocol,
+            slippage_model: SlippageModelProtocol,
+            latency_model: LatencyModelProtocol,
+            fee_schedule: FeeScheduleProtocol,
             throttle_manager: ThrottleCooldownManagerProtocol,
             exchange_client: BinanceExecutionAdapterProtocol,
+            stealth_router: StealthRouterProtocol,
             performance_tracker: PerformanceTrackerProtocol,
             signal_confidence: SignalConfidenceCalibratorProtocol,
             dynamic_position_sizer: DynamicPositionSizerProtocol,
@@ -63,6 +67,10 @@ class ExecutionCoordinator:
             layering_scorer: LayeringScoringProtocol,
             order_age_scorer: OrderAgeDistributionScorerProtocol,
             queue_position_model: QueuePositionModelProtocol,
+            risk_engine: DynamicRiskEngineProtocol,
+            drawdown_manager: DailyDrawdownManagerProtocol,
+            regime_classifier: CognitiveMarketRegimeClassifierProtocol,
+            sl_and_tp: AdaptiveSLTPProtocol,
             config: Optional[Dict] = None
     ):
         """
@@ -75,9 +83,9 @@ class ExecutionCoordinator:
             config: Optional dict with execution settings
         """
         self.alpha_pipeline = alpha_pipeline
-        self.risk_engine = DynamicRiskEngineProtocol(daily_drawdown_limit=0.25)
+        self.risk_engine = risk_engine
         self.throttle_manager = throttle_manager
-        self.drawdown_manager = DailyDrawdownManagerProtocol(daily_drawdown_limit=0.25)
+        self.drawdown_manager = drawdown_manager
         self.exchange_client = exchange_client
         self.performance_tracker = performance_tracker
         self.confidence = signal_confidence
@@ -85,17 +93,13 @@ class ExecutionCoordinator:
         self.cancel_window = cancel_window
         self.orderbook = order_book
 
-        self.regime_classifier = CognitiveMarketRegimeClassifierProtocol(self.orderbook, self.confidence, self.cancel_window)
+        self.regime_classifier = regime_classifier
         self.spoofing_detector = cancel_activity_scorer
         self.layering_scorer = layering_scorer
         self.order_age_scorer= order_age_scorer
 
         #Instantiate adaptive SL/TP and give it the orderbook so it can fetch microstructure score
-        self.sl_and_tp = AdaptiveSLTPProtocol(
-             atr_window = 14,
-             base_atr_multiplier=1.5,
-             vol_multiplier=2.0
-        )
+        self.sl_and_tp = sl_and_tp
 
 
         self.config = config or {
@@ -124,32 +128,12 @@ class ExecutionCoordinator:
         self.exchange_client.on_fill_callback = self._on_fill
 
         #Stealth router
-        self.stealth_router = StealthRouterProtocol(
-             exchange_client=self.exchange_client,
-             symbol=(config or {}).get("symbol", "BTCUSDT"),
-             min_slice_usd=50,
-             max_slice_usd=500,
-             random_delay_range=(0.3, 1.5),
-             tick_size=0.01
-        )
+        self.stealth_router = stealth_router
 
         # -----Execution Frictions config --------
-        self.fees = FeeScheduleProtocol(
-             maker_bps=(self.config.get("maker_bps", 8.0)),
-             taker_bps=(self.config.get("taker_bps", 10.0)),
-        )
-
-        self.latency = LatencyModelProtocol(
-             base_ms=self.config.get("latency_base_ms", 20.0),
-             jitter_ms=self.config.get("latency_jitter_ms", 15.0),
-             p_tail=self.config.get("latency_tail_p", 0.05),
-             tail_multiplier=self.config.get("latency_tail_mult", 3.0),
-        )
-
-        self.slippage_model = SlippageModelProtocol(
-             impact_coeff=self.config.get("impact_coeff", 0.5)
-        )
-
+        self.fees = fee_schedule
+        self.latency = latency_model
+        self.slippage_model = slippage_model
         self.queue_model = queue_position_model
          
 

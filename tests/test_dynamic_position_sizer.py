@@ -1,10 +1,12 @@
 import pytest
 from unittest.mock import AsyncMock
 from dynamic_risk_engine.dynamic_position_sizer import DynamicPositionSizer
+from dynamic_risk_engine.dynamic_position_sizer_protocol import DynamicPostionSizerProtocol
+
 
 @pytest.mark.asyncio
 async def test_default_initialization():
-    sizer = DynamicPositionSizer()
+    sizer : DynamicPostionSizerProtocol = DynamicPositionSizer()
     sizer.drawdown.account_balance.get_account = AsyncMock(return_value=100000)
     sizer.win_rate.win_rate = lambda: 0.5
     sizer.confidence.get_current_confidence = lambda: 0.5
@@ -16,7 +18,7 @@ async def test_default_initialization():
 
 @pytest.mark.asyncio
 async def test_position_size_basic_calculation():
-    sizer = DynamicPositionSizer()
+    sizer : DynamicPostionSizerProtocol = DynamicPositionSizer()
 
     #Mock drawdown to prevent real API calls
     sizer.drawdown.account_balance.get_account = AsyncMock(return_value=100000)
@@ -41,7 +43,7 @@ async def test_position_size_basic_calculation():
 
 @pytest.mark.asyncio
 async def test_zero_stop_loss_returns_zero():
-    sizer = DynamicPositionSizer()
+    sizer : DynamicPostionSizerProtocol = DynamicPositionSizer()
 
     #Mock drawdown to prevent real API calls
     sizer.drawdown.account_balance.get_account = AsyncMock(return_value=100000)
@@ -58,7 +60,7 @@ async def test_zero_stop_loss_returns_zero():
 
 @pytest.mark.asyncio
 async def test_low_confidence_reduces_sizer():
-    sizer = DynamicPositionSizer()
+    sizer : DynamicPostionSizerProtocol = DynamicPositionSizer()
 
     #Mock account balance adapters to prevent real API calls
     sizer.account_balance.get_account_balance = AsyncMock(return_value=100000)
@@ -85,7 +87,7 @@ async def test_low_confidence_reduces_sizer():
 
 @pytest.mark.asyncio
 async def test_low_win_rate_reduces_sizer():
-    sizer = DynamicPositionSizer()
+    sizer : DynamicPostionSizerProtocol = DynamicPositionSizer()
     
       #mock drawdown to prevent real API calls
     sizer.drawdown.account_balance.get_account = AsyncMock(return_value=100000)
@@ -112,7 +114,7 @@ async def test_low_win_rate_reduces_sizer():
 
 @pytest.mark.asyncio
 async def test_position_size_rounding():
-    sizer = DynamicPositionSizer()
+    sizer : DynamicPostionSizerProtocol = DynamicPositionSizer()
     #Mock account balance adapters to prevent real API calls
     sizer.account_balance.get_account_balance = AsyncMock(return_value=123456.78)
     #mock drawdown to prevent real API calls
@@ -133,7 +135,7 @@ async def test_position_size_rounding():
 
 @pytest.mark.asyncio
 async def test_drawdown_scaling_reduces_position_size():
-    sizer = DynamicPositionSizer()
+    sizer : DynamicPostionSizerProtocol = DynamicPositionSizer()
     #Mock account balance adapters to prevent real API calls
     sizer.account_balance.get_account_balance = AsyncMock(return_value=100000)
     #mock drawdown to prevent real API calls
@@ -155,7 +157,7 @@ async def test_drawdown_scaling_reduces_position_size():
 
 @pytest.mark.asyncio
 async def test_volatility_increases_position_size():
-    sizer = DynamicPositionSizer()
+    sizer : DynamicPostionSizerProtocol = DynamicPositionSizer()
    
     # Mock drawdown to prevent real API calls
     sizer.drawdown.account_balance.get_account = AsyncMock(return_value=100000)
@@ -179,7 +181,7 @@ async def test_volatility_increases_position_size():
 
 @pytest.mark.asyncio
 async def test_confidence_win_rate_interaction():
-    sizer = DynamicPositionSizer()
+    sizer : DynamicPostionSizerProtocol = DynamicPositionSizer()
     # Mock account balance adapters to prevent real API calls
     sizer.account_balance.get_account_balance = AsyncMock(return_value=100000)
     # Mock drawdown to prevent real API calls
@@ -202,7 +204,7 @@ async def test_confidence_win_rate_interaction():
 
 @pytest.mark.asyncio
 async def test_sizing_diagnostics_structure():
-    sizer = DynamicPositionSizer()
+    sizer : DynamicPostionSizerProtocol = DynamicPositionSizer()
     # Mock account balance adapters to prevent real API calls
      # Mock drawdown to prevent real API calls
     sizer.account_balance.get_account_balance = AsyncMock(return_value=100000.0)

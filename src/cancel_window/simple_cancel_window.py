@@ -116,11 +116,11 @@ class SimpleCancelWindow(CancelWindow):
         15. PING_CANCEL -> Orders placed for very short time (ping for liquidity)
     """
     # -----------------------------------------------------------------------------------------------#
-    def __init__(self, order_age_tracker: OrderAgeDistributionProtocol, order_book: OrderBookProtocol, classifier: CognitiveMarketRegimeClassifierProtocol):
+    def __init__(self, tuner: CancelWindowTuner, order_age_tracker: OrderAgeDistributionProtocol, order_book: OrderBookProtocol, classifier: CognitiveMarketRegimeClassifierProtocol):
         
         self.adaptive = True
         self.window_ms = None
-        self.tuner = CancelWindowTuner() if self.adaptive else None
+        self.tuner = tuner if self.adaptive else None
         self.order_age_tracker = order_age_tracker
 
         self._flags: List[Dict[str,Any]] = []

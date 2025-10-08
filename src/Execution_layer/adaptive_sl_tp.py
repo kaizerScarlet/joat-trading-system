@@ -30,6 +30,7 @@ class AdaptiveSLTP:
     def __init__(
         self,
         orderbook: OrderBookProtocol,
+        alpha_score: AlphaBlenderProtocol,
         atr_window: int = 14,
         base_atr_multiplier: float = 1.5,
         vol_multiplier: float = 2.0,
@@ -48,13 +49,7 @@ class AdaptiveSLTP:
         :param max_gap_multiplier: maximum multiple of base distance allowed for gap.
         :param tp_extension_factor: TP distance = current SL distance * tp_extension_factor (keeps asymmetry).
         """
-        self.alpha_score = AlphaBlenderProtocol(
-            alpha_weights or {
-                "order_age": 0.33,
-                "cancel_activity": 0.33,
-                "layering": 0.34
-            }
-        )
+        self.alpha_score = alpha_score or alpha_weights
         self.ob = orderbook
         self.atr_window = atr_window
         self.base_atr_multiplier = base_atr_multiplier

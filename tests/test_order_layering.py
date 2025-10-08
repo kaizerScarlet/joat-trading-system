@@ -2,9 +2,12 @@ import pytest
 import time
 from cancel_window.order_layering_detection_protocol import OrderLayeringDetectionProtocol
 from cancel_window.order_layering_detection import OrderLayeringDetection
+from cancel_window.simple_cancel_window import CancelWindowTunerForLayering
 
 def test_minimal_layering_detected():
+    tuner = CancelWindowTunerForLayering()
     detector : OrderLayeringDetectionProtocol = OrderLayeringDetection(
+        tuner = tuner,
         price_tick=0.1,
         cluster_depth=2,
         min_orders = 2,
@@ -23,7 +26,10 @@ def test_minimal_layering_detected():
     assert clusters[0]['cluster_size'] == 3
 
 def test_layering_with_cancels_and_fills():
-    detector : OrderLayeringDetectionProtocol = OrderLayeringDetection(price_tick=0.1,
+    tuner = CancelWindowTunerForLayering()
+    detector : OrderLayeringDetectionProtocol = OrderLayeringDetection(
+        tuner,
+        price_tick=0.1,
         cluster_depth=2,
         min_orders = 2,
         min_size_per_order=0.0
@@ -42,7 +48,10 @@ def test_layering_with_cancels_and_fills():
     assert clusters[0]['cluster_size'] == 3
 
 def test_no_layering_due_to_price_gap():
-    detector : OrderLayeringDetectionProtocol = OrderLayeringDetection(  price_tick=0.1,
+    tuner = CancelWindowTunerForLayering()
+    detector : OrderLayeringDetectionProtocol = OrderLayeringDetection(  
+        tuner,
+        price_tick=0.1,
         cluster_depth=2,
         min_orders = 2,
         min_size_per_order=0.0
@@ -56,7 +65,9 @@ def test_no_layering_due_to_price_gap():
     assert len(clusters) == 0
 
 def test_no_layering_due_to_time_gap():
+    tuner = CancelWindowTunerForLayering()
     detector : OrderLayeringDetectionProtocol = OrderLayeringDetection(
+        tuner,
           price_tick=0.1,
         cluster_depth=2,
         min_orders = 2,
@@ -72,7 +83,11 @@ def test_no_layering_due_to_time_gap():
 
 def test_layering_filtered_by_size():
     now =int(time.time() * 1000)
-    detector : OrderLayeringDetectionProtocol = OrderLayeringDetection(min_size_per_order=5.0)
+    tuner =CancelWindowTunerForLayering()
+    detector : OrderLayeringDetectionProtocol = OrderLayeringDetection(
+    tuner,
+    min_size_per_order=5.0
+    )
     detector.register_order('o1', now, 100.0, 1.0, 'ask')
     detector.register_order('o2', now + 10, 100.1, 1.0, 'ask')
     detector.register_order('o3', now + 20, 100.2, 1.0, 'ask')
@@ -81,7 +96,10 @@ def test_layering_filtered_by_size():
     assert len(clusters) == 0
 
 def test_layering_detected_on_bid_side():
-    detector : OrderLayeringDetectionProtocol = OrderLayeringDetection()
+    tuner = CancelWindowTunerForLayering()
+    detector : OrderLayeringDetectionProtocol = OrderLayeringDetection(
+        tuner,
+    )
     now = int(time.time() * 1000)
     detector.register_order('o1', now, 99.9, 5, 'bid')
     detector.register_order('o2', now + 10, 99.8, 5, 'bid')
@@ -94,7 +112,10 @@ def test_layering_detected_on_bid_side():
     assert clusters[0]['label'] == 'LAYER_CANCEL_ONLY'
 
 def test_overlapping_clusters_are_not_double_counted():
-    detector : OrderLayeringDetectionProtocol = OrderLayeringDetection()
+    tuner = CancelWindowTunerForLayering()
+    detector : OrderLayeringDetectionProtocol = OrderLayeringDetection(
+        tuner,
+    )
     now = int(time.time() * 1000)
     detector.register_order('o1', now, 100.0, 5, 'ask')
     detector.register_order('o2', now + 10, 100.01, 5, 'ask')
@@ -106,7 +127,10 @@ def test_overlapping_clusters_are_not_double_counted():
     assert len(clusters) == 1  # Should not double-count overlapping orders
 
 def test_reset_clears_all_logs():
-    detector : OrderLayeringDetectionProtocol = OrderLayeringDetection()
+    tuner = CancelWindowTunerForLayering()
+    detector : OrderLayeringDetectionProtocol = OrderLayeringDetection(
+        tuner,
+    )
     now = int(time.time() * 1000)
     detector.register_order('o1', now, 100.0, 5, 'ask')
     detector.register_cancel('o1', now + 50, 'CANCEL_SPOOF', 100.0, 5, 'ask')
@@ -118,7 +142,10 @@ def test_reset_clears_all_logs():
 
 
 def test_layering_all_filled_cluster_labeled_correctly():
-    detector: OrderLayeringDetectionProtocol = OrderLayeringDetection()
+    tuner = CancelWindowTunerForLayering()
+    detector: OrderLayeringDetectionProtocol = OrderLayeringDetection(
+        tuner
+    )
     now = int(time.time() * 1000)
     detector.register_order('o1', now, 100.0, 5, 'ask')
     detector.register_order('o2', now + 10, 100.1, 5, 'ask')
@@ -130,7 +157,9 @@ def test_layering_all_filled_cluster_labeled_correctly():
     assert clusters[0]['label'] == 'LAYER_TRUE_FILL'
 
 def test_layering_score_reflects_aggression_and_recency():
+    tuner = CancelWindowTunerForLayering()
     detector: OrderLayeringDetectionProtocol = OrderLayeringDetection(
+        tuner,
         price_tick=0.1,
         cluster_depth=2,
         min_orders=3,
@@ -150,3 +179,51 @@ def test_layering_score_reflects_aggression_and_recency():
     score = detector.get_layering_score()
     assert 0.0 < score <= 1.0
 
+def test_debug_view_snapshot():
+    tuner = CancelWindowTunerForLayering()
+    detector: OrderLayeringDetectionProtocol = OrderLayeringDetection(
+        tuner,
+    )
+    now = int(time.time() * 1000)
+
+    detector.register_order('o1', now, 100.0, 5, 'ask')
+    detector.register_order('o2', now + 10, 100.1, 5, 'ask')
+    detector.register_order('o3', now + 20, 100.2, 5, 'ask')
+    detector.register_cancel('o1', now + 30, 'CANCEL_SPOOF', 100.0, 5, 'ask')
+
+    debug = detector.get_debug_view()
+    assert debug['active_order_count'] == 2
+    assert debug['canceled_order_count'] == 1
+    assert debug['layering_score'] > 0.0
+    assert isinstance(debug['recent_clusters'], list)
+    assert 'tuner_window_ms' in debug
+
+def test_partial_fill_labeling():
+    tuner = CancelWindowTunerForLayering()
+    detector: OrderLayeringDetectionProtocol = OrderLayeringDetection(
+        tuner
+    )
+    now = int(time.time() * 1000)
+
+    detector.register_order('o1', now, 100.0, 5, 'ask')
+    detector.register_order('o2', now + 10, 100.1, 5, 'ask')
+    detector.register_order('o3', now + 20, 100.2, 5, 'ask')
+    detector.register_fill('o1', now + 30, 'TRUE_FILL', 100.0, 5, 'ask')
+
+    clusters = detector.detect_layering()
+    assert clusters[0]['label'] == 'LAYER_PARTIAL_FILL'
+
+
+def test_aggression_score_computation():
+    tuner = CancelWindowTunerForLayering()
+    detector: OrderLayeringDetectionProtocol = OrderLayeringDetection(
+        tuner
+    )
+    now = int(time.time() * 1000)
+
+    detector.register_order('o1', now, 100.0, 10, 'ask')
+    detector.register_order('o2', now + 10, 100.1, 20, 'ask')
+    detector.register_order('o3', now + 20, 100.2, 30, 'ask')
+
+    clusters = detector.detect_layering()
+    assert clusters[0]['aggression_score'] == 20.0

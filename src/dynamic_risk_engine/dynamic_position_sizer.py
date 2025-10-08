@@ -10,6 +10,7 @@ class DynamicPositionSizer:
                  performance_tracker: PerformanceTrackerProtocol,
                  orderbook: OrderBookProtocol,
                  binance_Execution_adapter: BinanceExecutionAdapterProtocol,
+                 drawdown: DailyDrawdownManagerProtocol,
                  ):
         """
         Initialize the dynamic position sizer.
@@ -23,7 +24,7 @@ class DynamicPositionSizer:
         self.win_rate = performance_tracker
 
         self.volatility = orderbook
-        self.drawdown = DailyDrawdownManagerProtocol(daily_drawdown_limit=0.25)
+        self.drawdown = drawdown
         self.stop_loss = binance_Execution_adapter
 
         self.max_risk_per_trade = None 

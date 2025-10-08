@@ -1,11 +1,13 @@
 import time
 import pytest 
 from dynamic_risk_engine.throttle_cooldown_manager import ThrottleCooldownManager
+from dynamic_risk_engine.throttle_cooldown_manager_protocol import ThrottleCooldownManagerProtocol
+
 
 @pytest.fixture
 def manager():
     
-    m = ThrottleCooldownManager(max_losses=3, cooldown_seconds=5, max_trades_per_minute=3)
+    m: ThrottleCooldownManagerProtocol = ThrottleCooldownManager(max_losses=3, cooldown_seconds=5, max_trades_per_minute=3)
     m.reset()
     return m
 

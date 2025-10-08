@@ -2,12 +2,18 @@ import pytest
 import random
 import asyncio
 import logging
+from Execution_layer.queue_position_model_protocol import QueuePositionModelProtocol
+from Execution_layer.binance_adapter_protocol import BinanceExecutionAdapterProtocol
 from Execution_layer.slippage_model import SlippageModel
+from Execution_layer.slippage_model import SlippageModelProtocol
+from market_data.orderbook_protocol import OrderBookProtocol
+from cancel_window.simple_cancel_window_protocol import CancelWindowProtocol
+from dynamic_risk_engine.signal_confidence_calibrator import SignalConfidenceCalibratorProtocol
 
 
 # -------------------- MOCKS --------------------
 
-class MockOrderBook:
+class MockOrderBook(OrderBookProtocol):
     def __init__(self):
         self.price_history = [100.0, 101.0, 99.5, 100.5]
         self.bids = [(99.0, 1.0), (98.5, 2.0)]
@@ -37,7 +43,7 @@ class MockOrderBook:
     def get_update_rate(self):
         return 0.8
 
-class MockCancelWindow:
+class MockCancelWindow(CancelWindowProtocol):
     def __init__(self):
         self._flags = [
             {"type": "CANCEL_DENSITY_SPIKE", "price": 100.0, "side": "BUY"},
@@ -47,15 +53,15 @@ class MockCancelWindow:
     def compute_cancel_impact_score(self, price, side):
         return 0.3
 
-class MockSignalCalibrator:
+class MockSignalCalibrator(SignalConfidenceCalibratorProtocol):
     def get_current_confidence(self):
         return 0.85
 
-class MockExchangeClient:
+class MockExchangeClient(BinanceExecutionAdapterProtocol):
     async def place_order(self, **kwargs):
         return {"orderId": str(random.randint(1000, 9999))}
 
-class MockQueueModel:
+class MockQueueModel(QueuePositionModelProtocol):
     def estimate(self, side, qty, top_liq, orderbook):
         return None, 0.01
 

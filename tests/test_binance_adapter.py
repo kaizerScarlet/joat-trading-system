@@ -2,7 +2,8 @@ import pytest
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from Execution_layer.binance_adapter import BinanceExecutionAdapter
+from Execution_layer.binance_adapter_protocol import BinanceExecutionAdapter
+from Execution_layer.binance_adapter_protocol import BinanceExecutionAdapterProtocol
 
 # ------------------------------
 # Mock aiohttp-like response
@@ -32,7 +33,7 @@ def deterministic_sign(adapter, query):
 # ------------------------------
 @pytest.fixture
 def adapter():
-    b = BinanceExecutionAdapter("APIKEY", "SECRET")
+    b : BinanceExecutionAdapterProtocol = BinanceExecutionAdapter("APIKEY", "SECRET")
     b.throttle = MagicMock()
     b.throttle.is_throttled = MagicMock(return_value=False)  # ✅ allow requests by default
     b.throttle.record_order = MagicMock()

@@ -1,6 +1,9 @@
 import pytest
 import time
+
+import random
 from market_data.orderbook import OrderBook
+from market_data.orderbook_protocol import OrderBookProtocol
 
 @pytest.fixture
 def orderbook():
@@ -104,13 +107,10 @@ def test_volatility_estimate(orderbook):
         })
     assert orderbook.get_volatility_estimate() > 0.0
 
-import random
 
-import random
-from market_data.orderbook import OrderBook
 
 def test_volatility_under_noise():
-    orderbook = OrderBook()
+    orderbook : OrderBookProtocol = OrderBook()
     base = 100.0
     bid = base
 
@@ -126,8 +126,8 @@ def test_volatility_under_noise():
         })
 
     # Adaptive threshold based on baseline volatility
-    baseline = OrderBook().get_volatility_estimate()
-    measured = orderbook.get_volatility_estimate()
+    baseline : OrderBookProtocol = OrderBook().get_volatility_estimate()
+    measured : OrderBookProtocol = orderbook.get_volatility_estimate()
 
     # Use a realistic multiplier for production-grade reflex
     assert measured > baseline * 1.1, f"Volatility too low: {measured} (baseline: {baseline})"

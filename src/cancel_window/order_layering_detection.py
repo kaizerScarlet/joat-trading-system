@@ -33,11 +33,14 @@ from cancel_window.simple_cancel_window import AdaptiveDensityWindow
 from cancel_window.simple_cancel_window import AdaptiveThreshold
 
 class OrderLayeringDetection:
-    def __init__(self, price_tick: float = 0.1,
+    def __init__(self,
+                  tuner: CancelWindowTunerForLayering, 
+                 price_tick: float = 0.1,
                   cluster_depth: int = 3,
                     min_orders: int =3,
                     retention_ms: int = 300_000,
-                    min_size_per_order: float = 0.0
+                    min_size_per_order: float = 0.0,
+                   
                     ):
         """
         :param time_window_ms: Time window to consider for clustering orders
@@ -45,7 +48,7 @@ class OrderLayeringDetection:
         :param cluster_depth: Number of levels to consider for layering detection
         :param min_orders: Minimum number of orders at each level to qualify as layering
         """
-        self.tuner = CancelWindowTunerForLayering()
+        self.tuner = tuner
         self.price_tick = price_tick
         self.cluster_depth = cluster_depth
         self.min_orders = min_orders
@@ -241,4 +244,27 @@ class OrderLayeringDetection:
         self.orders_log.clear()
         self.cancel_log.clear()
         self.fills_log.clear()
+
+    def get_debug_view(self) -> Dict[str, Any]:
+        self._prune()
+        clusters = self.detect_layering()
+        current_time = int(time.time() * 1000)
+
+        return {
+            "active_order_count": sum(1 for o in self.orders_log if o['status'] == 'active'),
+            "canceled_order_count": len(self.cancel_log),
+            "filled_order_count": len(self.fills_log),
+            "recent_clusters": [{
+                "timestamp": c["timestamp"],
+                "side": c["side"],
+                "label": c["label"],
+                "cluster_size": c["cluster_size"],
+                "aggression_score": c["aggression_score"],
+                "depth_range": c["depth_range"],
+                "avg_duration": sum(c["durations"]) / len(c["durations"]) if c["durations"] else 0
+            } for c in clusters[-3:]],
+            "layering_score": self.get_layering_score(),
+            "tuner_window_ms": self.tuner.current_window_ms()
+        }
+
         

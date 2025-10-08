@@ -4,13 +4,21 @@ from alpha_scoring.alpha_pipeline import AlphaSignalPipeline
 
 class TestAlphaSignalPipeline(unittest.TestCase):
     def setUp(self):
-        self.pipeline = AlphaSignalPipeline()
+        
 
         # Replace scorers and blender with mocks
-        self.pipeline.cancel_scorer = MagicMock()
-        self.pipeline.layering_scorer = MagicMock()
-        self.pipeline.age_scorer = MagicMock()
-        self.pipeline.blender = MagicMock()
+        self.cancel_scorer = MagicMock()
+        self.layering_scorer = MagicMock()
+        self.age_scorer = MagicMock()
+        self.blender = MagicMock()
+
+
+        self.pipeline = AlphaSignalPipeline(
+            cancel_scorer=self.cancel_scorer,
+            age_scorer=self.age_scorer,
+            layering_scorer=self.layering_scorer,
+            blender=self.blender
+        )
 
         # Default mock return values per side
         self.pipeline.cancel_scorer.compute_score.return_value = {'ask': 0.6, 'bid': 0.6}
@@ -99,6 +107,30 @@ class TestAlphaSignalPipeline(unittest.TestCase):
         self.pipeline.layering_scorer.reset.assert_called_once()
         self.pipeline.age_scorer.reset.assert_called_once()
         self.pipeline.blender.reset.assert_called_once()
+
+    def test_update_market_with_no_flags(self):
+        snapshot = {}  # no 'flag' key
+        ts = 170001000
+        self.pipeline.update_market(ts, snapshot)
+        self.pipeline.blender.update_signals.assert_any_call(ts, {
+            'cancel_activity': 0.6,
+            'layering': 0.4,
+            'order_age': 0.5
+        }, side='ask')
+
+    def test_update_market_with_missing_side(self):
+        snapshot = {'flag': [{'timestamp': 1700000000, 'type': 'CANCEL', 'price': 99.0}]}
+        ts = 1700000000
+        self.pipeline.update_market(ts, snapshot)
+        self.pipeline.cancel_scorer.register_events.assert_called_with(
+            timestamp=1700000000,
+            event_type='CANCEL',
+            price=99.0,
+            size=1.0,
+            side='ask'  # default fallback
+        )
+
+
 
 
 if __name__ == '__main__':

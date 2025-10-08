@@ -1,11 +1,16 @@
 import pytest
 import time
 import pytest_asyncio
+from dynamic_risk_engine.dynamic_risk_engine_protocol import DynamicRiskEngineProtocol
 from dynamic_risk_engine.dynamic_risk_engine import DynamicRiskEngine
 from dynamic_risk_engine.cognitive_market_regime_classifier import MarketRegime
+from Execution_layer.binance_adapter_protocol import BinanceExecutionAdapterProtocol
+from dynamic_risk_engine.performance_tracker_protocol import PerformanceTrcakerProtocol
+from dynamic_risk_engine.signal_confidence_calibrator_protocol import SignalConfidenceCalibratorProtocol
+
 
 # 🔧 Mock Adapter
-class MockBinanceAdapter:
+class MockBinanceAdapter(BinanceExecutionAdapterProtocol):
     async def get_account_balance(self):
         return 100_000.0
 
@@ -19,7 +24,7 @@ class MockBinanceAdapter:
         return {"status": "mocked"}
 
 # 🔧 Mock Confidence Calibrator
-class MockConfidenceCalibrator:
+class MockConfidenceCalibrator(SignalConfidenceCalibratorProtocol):
     def get_current_confidence(self):
         return 0.8
 
@@ -33,7 +38,7 @@ class MockConfidenceCalibrator:
         pass
 
 # 🔧 Mock Performance Tracker
-class MockPerformanceTracker:
+class MockPerformanceTracker(PerformanceTrcakerProtocol):
     def win_rate(self):
         return 0.75
 
@@ -55,7 +60,7 @@ class MockPerformanceTracker:
 # 🔧 Fixture for initialized engine
 @pytest_asyncio.fixture
 async def initialized_engine():
-    engine = DynamicRiskEngine(daily_drawdown_limit=0.25)
+    engine : DynamicRiskEngineProtocol = DynamicRiskEngine(daily_drawdown_limit=0.25)
 
     mock_adapter = MockBinanceAdapter()
     mock_confidence = MockConfidenceCalibrator()

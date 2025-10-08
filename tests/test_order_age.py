@@ -130,3 +130,37 @@ def test_get_recent_short_lived_ratio_computes_correctly():
 
     ratio = tracker.get_recent_short_lived_ratio(threshold_ms=300, window_ms=3000)
     assert 0.4 < ratio < 0.6  # 1 short-lived out of 2 total
+
+
+def test_get_debug_view_snapshot():
+    tracker: OrderAgeDistributionProtocol = OrderAgeDistribution()
+    now = 1000
+
+    # Register and cancel a few orders
+    for i in range(3):
+        oid = f"o{i}"
+        tracker.register_event(orderid=oid, timestamp=now + i * 100, price=100.0, size=5.0, side='ask')
+        tracker.cancel_order(orderid=oid, timestamp=now + i * 100 + 200, event_type="CANCEL", price=100.0, size=5.0, distance_from_best=0.1, side='ask')
+
+    debug = tracker.get_debug_view()
+    assert debug['active_order_count'] == 0
+    assert debug['cancelled_order_count'] == 3
+    assert isinstance(debug['recent_cancel_ages'], list)
+    assert 'age_bias' in debug
+    assert 'burst_flags' in debug
+    assert 'short_lived_ratio' in debug
+
+
+def test_side_specific_statistics():
+    tracker: OrderAgeDistributionProtocol = OrderAgeDistribution()
+    now = 1000
+
+    tracker.register_event(orderid="ask1", timestamp=now, price=100.0, size=5.0, side='ask')
+    tracker.cancel_order(orderid="ask1", timestamp=now + 500, event_type="CANCEL", price=100.0, size=5.0, distance_from_best=0.1, side='ask')
+
+    tracker.register_event(orderid="bid1", timestamp=now, price=100.0, size=5.0, side='bid')
+    tracker.cancel_order(orderid="bid1", timestamp=now + 1000, event_type="CANCEL", price=100.0, size=5.0, distance_from_best=0.1, side='bid')
+
+    stats = tracker.get_statistics()
+    assert stats['cancelled_mean_ask'] == 500
+    assert stats['cancelled_mean_bid'] == 1000

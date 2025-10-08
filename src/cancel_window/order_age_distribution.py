@@ -17,7 +17,7 @@ Output:
 *Optional: Detection of unusual burst of short-leved orders
 """
 
-from typing import List, Dict
+from typing import List, Dict, Any
 
 class OrderAgeDistribution:
     def __init__(self):
@@ -315,3 +315,22 @@ class OrderAgeDistribution:
         self.filled_orders.clear()
      
      
+    def get_debug_view(self) -> Dict[str, Any]:
+        current_time = max([
+            *(o['timestamp'] for o in self.cancelled_orders),
+            *(o['timestamp'] for o in self.filled_orders)
+        ], default=0)
+
+        self._prune(current_time)
+
+        return {
+            "active_order_count": len(self.active_orders),
+            "cancelled_order_count": len(self.cancelled_orders),
+            "filled_order_count": len(self.filled_orders),
+            "recent_cancel_ages": [o['age'] for o in self.cancelled_orders[-5:]],
+            "recent_fill_ages": [o['age'] for o in self.filled_orders[-5:]],
+            "age_bias": self.get_order_age_bias(),
+            "burst_flags": self.detect_bursts(),
+            "short_lived_ratio": self.get_recent_short_lived_ratio(),
+            "age_distribution": self.get_age_distribution(bucket_ms=500)
+        }

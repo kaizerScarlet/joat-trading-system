@@ -25,6 +25,7 @@ class ThrottleCooldownManager:
     """
     def __init__(
             self,
+            regime_classifier: CognitiveMarketRegimeClassifierProtocol,
             confidence: SignalConfidenceCalibratorProtocol,
             cancel_window: CancelWindowProtocol,
             orderbook: OrderBookProtocol,
@@ -91,7 +92,7 @@ class ThrottleCooldownManager:
         self.orderbook = orderbook
 
         #Regime Classifier (for potential adaptive throttling)
-        self.regime_classifier = CognitiveMarketRegimeClassifierProtocol(self.orderbook, self.confidence, self.cancel_window)
+        self.regime_classifier = regime_classifier
         
 #
 #   Cooldown and Loss Streak Control
