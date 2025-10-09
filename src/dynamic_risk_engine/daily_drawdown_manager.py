@@ -150,3 +150,30 @@ class DailyDrawdownManager:
         day = self._get_day(timestamp)
         pnls = self.day_pnls.get(day, [])
         return [sum(pnls[:i + 1]) for i in range(len(pnls))]
+    
+    def get_debug_view(self, timestamp: datetime) -> Dict[str, any]:
+        """
+        Returns a detailed debug snapshot of the drawdown manager's state for the given day.
+        Includes drawdown metrics, trading status, volatility, and curve evolution.
+        """
+        day = self._get_day(timestamp)
+        pnls = self.day_pnls.get(day, [])
+        curve = self.get_drawdown_curve(timestamp)
+        drawdown = self.calculate_daily_drawdown(timestamp)
+        peak = max(curve, default=0.0)
+        trough = min(curve, default=0.0)
+        volatility = round((max(pnls) - min(pnls)) if pnls else 0.0, 4)
+
+        return {
+            "day": day,
+            "drawdown_limit": self.daily_drawdown_limit,
+            "current_drawdown": round(drawdown, 4),
+            "peak_pnl": round(peak, 4),
+            "trough_pnl": round(trough, 4),
+            "cumulative_pnl": round(sum(pnls), 4),
+            "pnl_events": len(pnls),
+            "volatility": volatility,
+            "trading_halted": self.is_trading_halted(timestamp),
+            "drawdown_curve": curve[-5:],  # last 5 points for quick glance
+        }
+

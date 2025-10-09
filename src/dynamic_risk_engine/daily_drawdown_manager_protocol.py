@@ -33,3 +33,6 @@ class DailyDrawdownManagerProtocol(Protocol):
 
     def get_daily_drawdown_limit(self) -> float:
         """Returns the current drawdown limit."""
+
+    def get_debug_view(self, timestamp: datetime) -> Dict[str, any]:
+        """Get Debug view for introspection and debugging"""

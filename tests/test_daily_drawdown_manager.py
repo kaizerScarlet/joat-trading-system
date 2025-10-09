@@ -3,11 +3,15 @@ from unittest.mock import AsyncMock
 from datetime import datetime, timedelta
 from dynamic_risk_engine.daily_drawdown_manager_protocol import DailyDrawdownManagerProtocol
 from dynamic_risk_engine.daily_drawdown_manager import DailyDrawdownManager
+from Execution_layer.binance_adapter_protocol import BinanceExecutionAdapterProtocol
 
 
 @pytest.mark.asyncio
 async def test_record_pnl_and_no_halt():
-    manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(daily_drawdown_limit=0.25)
+    manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(
+        binance_adapter = BinanceExecutionAdapterProtocol,
+        daily_drawdown_limit=0.25
+        )
     #Mock the adapters get account method
     manager.account_balance.get_account = AsyncMock(return_value=1000.0)
     await manager.initialize() #This sets drawdown limit
@@ -25,7 +29,10 @@ async def test_record_pnl_and_no_halt():
 
 @pytest.mark.asyncio
 async def test_trading_halted_when_limit_exceeded(capfd):
-    manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(daily_drawdown_limit=0.25)
+    manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(
+        binance_adapter = BinanceExecutionAdapterProtocol,
+        daily_drawdown_limit=0.25
+        )
 
     #Mock the adapters get account balance
     manager.account_balance.get_account = AsyncMock(return_value=1000.0)
@@ -45,7 +52,10 @@ async def test_trading_halted_when_limit_exceeded(capfd):
 
 @pytest.mark.asyncio
 async def test_trades_return_zero_drawdown():
-    manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(daily_drawdown_limit=0.25)
+    manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(
+        binance_adapter = BinanceExecutionAdapterProtocol,
+        daily_drawdown_limit=0.25
+        )
     #Mock the adapters get account balance
     manager.account_balance.get_account = AsyncMock(return_value=1000.0)
     await manager.initialize() #This sets drawdown limit
@@ -58,7 +68,10 @@ async def test_trades_return_zero_drawdown():
 
 @pytest.mark.asyncio
 async def test_reset_daily_drawdown():
-    manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(daily_drawdown_limit=0.25)
+    manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(
+        binance_adapter = BinanceExecutionAdapterProtocol,
+        daily_drawdown_limit=0.25
+        )
     #Mock the adapters get account balance
     manager.account_balance.get_account = AsyncMock(return_value=1000.0)
     await manager.initialize()  #This sets drawdown limit
@@ -75,7 +88,9 @@ async def test_reset_daily_drawdown():
 
 @pytest.mark.asyncio
 async def test_multiple_days_handling():
-    manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(daily_drawdown_limit=0.25)
+    manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(
+        binance_adapter = BinanceExecutionAdapterProtocol,
+        daily_drawdown_limit=0.25)
     #Mock the adapters get account balance
     manager.account_balance.get_account = AsyncMock(return_value=1000.0)
     await manager.initialize()  #This sets drawdown limit
@@ -105,7 +120,10 @@ async def test_multiple_days_handling():
 
 @pytest.mark.asyncio
 async def test_drawdown_curve_accuracy():
-    manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(daily_drawdown_limit=0.25)
+    manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(
+        binance_adapter = BinanceExecutionAdapterProtocol,
+        daily_drawdown_limit=0.25
+        )
     #Mock the adapters get account balance
     manager.account_balance.get_account = AsyncMock(return_value=1000.0)
     await manager.initialize() #This sets drawdown limit
@@ -121,7 +139,10 @@ async def test_drawdown_curve_accuracy():
 
 @pytest.mark.asyncio
 async def test_empty_day_drawdown():
-    manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(daily_drawdown_limit=0.25)
+    manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(
+        binance_adapter = BinanceExecutionAdapterProtocol,
+        daily_drawdown_limit=0.25
+        )
     manager.account_balance.get_account = AsyncMock(return_value=1000.0)
     await manager.initialize()
 
@@ -132,7 +153,10 @@ async def test_empty_day_drawdown():
 
 @pytest.mark.asyncio
 async def test_reset_clears_state():
-    manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(daily_drawdown_limit=0.25)
+    manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(
+        binance_adapter = BinanceExecutionAdapterProtocol,
+        daily_drawdown_limit=0.25
+        )
     manager.account_balance.get_account = AsyncMock(return_value=1000.0)
     await manager.initialize()
 
@@ -148,7 +172,10 @@ async def test_reset_clears_state():
 
 @pytest.mark.asyncio
 async def test_status_snapshot():
-    manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(daily_drawdown_limit=0.25)
+    manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(
+        binance_adapter = BinanceExecutionAdapterProtocol,
+        daily_drawdown_limit=0.25
+        )
     manager.account_balance.get_account = AsyncMock(return_value=1000.0)
     await manager.initialize()
 
@@ -165,7 +192,9 @@ async def test_status_snapshot():
 
 @pytest.mark.asyncio
 async def test_drawdown_equals_limit_triggers_halt():
-    manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(daily_drawdown_limit=0.25)
+    manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(
+        binance_adapter = BinanceExecutionAdapterProtocol,
+        daily_drawdown_limit=0.25)
     manager.account_balance.get_account = AsyncMock(return_value=1000.0)
     await manager.initialize()
 
