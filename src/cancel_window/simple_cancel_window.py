@@ -23,6 +23,12 @@ class AdaptiveDensityWindow:
 
     def get_current_window(self) -> int:
         return int(self.current_window)
+    def get_debug_view(self) -> Dict[str, Any]:
+         return {
+            "current_window_ms": self.get_current_window(),
+            "decay": self.decay
+        }
+
     
 # ======Adaptive Threshold ============
 class AdaptiveThreshold:
@@ -38,6 +44,13 @@ class AdaptiveThreshold:
 
     def get_threshold(self) -> int:
         return int(self.threshold)
+
+    def get_debug_view(self) -> Dict[str, Any]:
+        return {
+            "threshold": self.get_threshold(),
+            "decay": self.decay
+        }
+
     
 
 # ========== adaptive_fill_threshold ============
@@ -53,6 +66,13 @@ class FillThresholdTuner:
 
     def get_ratio(self) -> float :
         return self.ratio
+    
+    def get_debug_view(self) -> Dict[str, Any]:
+        return {
+            "fill_ratio": self.get_ratio(),
+            "decay": self.decay
+        }
+
 
 class CancelWindowTunerForLayering:
     def __init__(self, ema_alpha: float = 0.2, min_ms: int = 100, max_ms: int = 350):
@@ -73,6 +93,16 @@ class CancelWindowTunerForLayering:
     def current_window_ms(self) -> int :
         return int(self.ema_latency or self.min_ms)
 
+    def get_debug_view(self) -> Dict[str, Any]:
+        return {
+            "ema_latency": self.ema_latency,
+            "current_window_ms": self.current_window_ms(),
+            "min_ms": self.min_ms,
+            "max_ms": self.max_ms,
+            "ema_alpha": self.ema_alpha
+        }
+
+
 # ===== CancelWindowTuner (inline) ========
 class CancelWindowTuner:
     def __init__(self, ema_alpha: float = 0.2, min_ms: int = 50, max_ms: int = 75):
@@ -92,6 +122,7 @@ class CancelWindowTuner:
     
     def current_window_ms(self) -> int :
         return int(self.ema_latency or self.min_ms)
+    
     
 # ===== Main Class ======
 
@@ -166,6 +197,9 @@ class SimpleCancelWindow(CancelWindow):
         # For detecting multilevel laddering
         self.laddering_buffer = [] #For detecting multilevel laddering
         self.active_ladder = None
+
+        self.cancel_density = {"bid": {}, "ask": {}}
+
 
 
     def _next_id(self) -> str:
@@ -262,6 +296,15 @@ class SimpleCancelWindow(CancelWindow):
 
                         # cache the cancel for a potential trade match
                         self.cancel_cache[key] = (ts, removed_size)
+
+
+                        #Debugging
+                        print(f"[Cancel @ {price}] ts={ts}")
+                        self.cancel_density.setdefault(side, {}).setdefault(price, []).append(ts)
+                        print(f"[Density Timestamps] {self.cancel_density[side][price]}")
+
+
+
                         #Iceberg detection: multiple reductions before cancel
                         reductions = self.reduction_history.get(key, [])
                         if len(reductions) >= 2 and dt < self.get_window_ms():    #Iceberg flag
@@ -401,6 +444,8 @@ class SimpleCancelWindow(CancelWindow):
                                     "Cancel Density": self.get_cancel_density(side)
                                 }
                 })
+        # ✅ Automatically evaluate cancel density after every update
+        self._detect_cancel_density_spike(ts)
     
     # --------------------------------------------------------------------------#
     #   TRADES
@@ -499,6 +544,8 @@ class SimpleCancelWindow(CancelWindow):
             self.add_ts.pop(key, None)  # cleanup
             self.reduction_history.pop(key, None)
             #Keep cancel_cache until it ages out (> window), dont pop immediately
+            self._expire_cancel_cache()
+
     # -----------------------------------------------------------------------------------------------
     # HELPER METHODS
     # -----------------------------------------------------------------------------------------------
@@ -608,6 +655,42 @@ class SimpleCancelWindow(CancelWindow):
         self.detect_reposting_behavior(timestamp, price, side, size)
         self.detect_layer_wipe(timestamp, price, side, size)
         self.detect_burst_cancel(timestamp, price, side, size)
+    
+    def _detect_cancel_density_spike(self, timestamp: int):
+        """
+        Evaluate cancel density and emit CANCEL_DENSITY_SPIKE flags if thresholds are breached.
+        Called automatically after each L2 update.
+        """
+        
+
+        density = self.compute_cancel_density()
+        #Debugging Print
+        print(f"[Computed Cancel Density] {density}")
+        for (side, price), count in density.items():
+            threshold = self.cancel_density_threshold_bid if side == "bid" else self.cancel_density_threshold_ask
+            threshold.update(self.orderbook.get_estimated_volume(side), self.orderbook.get_volatility_estimate())
+           #Debugging Print
+            print(f"[Density Check] {side} @ {price} → count={count}, threshold={threshold.get_threshold()}")
+
+            if count >= threshold.get_threshold():
+                orderid = self._next_id()
+                self._flags.append({
+                    "timestamp": timestamp,
+                    "orderid": orderid,
+                    "type": "CANCEL_DENSITY_SPIKE",
+                    "side": side,
+                    "price": price,
+                    "cancel_count": count,
+                    "window_ms": self.cancel_density_window_ms.get_current_window(),
+                    "context": {
+                        "window_ms": self.get_window_ms(),
+                        "Cancel Density": self.get_cancel_density(side)
+                    }
+                })
+        #Debugging print
+        print(f"[Cancel Density] {density}")
+
+
 
     def detect_burst_cancel(self, timestamp:int, price:float, side: str, size: float):
         """Very rapid cancels across multiple levels (like a cancel sweep)"""
@@ -907,3 +990,71 @@ class SimpleCancelWindow(CancelWindow):
             dist_score = 0.5
         score = 0.6 * size_score + 0.3 * dt_score + 0.1 * dist_score
         return score
+
+
+    def _expire_cancel_cache(self):
+        """
+        Prune stale entries from the cancel cache to avoid memory bloat and false matches.
+        This method is called after trade processing to ensure fills have a fair chance to match recent cancels.
+
+        Strategy:
+        - Uses regime stability to dynamically widen the expiry window.
+        - In stable regimes, cancels expire faster (2x window).
+        - In unstable regimes, cancels persist longer (up to 4x window).
+        - Ensures behavioral continuity without accumulating irrelevant noise.
+        """
+        current_time = int(time.time() * 1000)
+
+        # Get regime stability (default to 1.0 if classifier is missing)
+        stability = self.regime_classifier.get_regime_stability() if self.regime_classifier else 1.0
+
+        # Compute expiry multiplier: wider window if regime is unstable
+        multiplier = 2.0 + (1.0 - stability) * 2.0  # ranges from 2.0 to 4.0
+
+        # Final expiry window in milliseconds
+        expiry_window = int(self.get_window_ms() * multiplier)
+
+        # Prune cancel_cache entries older than expiry_window
+        self.cancel_cache = {
+            k: (ts, sz) for k, (ts, sz) in self.cancel_cache.items()
+            if current_time - ts <= expiry_window
+        }
+
+
+    def get_debug_view(self) -> Dict[str, Any]:
+        return {
+            "window_ms": self.get_window_ms(),
+            "midprice": self.midprice,
+            "flag_count": len(self._flags),
+            "recent_flags": self._flags[-5:],
+            "cancel_cache_size": len(self.cancel_cache),
+            "cancel_density_bid": self.get_cancel_density("bid"),
+            "cancel_density_ask": self.get_cancel_density("ask"),
+            "normalized_cancel_density": self.get_normalized_cancel_density(),
+            "cancel_impact_sample": {
+                k: self.compute_cancel_impact_score(k[1], k[0])
+                for k in list(self.cancel_cache.keys())[-3:]
+            },
+            "laddering_buffer_size": len(self.laddering_buffer),
+            "active_ladder": self.active_ladder,
+            "cancel_events_sample": self.cancel_events[-3:],
+            "fill_events_sample": self.fill_events[-3:]
+        }
+        
+        
+    def reset(self):
+        self.bids.clear()
+        self.asks.clear()
+        self.add_ts.clear()
+        self.cancel_cache.clear()
+        self.reduction_history.clear()
+        self.cancel_timestamps.clear()
+        self.reduction_timestamps.clear()
+        self._flags.clear()
+        self.iceberg_buffer.clear()
+        self.laddering_buffer.clear()
+        self.active_ladder = None
+        self.cancel_events.clear()
+        self.fill_events.clear()
+
+

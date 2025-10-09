@@ -46,3 +46,7 @@ class CancelWindowProtocol(Protocol):
 
     def flush(self) -> None:
         """Clears cancel and fill event buffers."""
+    def get_debug_view(self) -> Dict[str, Any]:
+        """Returns a debug view of internal parameters and state."""
+    def reset(self):
+        """Resets internal state and parameters to initial configuration."""

@@ -25,3 +25,6 @@ class OrderLayeringDetectionProtocol(Protocol):
 
     def reset(self) -> None:
         """Resets the detection logs for a new cycle."""
+
+    def get_debug_view(self) -> Dict[str, Any]:
+        """Returns a snapshot of internal state for debugging and inspection."""

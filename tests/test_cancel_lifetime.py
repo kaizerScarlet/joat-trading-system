@@ -4,7 +4,7 @@ from market_data.orderbook_protocol import OrderBookProtocol
 from cancel_window.order_age_distribution_protocol import OrderAgeDistributionProtocol
 from dynamic_risk_engine.cognitive_market_regime_classifier_protocol import CognitiveMarketRegimeClassifierProtocol, MarketRegime 
 from cancel_window.simple_cancel_window_protocol import CancelWindowProtocol
-from cancel_window.simple_cancel_window import SimpleCancelWindow
+from cancel_window.simple_cancel_window import SimpleCancelWindow, CancelWindowTuner
 
 class DummyOrderAgeTracker(OrderAgeDistributionProtocol):
     def get_order_age(self, price: float, side: str) -> float:
@@ -20,9 +20,9 @@ class DummyOrderBook(OrderBookProtocol):
     def get_liquidity_within_bps(self, side: str, bps: float) -> float:
         return 1000.0
     def get_volatility_estimate(self) -> float:
-        return 0.01
+        return 0.001
     def get_estimated_volume(self, side: str) -> float:
-        return 1000.0
+        return 100.0
     def get_best_price(self, side: str) -> float:
         return 30000.0 if side == 'bid' else 30001.0
     def get_midprice(self) -> float:
@@ -35,7 +35,9 @@ class DummyRegimeClassifier(CognitiveMarketRegimeClassifierProtocol):
 
 #test fast cancel on bid side
 def test_fast_cancel_flag_bid():
-    cw : CancelWindowProtocol = SimpleCancelWindow(order_age_tracker=DummyOrderAgeTracker(),
+    cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
         classifier=DummyRegimeClassifier()
         )
@@ -45,14 +47,22 @@ def test_fast_cancel_flag_bid():
     # cancel same level 20ms later
     cw.process_l2_update({"E": 1020, "b": [["30000", "0"]], "a": []})
 
-    flags = cw.flush_flags()
+    flags = cw.get_flags()
+    spoof_flags = [f for f in flags if f["type"] == "CANCEL_SPOOF"]
     print(flags)
+    assert spoof_flags, "Expected CANCEL_SPOOF flag"
     assert flags and flags[0]["type"] == "CANCEL_SPOOF"
     assert flags[0]["latency_ms"] == 20
+    
+    debug = cw.get_debug_view()
+    assert debug["cancel_density_bid"][30000.0] == 1
+
 
 #test fast cancel on ask side
 def test_fast_cancel_flag_ask():
-    cw : CancelWindowProtocol = SimpleCancelWindow(order_age_tracker=DummyOrderAgeTracker(),
+    cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
         classifier=DummyRegimeClassifier()
         )
@@ -62,7 +72,7 @@ def test_fast_cancel_flag_ask():
     # cancel same level 20ms later
     cw.process_l2_update({"E": 1020, "b": [],   "a": [["30000", "0"]]})
 
-    flags = cw.flush_flags()
+    flags = cw.get_flags()
     print(flags)
     assert flags and flags[0]["type"] == "CANCEL_SPOOF"
     assert flags[0]["latency_ms"] == 20
@@ -72,6 +82,7 @@ def test_fast_cancel_flag_ask():
 #Test True fill flag on ask side
 def test_true_fill_flag_ask():
     cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
         classifier=DummyRegimeClassifier()
@@ -87,13 +98,14 @@ def test_true_fill_flag_ask():
         "q": "2.0",
         "m": False # buyer is taker
         })
-    flags = cw.flush_flags()
+    flags = cw.get_flags()
     print(flags)
     assert any(f["type"] == "TRUE_FILL" for f in flags)
 
 #Test True fill flag bid
 def test_true_fill_flag_bid():
     cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
         classifier=DummyRegimeClassifier()
@@ -121,6 +133,7 @@ def test_partial_fill_flag_bid():
     in <window_ms. Expect PARTIAL_FILL, not TRUE_FILL.
     """
     cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
         classifier=DummyRegimeClassifier()
@@ -138,7 +151,7 @@ def test_partial_fill_flag_bid():
         "m": True     #taker is seller-> hitting bid
     })
 
-    flags = cw.flush_flags()
+    flags = cw.get_flags()
     print(flags)
     types = [f["type"] for f in flags]
     assert "PARTIAL_FILL" in types
@@ -153,6 +166,7 @@ def test_partial_fill_flag_ask():
     in <window_ms. Expect PARTIAL_FILL, not TRUE_FILL.
     """
     cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
         classifier=DummyRegimeClassifier()
@@ -170,7 +184,7 @@ def test_partial_fill_flag_ask():
         "m": False  #taker is buyer -> hitting ask
     })
 
-    flags = cw.flush_flags()
+    flags = cw.get_flags()
     print(flags)
     types = [f["type"] for f in flags]
     assert "PARTIAL_FILL" in types
@@ -179,7 +193,9 @@ def test_partial_fill_flag_ask():
 
 # Test iceberg cancel flag emitted ask side
 def test_iceberg_cancel_flag_emitted_ask():
+    tuner = CancelWindowTuner()
     cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner,
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
         classifier=DummyRegimeClassifier()
@@ -196,7 +212,7 @@ def test_iceberg_cancel_flag_emitted_ask():
     #4. Cancel (set at 0)
     cw.process_l2_update({"E": base_ts + 30, "a": [["30090", "0"]], "b": []})
 
-    flags = cw.flush_flags()
+    flags = cw.get_flags()
     print(flags)
     assert any(f["type"] == "ICEBERG_CANCEL" for f in flags)
     assert flags[0]["type"] == "ICEBERG_CANCEL"
@@ -207,7 +223,9 @@ def test_iceberg_cancel_flag_emitted_ask():
 
 #Test iceberg cancel flag emitted bid side
 def test_iceberg_cancel_flag_emitted_bid():
+    tuner = CancelWindowTuner()
     cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner,
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
         classifier=DummyRegimeClassifier()
@@ -224,7 +242,7 @@ def test_iceberg_cancel_flag_emitted_bid():
     #4. Cancel (set at 0)
     cw.process_l2_update({"E": base_ts + 30, "b": [["30090", "0"]], "a": []})
 
-    flags = cw.flush_flags()
+    flags = cw.get_flags()
     iceberg_flags = [f for f in flags if f['type'] == 'ICEBERG_CANCEL']
     print(flags)
     assert any(f["type"] == "ICEBERG_CANCEL" for f in flags)
@@ -238,6 +256,7 @@ def test_iceberg_cancel_flag_emitted_bid():
 #Test no iceberg if only one reduction ask
 def test_no_iceberg_if_only_one_reduction_ask():
     cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
         classifier=DummyRegimeClassifier()
@@ -252,7 +271,7 @@ def test_no_iceberg_if_only_one_reduction_ask():
     #4. Cancel (set at 0)
     cw.process_l2_update({"E": base_ts + 30, "a": [["30090", "0"]], "b": []})
     
-    flags = cw.flush_flags()
+    flags = cw.get_flags()
     assert len(flags) == 1
     assert flags[0]["type"] == "CANCEL_SPOOF"
 
@@ -260,6 +279,7 @@ def test_no_iceberg_if_only_one_reduction_ask():
 #Test no iceberg if only one reduction bid
 def test_no_iceberg_if_only_one_reduction_bid():
     cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
         classifier=DummyRegimeClassifier()
@@ -274,7 +294,7 @@ def test_no_iceberg_if_only_one_reduction_bid():
     #4. Cancel (set at 0)
     cw.process_l2_update({"E": base_ts + 30, "b": [["30090", "0"]], "a": []})
     
-    flags = cw.flush_flags()
+    flags = cw.get_flags()
     assert len(flags) == 1
     assert flags[0]["type"] == "CANCEL_SPOOF"
 
@@ -283,6 +303,7 @@ def test_no_iceberg_if_only_one_reduction_bid():
 #Test no iceberg if cancel outside window on the ask side
 def test_no_iceberg_if_cancel_outside_window_ask():
     cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
         classifier=DummyRegimeClassifier()
@@ -297,7 +318,7 @@ def test_no_iceberg_if_cancel_outside_window_ask():
     #4. Cancel (set at 0)
     cw.process_l2_update({"E": base_ts + 100, "a": [["30090", "0"]], "b": []})
     
-    flags = cw.flush_flags()
+    flags = cw.get_flags()
     #No iceberg or spoof because outside window
     assert len(flags) == 0
 
@@ -305,6 +326,7 @@ def test_no_iceberg_if_cancel_outside_window_ask():
 #Test no iceberg if cancel outside window on the bid side
 def test_no_iceberg_if_cancel_outside_window_bid():
     cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
         classifier=DummyRegimeClassifier()
@@ -319,7 +341,7 @@ def test_no_iceberg_if_cancel_outside_window_bid():
     #4. Cancel (set at 0)
     cw.process_l2_update({"E": base_ts + 100, "b": [["30090", "0"]], "a": []})
     
-    flags = cw.flush_flags()
+    flags = cw.get_flags()
     #No iceberg or spoof because outside window
     assert len(flags) == 0
 
@@ -327,6 +349,7 @@ def test_no_iceberg_if_cancel_outside_window_bid():
 #Test Cancel Density flag ask side
 def test_high_cancel_density_flag_ask():
     cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
         classifier=DummyRegimeClassifier()
@@ -348,15 +371,16 @@ def test_high_cancel_density_flag_ask():
     #6. Cancel
     cw.process_l2_update({"E": base_ts + 60, "a": [["30090", "0"]], "b": []})
     
-    flags = cw.flush_flags()
+    flags = cw.get_flags()
     
     #Should contain HIGH_CANCEL_DENSITY
-    density_flags = [f for f in flags if f["type"] ==  "HIGH_CANCEL_DENSITY"]
+    density_flags = [f for f in flags if f["type"] ==  "CANCEL_DENSITY_SPIKE"]
     assert len(density_flags) > 0
     print("Test Passed. High_CANCEL_DENSITY triggered", density_flags)
 
 def test_high_cancel_density_flag_ask2():
     cw = SimpleCancelWindow(
+        tuner=CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
         classifier=DummyRegimeClassifier()
@@ -372,17 +396,46 @@ def test_high_cancel_density_flag_ask2():
     cw.process_l2_update({"E": base_ts + 40, "a": [["30090", "2.0"]], "b": []})
     cw.process_l2_update({"E": base_ts + 60, "a": [["30090", "0"]], "b": []})
 
-    flags = cw.flush_flags()
+    # Trigger density evaluation
+    cw.process_l2_update({"E": base_ts + 70, "a": [], "b": []})
+
+    flags = cw.get_flags()
     print(flags)
     density_flags = [f for f in flags if f["type"] == "CANCEL_DENSITY_SPIKE"]
-    assert len(density_flags) > 0
+    assert density_flags, "Expected CANCEL_DENSITY_SPIKE flag"
 
 
+def test_high_cancel_density_flag_ask2():
+    cw = SimpleCancelWindow(
+        tuner=CancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier()
+    )
+    cw.set_cancel_density_params(initial_threshold=3, initial_window_ms=100)
+
+    base_ts = 100000
+    # Add and cancel 3 times within 100ms
+    cw.process_l2_update({"E": base_ts, "a": [["30090", "5.0"]], "b": []})
+    cw.process_l2_update({"E": base_ts + 10, "a": [["30090", "0"]], "b": []})
+    cw.process_l2_update({"E": base_ts + 20, "a": [["30090", "2.0"]], "b": []})
+    cw.process_l2_update({"E": base_ts + 30, "a": [["30090", "0"]], "b": []})
+    cw.process_l2_update({"E": base_ts + 40, "a": [["30090", "2.0"]], "b": []})
+    cw.process_l2_update({"E": base_ts + 60, "a": [["30090", "0"]], "b": []})
+
+    # Manually trigger density evaluation
+    cw._detect_cancel_density_spike(base_ts + 70)
+
+    flags = cw.get_flags()
+    print(flags)
+    density_flags = [f for f in flags if f["type"] == "CANCEL_DENSITY_SPIKE"]
+    assert density_flags, "Expected CANCEL_DENSITY_SPIKE flag"
 
 
 #Test Cancel Density flag bid side
 def test_high_cancel_density_flag_bid():
     cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
         classifier=DummyRegimeClassifier()
@@ -404,7 +457,7 @@ def test_high_cancel_density_flag_bid():
     #6. Cancel
     cw.process_l2_update({"E": base_ts + 60, "b": [["30090", "0"]], "a": []})
     
-    flags = cw.flush_flags()
+    flags = cw.get_flags()
     
     #Should contain HIGH_CANCEL_DENSITY
     density_flags = [f for f in flags if f["type"] ==  "CANCEL_DENSITY_SPIKE"]
@@ -412,6 +465,7 @@ def test_high_cancel_density_flag_bid():
     print("Test Passed. High_CANCEL_DENSITY triggered", density_flags)
 def test_high_cancel_density_flag_bid3():
     cw = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
         classifier=DummyRegimeClassifier()
@@ -426,7 +480,7 @@ def test_high_cancel_density_flag_bid3():
     cw.process_l2_update({"E": base_ts + 40, "b": [["30090", "2.0"]], "a": []})
     cw.process_l2_update({"E": base_ts + 60, "b": [["30090", "0"]], "a": []})
 
-    flags = cw.flush_flags()
+    flags = cw.get_flags()
     print(flags)
     density_flags = [f for f in flags if f["type"] == "CANCEL_DENSITY_SPIKE"]
     assert len(density_flags) > 0
@@ -437,6 +491,7 @@ def test_high_cancel_density_flag_bid3():
 #Test Compute cancel density correctly
 def test_cancel_density_computation():
     cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
         classifier=DummyRegimeClassifier()
@@ -459,6 +514,7 @@ def test_cancel_density_computation():
 #Test Normalize Cancel Density
 def test_normalized_cancel_density():
     cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
         classifier=DummyRegimeClassifier()
@@ -479,6 +535,7 @@ def test_normalized_cancel_density():
 #Test Clear Density after Flush
 def test_cancel_density_flush():
     window : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
         classifier=DummyRegimeClassifier()
@@ -495,6 +552,7 @@ def test_cancel_density_flush():
 # Test for Icerberg Cancels
 def test_iceberg_cancel_detection():
     cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
         classifier=DummyRegimeClassifier()
@@ -519,6 +577,7 @@ class MockOrderBook:
 #@pytest.mark.skip(reason="UPDATE_BOOK, COMPUTE_IMPACT_SCORE not implemented yet, also has incorrect parameters for REGISTER_CANCEL")
 def test_high_impact_cancel():
     cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
         classifier=DummyRegimeClassifier()
@@ -538,6 +597,7 @@ def test_high_impact_cancel():
 #@pytest.mark.skip(reason="UPDATE_BOOK, COMPUTE_CANCEL_IMPACT_SCORE npt implemented yet, aslo has incorrect parameters for REGISTER_CANCEL")
 def test_low_impact_cancel():
     cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
         classifier=DummyRegimeClassifier()
@@ -557,6 +617,7 @@ def test_low_impact_cancel():
 #@pytest.mark.skip(reason="UPDATE_BOOK, COMPUTE_CANCEL_IMPACT_SCORE not implemented yet, also has incorrect parameters for REGISTER_CANCEL")
 def test_score_changes_with_book():
     cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
         classifier=DummyRegimeClassifier()
@@ -575,7 +636,9 @@ def test_score_changes_with_book():
 
 
 def test_snapshot_state_integrity():
-    window : CancelWindowProtocol = SimpleCancelWindow(order_age_tracker=DummyOrderAgeTracker(),
+    window : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
         classifier=DummyRegimeClassifier()
         )
