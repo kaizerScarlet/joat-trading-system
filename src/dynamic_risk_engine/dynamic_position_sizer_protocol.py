@@ -19,3 +19,9 @@ class DynamicPositionSizerProtocol(Protocol):
 
     def get_drawdown_throttle(self) -> float:
         """Returns throttle factor based on current drawdown severity."""
+
+    async def get_debug_view(self, stop_loss_distance: float) -> dict:
+        """
+        Returns a detailed debug snapshot of the position sizing logic.
+        Includes behavioral inputs, risk calibration, and sizing rationale.
+        """

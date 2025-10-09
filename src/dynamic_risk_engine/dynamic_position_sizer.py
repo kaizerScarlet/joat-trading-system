@@ -106,6 +106,42 @@ class DynamicPositionSizer:
             "stop_loss_distance": stop_loss_distance,
             "position_size": round(adjusted_risk / stop_loss_distance, 4) if stop_loss_distance > 0 else 0.0
         }
+    
+
+    async def get_debug_view(self, stop_loss_distance: float) -> dict:
+        """
+        Returns a detailed debug snapshot of the position sizing logic.
+        Includes behavioral inputs, risk calibration, and sizing rationale.
+        """
+        balance = await self.account_balance.get_account_balance()
+        drawdown_limit = self.drawdown.get_daily_drawdown_limit()
+        drawdown_throttle = self.get_drawdown_throttle()
+        volatility = self.volatility.get_volatility_estimate()
+        confidence = self.confidence.get_current_confidence()
+        win_rate = self.win_rate.win_rate()
+        rrr = self.win_rate.average_rrr()
+        max_risk = self.max_risk_per_trade or self._compute_max_risk_per_trade()
+        risk_amount = balance * max_risk
+        adjusted_risk = risk_amount * confidence * (0.5 + win_rate) * volatility * drawdown_throttle
+
+        position_size = round(adjusted_risk / stop_loss_distance, 4) if stop_loss_distance > 0 else 0.0
+
+        return {
+            "balance": round(balance, 2),
+            "drawdown_limit": round(drawdown_limit, 4),
+            "drawdown_throttle": drawdown_throttle,
+            "volatility": round(volatility, 4),
+            "confidence": round(confidence, 4),
+            "win_rate": round(win_rate, 4),
+            "rrr": round(rrr or (1.5 + confidence), 4),
+            "max_risk_per_trade": round(max_risk, 4),
+            "risk_amount": round(risk_amount, 2),
+            "adjusted_risk": round(adjusted_risk, 2),
+            "stop_loss_distance": stop_loss_distance,
+            "position_size": position_size,
+            "sizing_rationale": f"Risk scaled by confidence ({confidence}), win rate ({win_rate}), volatility ({volatility}), and drawdown throttle ({drawdown_throttle})"
+        }
+
 
 
     async def reset(self):
