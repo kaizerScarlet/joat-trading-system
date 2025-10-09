@@ -37,3 +37,24 @@ class ThrottleCooldownManagerProtocol(Protocol):
 
     def get_diagnostic(self) -> Dict[str, any]:
         """Returns a snapshot of current system state including limits, overlays, and regime context."""
+
+    def get_status(self) -> dict:
+        """Unified Diagnostic Snapshot"""
+
+    def register_order(self, volume: float, weight: int = 1):
+        """
+        Register a new order event for throttling and volume tracking.
+        """
+    def register_cancel(self):
+        """
+        Register a cancel event for conversion rate tracking.
+        """
+    def get_conversion_rate(self) -> float:
+        """
+        Calculate the conversion rate: trades / (orders + cancels)
+        """
+
+    def get_fill_weight(self) -> float:
+        """
+        Calculate fill weight: volume traded / volume ordered
+        """

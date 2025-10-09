@@ -16,3 +16,9 @@ class SignalConfidenceCalibratorProtocol(Protocol):
 
     def reset(self) -> None:
         """Clears historical signal data."""
+
+    def get_last_signal(self) -> Dict:
+        """get last signal for debugging"""
+
+    def get_summary(self) -> Dict[str, float]:
+        """This gives you a quick snapshot for dashboards or audits:"""

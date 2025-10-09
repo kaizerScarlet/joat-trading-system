@@ -1,15 +1,36 @@
 import time
-import pytest 
+import pytest
+from dynamic_risk_engine.cognitive_market_regime_classifier import MarketRegime 
 from dynamic_risk_engine.throttle_cooldown_manager import ThrottleCooldownManager
 from dynamic_risk_engine.throttle_cooldown_manager_protocol import ThrottleCooldownManagerProtocol
 
+from unittest.mock import MagicMock
 
 @pytest.fixture
 def manager():
-    
-    m: ThrottleCooldownManagerProtocol = ThrottleCooldownManager(max_losses=3, cooldown_seconds=5, max_trades_per_minute=3)
+    mock_regime = MagicMock()
+    mock_regime.get_behavioral_overlay.return_value = "NORMAL"
+    mock_regime.get_current_regime.return_value = "NORMAL"
+    mock_regime.update_regime.return_value = MarketRegime.UNKNOWN
+
+    mock_confidence = MagicMock()
+    mock_confidence.get_current_confidence.return_value = 0.8
+
+    mock_cancel_window = MagicMock()
+    mock_orderbook = MagicMock()
+
+    m = ThrottleCooldownManager(
+        regime_classifier=mock_regime,
+        confidence=mock_confidence,
+        cancel_window=mock_cancel_window,
+        orderbook=mock_orderbook,
+        max_losses=3,
+        cooldown_seconds=5,
+        max_trades_per_minute=3
+    )
     m.reset()
     return m
+
 
 
 def test_initial_state(manager):
@@ -119,3 +140,41 @@ def test_throttle_triggered_by_order_volume(manager):
     assert manager.is_throttled() is True
 
     
+def test_conversion_rate_with_orders_and_cancels(manager):
+    manager.reset()
+    for _ in range(5):
+        manager.record_order(volume=1.0)
+    for _ in range(5):
+        manager.record_cancel()
+    for _ in range(2):
+        manager.register_trade_result(-10)
+    assert manager.get_conversion_rate() == pytest.approx(2 / 10, 0.01)
+
+def test_fill_weight_calculation(manager):
+    manager.reset()
+    manager.record_order(volume=100.0)
+    manager.record_fill(volume=25.0)
+    assert manager.get_fill_weight() == pytest.approx(0.25, 0.01)
+
+def test_weight_accumulation(manager):
+    manager.reset()
+    for _ in range(10):
+        manager.record_order(volume=1.0, weight=100)
+    assert manager.get_weight_per_minute() == 1000
+
+def test_status_snapshot(manager):
+    manager.reset()
+    manager.register_trade_result(-50)
+    manager.record_order(volume=10.0)
+    manager.record_cancel()
+    status = manager.get_status()
+    assert status["loss_streak"] == 1
+    assert status["conversion_rate"] >= 0.0
+    assert status["fill_weight"] >= 0.0
+    assert isinstance(status["can_trade"], bool)
+
+
+def test_behavioral_throttle_triggered(manager):
+    manager.reset()
+    manager.regime_classifier.get_behavioral_overlay = lambda: "LIQUIDITY_VACUUM"
+    assert manager.is_throttled() is True

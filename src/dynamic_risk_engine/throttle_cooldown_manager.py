@@ -69,7 +69,6 @@ class ThrottleCooldownManager:
         self.trade_timestamps = deque()
         self.minute_weights = deque()
 
-        self.trade_timestamps = []
 
         #Volume metrics
         self.volume_traded = 0.0
@@ -323,6 +322,29 @@ class ThrottleCooldownManager:
             "overlay": self.regime_classifier.get_behavioral_overlay(),
             "regime": self.regime_classifier.get_current_regime(),
         }
+    
+    def get_status(self) -> dict:
+        return {
+            "in_cooldown": self.is_in_cooldown(),
+            "loss_streak": self.loss_streak,
+            "cooldown_until": self.cooldown_until,
+            "can_trade": self.can_trade(),
+            "trades_last_minute": len(self.trade_timestamps),
+            "conversion_rate": round(self.get_conversion_rate(), 4),
+            "fill_weight": round(self.get_fill_weight(), 4),
+            "daily_order_count": self.daily_order_count,
+            "volume_traded": self.volume_traded,
+            "order_volume_total": self.order_volume_total,
+            "regime": self.regime_classifier.update_regime().value,
+            "confidence": self.confidence.get_current_confidence()
+        }
+
+    
+
+
+
+
+
 
 
 class AsyncThrottleCooldownManager(ThrottleCooldownManager):

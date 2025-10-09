@@ -39,3 +39,9 @@ class PerformanceTrackerProtocol(Protocol):
 
     def get_summary(self) -> Dict[str, float]:
         """Returns a summary of key performance metrics."""
+
+    def get_diagnostics(self) -> Dict[str, float]:
+        """This gives you a snapshot of behavioral metrics:"""
+
+    def get_last_trade(self) -> Optional[Dict]:
+        """This helps trace recetn behaviour in tests or logs"""

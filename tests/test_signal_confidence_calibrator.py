@@ -55,3 +55,32 @@ def test_multiple_resets():
     assert calibrator.get_current_confidence() == 1.0  # Now should be 1 correct out of 1 after reset
     calibrator.reset()
     assert calibrator.get_current_confidence() == 0.5  # Reset again, back to base confidence
+
+
+def test_confidence_breakdown_structure():
+    calibrator = SignalConfidenceCalibrator(base_confidence=0.5)
+    for i in range(12):
+        calibrator.update_signal_result(f'signal{i}', was_correct=(i % 2 == 0))
+    breakdown = calibrator.get_confidence_breakdown()
+    assert "confidence" in breakdown
+    assert "recent_streak" in breakdown
+    assert isinstance(breakdown["recent_streak"], list)
+    assert len(breakdown["recent_streak"]) == 10
+
+
+def test_summary_snapshot():
+    calibrator = SignalConfidenceCalibrator(base_confidence=0.5)
+    for i in range(10):
+        calibrator.update_signal_result(f'signal{i}', was_correct=(i < 7))  # 7 wins
+    summary = calibrator.get_summary()
+    assert summary["total_signals"] == 10
+    assert summary["current_confidence"] == calibrator.get_current_confidence()
+    assert summary["recent_accuracy"] == pytest.approx(0.7, 0.01)
+
+
+def test_last_signal_trace():
+    calibrator = SignalConfidenceCalibrator()
+    calibrator.update_signal_result("signalX", True)
+    last = calibrator.get_last_signal()
+    assert last["signal_id"] == "signalX"
+    assert last["was_correct"] is True

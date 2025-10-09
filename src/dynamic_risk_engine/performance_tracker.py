@@ -132,7 +132,7 @@ class PerformanceTracker:
         """
         Record the fill probability per trade, this is given by the queue model
         """
-        self.record_fill_probability.append({
+        self.fill_probability.append({
             "order_id": order_id,
             "fill_probability": fill_probability,
             "side": side,
@@ -150,6 +150,12 @@ class PerformanceTracker:
         self.trades = []
         self.equity_curve = []
         self.balance = 0.0
+        self.sl_tp_history = []
+        self.slippage_fee = []
+        self.fee = []
+        self.trade_latency = []
+        self.fill_probability = []
+
 
     def get_summary(self) -> Dict[str, float]:
         """
@@ -162,4 +168,24 @@ class PerformanceTracker:
             'profit_factor': round(self.profit_factor(), 4),
             'final_balance': round(self.balance, 4),
         }
+    
+    def get_diagnostics(self) -> Dict[str, float]:
+        """This gives you a snapshot of behavioral metrics:"""
+        return {
+            "total_trades": len(self.trades),
+            "win_rate": self.win_rate(),
+            "average_rrr": self.average_rrr(),
+            "profit_factor": self.profit_factor(),
+            "final_balance": self.balance,
+            "slippage_events": len(self.slippage_fee),
+            "fee_events": len(self.fee),
+            "latency_events": len(self.trade_latency),
+            "fill_probability_events": len(self.fill_probability),
+            "sl_tp_drift_events": len(self.sl_tp_history)
+        }
+    
+    def get_last_trade(self) -> Optional[Dict]:
+        return self.trades[-1] if self.trades else None
+
+
 

@@ -5,9 +5,9 @@ def test_tracker_basic_metrics():
     tracker =  PerformanceTracker()
 
     #Simulate 3 trades: 2 wins and 1 loss
-    tracker.record_trade(pnl=100, risk=50, reward=150)
-    tracker.record_trade(pnl=-50, risk=50, reward=100)
-    tracker.record_trade(pnl=200, risk=100, reward=300)
+    tracker.record_trade(order_id= 't1',pnl=100, risk=50, reward=150)
+    tracker.record_trade(order_id='t2',pnl=-50, risk=50, reward=100)
+    tracker.record_trade(order_id='t3',pnl=200, risk=100, reward=300)
 
 
     summary = tracker.get_summary()
@@ -32,8 +32,8 @@ def test_tracker_reset():
     tracker = PerformanceTracker()
 
     # Simulate some trades
-    tracker.record_trade(pnl=100, risk=50, reward=150)
-    tracker.record_trade(pnl=-50, risk=50, reward=100)
+    tracker.record_trade(order_id='t1', pnl=100, risk=50, reward=150)
+    tracker.record_trade(order_id='t2', pnl=-50, risk=50, reward=100)
 
     # Check summary before reset
     summary_before = tracker.get_summary()
@@ -49,3 +49,42 @@ def test_tracker_reset():
     assert tracker.balance == 0.0
     assert summary_after['win_rate'] == 0.0
     assert summary_after['final_balance'] == 0.0
+
+
+def test_sl_tp_drift_recording():
+    tracker = PerformanceTracker()
+    tracker.record_sl_tp_drift(order_id="t1", sl=95.0, tp=120.0)
+    assert len(tracker.sl_tp_history) == 1
+    drift = tracker.sl_tp_history[0]
+    assert drift["order_id"] == "t1"
+    assert drift["sl"] == 95.0
+    assert drift["tp"] == 120.0
+
+
+def test_trade_diagnostics_recording():
+    tracker = PerformanceTracker()
+    tracker.record_slippage(order_id="t1", slippage=0.5, side="buy", qty=1.0, price=100.0, symbol="BTCUSDT")
+    tracker.record_fee(order_id="t1", fee=0.1, side="buy", qty=1.0, price=100.0, symbol="BTCUSDT")
+    tracker.record_latency(order_id="t1", latency_ms=120.0, side="buy", qty=1.0, price=100.0, symbol="BTCUSDT")
+    tracker.record_fill_probability(order_id="t1", fill_probability=0.85, side="buy", qty=1.0, price=100.0, symbol="BTCUSDT")
+
+    assert len(tracker.slippage_fee) == 1
+    assert len(tracker.fee) == 1
+    assert len(tracker.trade_latency) == 1
+    assert len(tracker.fill_probability) == 1
+
+
+def test_get_last_trade():
+    tracker = PerformanceTracker()
+    tracker.record_trade(order_id="t1", pnl=100, risk=50, reward=150)
+    last = tracker.get_last_trade()
+    assert last["order_id"] == "t1"
+    assert last["pnl"] == 100
+
+def test_diagnostics_snapshot():
+    tracker = PerformanceTracker()
+    tracker.record_trade(order_id="t1", pnl=100, risk=50, reward=150)
+    tracker.record_slippage(order_id="t1", slippage=0.5, side="buy", qty=1.0, price=100.0, symbol="BTCUSDT")
+    diagnostics = tracker.get_diagnostics()
+    assert diagnostics["total_trades"] == 1
+    assert diagnostics["slippage_events"] == 1

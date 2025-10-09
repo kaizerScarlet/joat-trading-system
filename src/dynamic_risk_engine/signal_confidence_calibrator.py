@@ -5,11 +5,12 @@ class SignalConfidenceCalibrator:
     Calibrates the confidence of trading signals based on historical performance(precision, recall, etc)
 
     """
-    def __init__(self, base_confidence: float = 0.5):
+    def __init__(self, base_confidence: float = 0.5, max_history: int = 100):
         """
         :param base_confidence: Default confidence for incoming  signals (0.0 - 1.0)
         """
         self.base_confidence = base_confidence
+        self.max_history = max_history
         self.signal_history: List[dict] = []
 
     def update_signal_result(self, signal_id: str, was_correct: bool):
@@ -24,6 +25,9 @@ class SignalConfidenceCalibrator:
             'was_correct': was_correct
             
         })
+
+        if len(self.signal_history) > self.max_history:
+            self.signal_history.pop(0)
 
     def compute_adjusted_confidence(self) -> float:
         """
@@ -68,5 +72,19 @@ class SignalConfidenceCalibrator:
         Clear historical signal data.
         """
         self.signal_history.clear()
+
+    def get_last_signal(self) -> Dict:
+        """get last signal for debugging"""
+        return self.signal_history[-1] if self.signal_history else {}
+    
+    def get_summary(self) -> Dict[str, float]:
+        """This gives you a quick snapshot for dashboards or audits:"""
+        return {
+            "total_signals": len(self.signal_history),
+            "current_confidence": self.get_current_confidence(),
+            "recent_accuracy": round(sum(s["was_correct"] for s in self.signal_history[-10:]) / 10, 4) if len(self.signal_history) >= 10 else None
+        }
+
+
 
 
