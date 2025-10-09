@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import Dict, Any
 from collections import deque
 from datetime import datetime
 from market_data.orderbook_protocol import OrderBookProtocol
@@ -207,3 +208,18 @@ class CognitiveMarketRegimeClassifier:
             return (0.5, 0.2, 0.1, 0.2)
 
 
+    def get_debug_view(self) -> Dict[str, Any]:
+        return {
+            "current_regime": self.get_current_regime().value,
+            "stability": self.get_regime_stability(),
+            "duration_sec": self.get_regime_duration_seconds(),
+            "last_regime": self.last_regime.value,
+            "overlay": self.get_behavioral_overlay(),
+            "volatility": self.orderbook.get_volatility_estimate(),
+            "confidence": self.signal_calibrator.get_current_confidence(),
+            "spoof_score": max([
+                self.cancel_window.compute_cancel_impact_score(f['price'], f['side'])
+                for f in self.cancel_window._flags
+                if f['type'] == "CANCEL_DENSITY_SPIKE"
+            ], default=0.0)
+        }

@@ -1,4 +1,4 @@
-from typing import Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable, Dict, Any
 from enum import Enum
 
 class MarketRegime(Enum):
@@ -39,3 +39,6 @@ class CognitiveMarketRegimeClassifierProtocol(Protocol):
         Returns weights for the four components used in cancel impact scoring.
         Adjust these weights based on your strategy's sensitivity to each factor.
         """
+
+    def get_debug_view(self) -> Dict[str, Any]:
+        """Debug view for introspection and debugging"""

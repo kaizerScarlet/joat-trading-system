@@ -105,7 +105,7 @@ def setup_classifier():
     orderbook : OrderBookProtocol = DummyOrderBook()
     signal_calibrator : SignalConfidenceCalibratorProtocol = DummySignalCalibrator()
     cancel_window : CancelWindowProtocol = DummyCancelWindow()
-    classifier = DummyRegimeClassifier()
+    classifier = CognitiveMarketRegimeClassifier(orderbook, signal_calibrator, cancel_window)
     return classifier, orderbook, signal_calibrator, cancel_window
 
 # ------------------ Environment Classification ------------------
@@ -374,9 +374,11 @@ def test_regime_drift_from_mean_reverting_to_volatile(setup_classifier):
 
 def test_behavioral_overlay_liquidity_vacuum(setup_classifier):
     classifier, ob, sc, cw = setup_classifier
+    classifier.cancel_window.compute_cancel_impact_score = lambda price, side: 0.7
 
     sc.signal_history.extend([{'signal_id': 's1', 'was_correct': True}] * 10)
     ob.price_history.extend([100, 180, 70, 190, 65])
+    
     ob.bids = {99.9: 100}
     ob.asks = {100.1: 100}
     ob.last_update_ts = time.time() - 0.1
@@ -432,3 +434,51 @@ def test_behavioral_overlay_choppy_noise(setup_classifier):
 
     overlay = classifier.get_behavioral_overlay()
     assert overlay == "CHOPPY_NOISE"
+
+
+
+def test_debug_view_snapshot(setup_classifier):
+    classifier, ob, sc, cw = setup_classifier
+    ob.price_history.extend([100, 101, 102])
+    ob.bids = {99.95: 300}
+    ob.asks = {100.05: 300}
+    sc.signal_history.extend([{'signal_id': 's1', 'was_correct': True}] * 10)
+    cw._flags.append({
+        "type": "CANCEL_DENSITY_SPIKE",
+        "price": 100,
+        "side": "bid",
+        "timestamp": time.time(),
+        "cancel_count": 1000,
+        "orderid": "debug_spoof"
+    })
+    ob._update_midprice()
+    debug = classifier.get_debug_view()
+    print(debug)
+    assert "current_regime" in debug
+    assert "spoof_score" in debug
+    assert isinstance(debug["stability"], float)
+
+
+
+
+def test_scoring_weights_per_regime(setup_classifier):
+    classifier, _, _, _ = setup_classifier
+    for regime in MarketRegime:
+        classifier.regime_history.clear()
+        classifier.regime_history.extend([regime] * 5)
+        weights = classifier.get_scoring_weights()
+        print(f"{regime.value}: {weights}")
+        assert sum(weights) <= 1.1  # Allow rounding
+
+
+def test_regime_duration_tracking(setup_classifier):
+    classifier, ob, _, _ = setup_classifier
+    ob.price_history.extend([100, 101, 102])
+    ob.bids = {99.95: 300}
+    ob.asks = {100.05: 300}
+    ob._update_midprice()
+    classifier.update_regime()
+    time.sleep(0.1)
+    duration = classifier.get_regime_duration_seconds()
+    print(f"Duration: {duration}")
+    assert duration > 0.05
