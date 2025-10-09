@@ -4,78 +4,100 @@ import pytest_asyncio
 from dynamic_risk_engine.dynamic_risk_engine_protocol import DynamicRiskEngineProtocol
 from dynamic_risk_engine.dynamic_risk_engine import DynamicRiskEngine
 from dynamic_risk_engine.cognitive_market_regime_classifier import MarketRegime
-from Execution_layer.binance_adapter_protocol import BinanceExecutionAdapterProtocol
-from dynamic_risk_engine.performance_tracker_protocol import PerformanceTrcakerProtocol
-from dynamic_risk_engine.signal_confidence_calibrator_protocol import SignalConfidenceCalibratorProtocol
+
 
 
 # 🔧 Mock Adapter
-class MockBinanceAdapter(BinanceExecutionAdapterProtocol):
-    async def get_account_balance(self):
-        return 100_000.0
 
-    async def get_account(self):
-        return 100_000.0
-
-    def _sign(self, data):
-        return "mock_signature"
-
-    async def _signed_request(self, method, endpoint, params):
-        return {"status": "mocked"}
-
-# 🔧 Mock Confidence Calibrator
-class MockConfidenceCalibrator(SignalConfidenceCalibratorProtocol):
-    def get_current_confidence(self):
-        return 0.8
-
-    def get_confidence_breakdown(self):
-        return {"confidence": 0.8, "streak": 5}
-
-    def reset(self):
-        pass
-
-    def update_signal_result(self, signal_id, was_correct):
-        pass
-
-# 🔧 Mock Performance Tracker
-class MockPerformanceTracker(PerformanceTrcakerProtocol):
-    def win_rate(self):
-        return 0.75
-
-    def average_rrr(self):
-        return 2.0
-
-    def profit_factor(self):
-        return 1.5
-
-    def get_equity_curve(self):
-        return []
-
-    def reset(self):
-        pass
-
-    def record_trade(self, pnl, risk, reward, metadata=None):
-        pass
 
 # 🔧 Fixture for initialized engine
+from unittest.mock import AsyncMock, MagicMock
+import pytest_asyncio
+from dynamic_risk_engine.dynamic_risk_engine import DynamicRiskEngine
+from dynamic_risk_engine.cognitive_market_regime_classifier import MarketRegime
+
 @pytest_asyncio.fixture
 async def initialized_engine():
-    engine : DynamicRiskEngineProtocol = DynamicRiskEngine(daily_drawdown_limit=0.25)
+    # Mocks
+    mock_adapter = MagicMock()
+    mock_adapter.get_account_balance = AsyncMock(return_value=100_000.0)
+    mock_adapter.get_account = AsyncMock(return_value=100_000.0)
 
-    mock_adapter = MockBinanceAdapter()
-    mock_confidence = MockConfidenceCalibrator()
-    mock_tracker = MockPerformanceTracker()
+    mock_confidence = MagicMock()
+    mock_confidence.get_current_confidence = MagicMock(return_value=0.8)
+    mock_confidence.get_confidence_breakdown = MagicMock(return_value={"confidence": 0.8, "streak": 5})
+    mock_confidence.reset = MagicMock()
+    mock_confidence.update_signal_result = MagicMock()
 
-    engine.binance_adapter = mock_adapter
-    engine.dynamic_position_sizer.account_balance = mock_adapter
-    engine.dynamic_position_sizer.drawdown.account_balance = mock_adapter
-    engine.daily_drawdown_manager.account_balance = mock_adapter
+    mock_tracker = MagicMock()
+    mock_tracker.win_rate = MagicMock(return_value=0.75)
+    mock_tracker.average_rrr = MagicMock(return_value=2.0)
+    mock_tracker.profit_factor = MagicMock(return_value=1.5)
+    mock_tracker.get_equity_curve = MagicMock(return_value=[])
+    mock_tracker.reset = MagicMock()
+    mock_tracker.record_trade = MagicMock()
 
-    engine.signal_confidence_calibrator = mock_confidence
-    engine.performance_tracker = mock_tracker
+
+    mock_drawdown = MagicMock()
+    mock_drawdown.initialize = AsyncMock()
+    mock_drawdown.get_daily_drawdown_limit = MagicMock(return_value=-0.1)
+    mock_drawdown.is_trading_halted = MagicMock(return_value=False)
+    mock_drawdown.in_drawdown_limit = MagicMock(return_value=True)
+    mock_drawdown.reset_daily_drawdown = MagicMock()
+    mock_drawdown.record_pnl = MagicMock()
+
+    mock_sizer = MagicMock()
+    mock_sizer.initialize = AsyncMock()
+    mock_sizer.calculate_position_size = AsyncMock(return_value=100.0)
+    mock_sizer.reset = AsyncMock()
+    mock_sizer.max_risk_per_trade = 0.03
+    mock_sizer.account_balance = mock_adapter
+    mock_sizer.drawdown = mock_drawdown
+    mock_sizer.reset = AsyncMock(return_value=mock_sizer)
+
+
+    mock_throttle = MagicMock()
+    mock_throttle.can_trade = MagicMock(return_value=True)
+    mock_throttle.is_in_cooldown = MagicMock(return_value=False)
+    mock_throttle.register_trade_result = MagicMock()
+    mock_throttle.reset = MagicMock(return_value=mock_throttle)
+
+    mock_orderbook = MagicMock()
+    mock_orderbook.get_volatility_estimate = MagicMock(return_value=0.02)
+    mock_orderbook._update_midprice = MagicMock()
+    mock_orderbook.price_history = []
+    mock_orderbook.bids = {}
+    mock_orderbook.asks = {}
+    mock_orderbook.last_update_ts = None
+
+    mock_cancel_window = MagicMock()
+    mock_cancel_window._flags = []
+
+    mock_regime = MagicMock()
+    mock_regime.update_regime = MagicMock(side_effect=[
+        MarketRegime.UNKNOWN, #First Call
+        MarketRegime.VOLATILE
+    ])
+    mock_regime.get_regime_duration_seconds = MagicMock(return_value=0.5)
+    mock_regime.get_regime_stability = MagicMock(return_value=1.0)
+    mock_regime.regime_history = [MarketRegime.UNKNOWN]
+
+    # Engine
+    engine = DynamicRiskEngine(
+        daily_drawdown_limit=mock_drawdown,
+        performance_tracker=mock_tracker,
+        signal_confidence=mock_confidence,
+        dynamic_position_sizer=mock_sizer,
+        throttle_cooldown_manager=mock_throttle,
+        binance_adapter=mock_adapter,
+        orderbook=mock_orderbook,
+        cancel_window=mock_cancel_window,
+        market_regime_classifier=mock_regime
+    )
 
     await engine.initialize()
     return engine
+
 
 # ✅ Test Cases
 
@@ -109,12 +131,24 @@ async def test_register_trade_win_updates_all_modules(initialized_engine):
 
 @pytest.mark.asyncio
 async def test_register_trade_loss_and_cooldown_triggered(initialized_engine):
+    losses = []
+
+    def register_trade_result(pnl):
+        losses.append(pnl)
+        if sum(losses) < -100:
+            initialized_engine.throttle_cooldown_manager.is_in_cooldown = MagicMock(return_value=True)
+            initialized_engine.throttle_cooldown_manager.can_trade = MagicMock(return_value=False)
+
+    initialized_engine.throttle_cooldown_manager.register_trade_result = MagicMock(side_effect=register_trade_result)
+
     initialized_engine.register_trade(pnl=-50.0, risk=50.0, reward=100, signal_id="signal_2", was_correct=False)
     initialized_engine.register_trade(pnl=-30.0, risk=50.0, reward=100, signal_id="signal_3", was_correct=False)
     initialized_engine.register_trade(pnl=-70.0, risk=50.0, reward=100, signal_id="signal_4", was_correct=False)
+
     diagnostic = await initialized_engine.get_diagnostic()
     assert diagnostic['cooldown_active'] is True
     assert initialized_engine.can_trade() is False
+
 
 @pytest.mark.asyncio
 async def test_position_size_scaling(initialized_engine):

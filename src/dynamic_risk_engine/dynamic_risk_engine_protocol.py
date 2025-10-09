@@ -29,3 +29,9 @@ class DynamicRiskEngineProtocol(Protocol):
 
     async def get_diagnostic(self) -> Dict[str, any]:
         """Returns full diagnostic snapshot of the risk engine state."""
+
+    async def get_debug_view(self) -> dict:
+        """Debug view for introspection and debugging"""
+
+    async def get_trade_rationale(self, stop_loss_distance: float) -> dict:
+        """This lets you explain every trade with behavioral clarity."""

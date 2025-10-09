@@ -135,7 +135,7 @@ class DynamicRiskEngine:
         self.daily_drawdown_manager.reset_daily_drawdown(datetime.now())
         self.signal_confidence_calibrator.reset()
 
-        self.dynamic_position_sizer = self.dynamic_position_sizer.reset()
+        self.dynamic_position_sizer = await self.dynamic_position_sizer.reset()
         self.dynamic_position_sizer.max_risk_per_trade = self.max_risk_per_trade
         self.dynamic_position_sizer.account_balance = self.binance_adapter
         self.dynamic_position_sizer.drawdown.account_balance = self.binance_adapter
@@ -146,6 +146,8 @@ class DynamicRiskEngine:
 
         self.throttle_cooldown_manager =  self.throttle_cooldown_manager.reset()
         self.current_regime = MarketRegime.UNKNOWN
+
+        return self
 
 
     async def get_diagnostic(self) -> dict:
@@ -174,5 +176,37 @@ class DynamicRiskEngine:
             
 
         }
+    
+    async def get_debug_view(self) -> dict:
+        diagnostics = await self.get_diagnostic()
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "regime": diagnostics["market_regime"],
+            "confidence": diagnostics["current_confidence"],
+            "drawdown_triggered": diagnostics["drawdown_triggered"],
+            "cooldown_active": diagnostics["cooldown_active"],
+            "position_size_1_sl": diagnostics["position_size_for_1_sl"],
+            "risk_curve_value": diagnostics["risk_curve_value"],
+            "equity_curve_tail": diagnostics["equity_curve"][-5:],
+            "regime_history_tail": diagnostics["regime_history_tail"],
+            "confidence_breakdown": diagnostics["confidence_breakdown"]
+        }
+    
+
+    async def get_trade_rationale(self, stop_loss_distance: float) -> dict:
+        """This lets you explain every trade with behavioral clarity."""
+        size = await self.get_position_size(stop_loss_distance)
+        confidence = self.signal_confidence_calibrator.get_current_confidence()
+        regime = self.current_regime.value
+        throttle = "boosted" if regime == "trending" and confidence > 0.7 else "throttled" if regime in ["volatile", "illiquid"] else "normal"
+
+        return {
+            "regime": regime,
+            "confidence": confidence,
+            "throttle_behavior": throttle,
+            "final_position_size": size
+        }
+
+
     
 
