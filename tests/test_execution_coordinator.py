@@ -3,14 +3,55 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from Execution_layer.execution_coordinator import ExecutionCoordinator
 from Execution_layer.execution_coordinator_protocol import ExecutionCoordinatorProtocol
-from Execution_layer.fee_schedule_protocol import FeeScheduleProtocol
 from Execution_layer.queue_position_model_protocol import QueuePositionModelProtocol
+from alpha_scoring.alpha_pipeline_protocol import AlphaSignalPipelineProtocol
+from cancel_window.simple_cancel_window_protocol import CancelWindowProtocol
+from dynamic_risk_engine.dynamic_risk_engine_protocol import DynamicRiskEngineProtocol
+from dynamic_risk_engine.throttle_cooldown_manager_protocol import ThrottleCooldownManagerProtocol
+from dynamic_risk_engine.performance_tracker_protocol import PerformanceTrackerProtocol
+from Execution_layer.binance_adapter_protocol import BinanceExecutionAdapterProtocol
+from Execution_layer.mock_adapter import MockExchangeAdapter #For testing and dry runs
+from dynamic_risk_engine.signal_confidence_calibrator_protocol import SignalConfidenceCalibratorProtocol
+from dynamic_risk_engine.dynamic_position_sizer_protocol import DynamicPositionSizerProtocol
+from market_data.orderbook_protocol import OrderBookProtocol
+from dynamic_risk_engine.daily_drawdown_manager_protocol import DailyDrawdownManagerProtocol
+from dynamic_risk_engine.cognitive_market_regime_classifier_protocol import CognitiveMarketRegimeClassifierProtocol, MarketRegime
+from Execution_layer.adaptive_sl_tp_protocol import AdaptiveSLTPProtocol
+from Execution_layer.stealth_router_protocol import StealthRouterProtocol
+from Execution_layer.fee_schedule_protocol import FeeScheduleProtocol
+from Execution_layer.slippage_model_protocol import SlippageModelProtocol
+from Execution_layer.latency_model_protocol import LatencyModelProtocol
+from Execution_layer.queue_position_model_protocol import QueuePositionModelProtocol
+from alpha_scoring.order_age_distribution_scorer_protocol import OrderAgeDistributionScorerProtocol
+from alpha_scoring.Order_layering_scorer_protocol import LayeringScoringProtocol
+from alpha_scoring.cancel_activity_scorer_protocol import CancelActivityScorerProtocol
 
 
 
 @pytest.fixture
 def coordinator():
-    c : ExecutionCoordinatorProtocol = ExecutionCoordinator()
+    c : ExecutionCoordinatorProtocol = ExecutionCoordinator(
+            alpha_pipeline = AlphaSignalPipelineProtocol,
+            slippage_model = SlippageModelProtocol,
+            latency_model = LatencyModelProtocol,
+            fee_schedule = FeeScheduleProtocol,
+            throttle_manager = ThrottleCooldownManagerProtocol,
+            exchange_client = BinanceExecutionAdapterProtocol,
+            stealth_router = StealthRouterProtocol,
+            performance_tracker = PerformanceTrackerProtocol,
+            signal_confidence = SignalConfidenceCalibratorProtocol,
+            dynamic_position_sizer = DynamicPositionSizerProtocol,
+            cancel_window = CancelWindowProtocol,
+            order_book = OrderBookProtocol,
+            cancel_activity_scorer = CancelActivityScorerProtocol,
+            layering_scorer = LayeringScoringProtocol,
+            order_age_scorer = OrderAgeDistributionScorerProtocol,
+            queue_position_model = QueuePositionModelProtocol,
+            risk_engine = DynamicRiskEngineProtocol,
+            drawdown_manager = DailyDrawdownManagerProtocol,
+            regime_classifier = CognitiveMarketRegimeClassifierProtocol,
+            sl_and_tp = AdaptiveSLTPProtocol,
+    )
     # Mock dependencies
 
     c.alpha_pipeline = MagicMock()
@@ -108,6 +149,10 @@ def test_choose_order_type_adaptive_market(coordinator):
     coordinator.config["queue_horizon_sec"] = 10
 
 
+    coordinator.fees = MagicMock()
+    coordinator.fees.taker_rate.return_value = 0.001  # 10 bps
+    coordinator.fees.maker_rate.return_value = 0.0008  # 8 bps
+
     coordinator.orderbook.get_best_price.side_effect = lambda side: 100 if side == "bid" else 100.05
     coordinator.orderbook.get_top_liquidity = MagicMock(return_value=0.5)
 
@@ -150,6 +195,10 @@ async def test_on_fill_entry_buy(coordinator):
     fill = {"order_id": "1", "side": "BUY", "qty": 1.0, "price": 100, "symbol": "BTC"}
     coordinator.position_size = 0
     coordinator.sl_and_tp.start_trade.return_value = (90, 110)
+    coordinator.fees = MagicMock()
+    coordinator.fees.taker_rate.return_value = 0.001  # 10 bps
+    coordinator.fees.maker_rate.return_value = 0.0008  # 8 bps
+
     coordinator.exchange_client.place_stop_loss_order = AsyncMock(return_value={"orderId": "slid"})
     coordinator.exchange_client.place_take_profit_order = AsyncMock(return_value={"orderId": "tpid"})
     await coordinator._on_fill(fill)
@@ -157,6 +206,11 @@ async def test_on_fill_entry_buy(coordinator):
 
 @pytest.mark.asyncio
 async def test_on_fill_sl_hit(coordinator):
+    coordinator.fees = MagicMock()
+    coordinator.fees.taker_rate.return_value = 0.001  # 10 bps
+    coordinator.fees.maker_rate.return_value = 0.0008  # 8 bps
+
+
     coordinator.sl_order_id = "SL123"
     coordinator.tp_order_id = "TP123"
     coordinator.exchange_client.cancel_order_by_id = AsyncMock()
@@ -166,6 +220,11 @@ async def test_on_fill_sl_hit(coordinator):
 
 @pytest.mark.asyncio
 async def test_on_fill_tp_hit(coordinator):
+    coordinator.fees = MagicMock()
+    coordinator.fees.taker_rate.return_value = 0.001  # 10 bps
+    coordinator.fees.maker_rate.return_value = 0.0008  # 8 bps
+
+
     coordinator.tp_order_id = "TP123"
     coordinator.sl_order_id = "SL123"
     coordinator.exchange_client.cancel_order_by_id = AsyncMock()

@@ -56,9 +56,12 @@ class SignalConfidenceCalibrator:
         Get the current confidence level based on historical performance.
         :return: Current confidence level (0.0 - 1.0)
         """
+        
         return self.compute_adjusted_confidence()
     
     def get_confidence_breakdown(self) -> dict:
+        """Returns current confidence and recent signal streak breakdown."""
+
         recent = self.signal_history[-10:]
         streak = [s['was_correct'] for s in recent]
         return {
@@ -75,10 +78,12 @@ class SignalConfidenceCalibrator:
 
     def get_last_signal(self) -> Dict:
         """get last signal for debugging"""
+
         return self.signal_history[-1] if self.signal_history else {}
     
     def get_summary(self) -> Dict[str, float]:
         """This gives you a quick snapshot for dashboards or audits:"""
+
         return {
             "total_signals": len(self.signal_history),
             "current_confidence": self.get_current_confidence(),

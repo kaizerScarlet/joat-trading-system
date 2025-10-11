@@ -206,12 +206,38 @@ class CognitiveMarketRegimeClassifier:
             return (0.5, 0.1, 0.1, 0.3)
         else:
             return (0.5, 0.2, 0.1, 0.2)
+        
+    def get_velocity_thresholds(self) -> tuple[float, float]:
+        """
+        Dynamically compute velocity thresholds for execution reflex.
+        Returns (velocity_fast, velocity_slow) in qty/sec.
+        """
+        update_rate = self.orderbook.get_update_rate()         # Hz
+        volatility = self.orderbook.get_volatility_estimate()  # Std dev
+        imbalance = self.orderbook.get_order_imbalance()       # [0, 1]
+
+        # Normalize inputs
+        update_score = min(update_rate / 5.0, 1.0)              # Cap at 5 Hz
+        vol_score = min(volatility / 0.02, 1.0)                 # Cap at 2% std dev
+        imbalance_score = abs(imbalance - 0.5) * 2              # 0 = balanced, 1 = extreme
+
+        # Composite aggression score
+        aggression = 0.4 * update_score + 0.4 * vol_score + 0.2 * imbalance_score
+
+        # Map aggression to thresholds
+        velocity_fast = 0.3 + aggression * 0.5                  # Range: 0.3 → 0.8
+        velocity_slow = 0.05 + aggression * 0.2                 # Range: 0.05 → 0.25
+
+        return round(velocity_fast, 3), round(velocity_slow, 3)
+
 
 
     def get_debug_view(self) -> Dict[str, Any]:
         return {
             "current_regime": self.get_current_regime().value,
             "stability": self.get_regime_stability(),
+            "velocity_fast": self.get_velocity_thresholds()[0],
+            "velocity_slow": self.get_velocity_thresholds()[1],
             "duration_sec": self.get_regime_duration_seconds(),
             "last_regime": self.last_regime.value,
             "overlay": self.get_behavioral_overlay(),

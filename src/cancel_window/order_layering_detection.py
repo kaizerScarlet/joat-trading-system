@@ -80,6 +80,8 @@ class OrderLayeringDetection:
         })
 
     def register_cancel(self, orderid: str, timestamp: int, event_type:str, price: float, size: float, side: str):
+        """Registers a cancellation event and updates latency tuner."""
+
         self.cancel_log.append({
             'orderid': orderid,
             'timestamp': timestamp,
@@ -99,6 +101,7 @@ class OrderLayeringDetection:
                 break
 
     def register_fill(self, orderid: str, timestamp: int, event_type: str, price: float,size: float, side: str):
+        """Registers a fill event and updates order status."""
         self.fills_log.append({
             'orderid': orderid,
             'timestamp': timestamp,
@@ -202,6 +205,8 @@ class OrderLayeringDetection:
         return suspicious_clusters
     
     def _prune(self):
+        """Hybrid pruning: keep only events within retention window """
+        
         current_time = int(time.time() * 1000)
         cutoff = current_time - self.retention_ms
 
@@ -210,6 +215,7 @@ class OrderLayeringDetection:
         self.fills_log = [f for f in self.fills_log if f['timestamp'] >= cutoff]
 
     def _normalize_side(self, side: str) -> str:
+        """Return normalized side (input: a -> output: ask) or (input: b -> output: bid)"""
         return 'ask' if side in ['a', 'ask'] else 'bid'
     
 
@@ -246,6 +252,7 @@ class OrderLayeringDetection:
         self.fills_log.clear()
 
     def get_debug_view(self) -> Dict[str, Any]:
+        """Returns a snapshot of internal state for debugging and inspection."""
         self._prune()
         clusters = self.detect_layering()
         current_time = int(time.time() * 1000)

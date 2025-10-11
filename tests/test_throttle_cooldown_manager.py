@@ -19,7 +19,7 @@ def manager():
     mock_cancel_window = MagicMock()
     mock_orderbook = MagicMock()
 
-    m = ThrottleCooldownManager(
+    m : ThrottleCooldownManagerProtocol = ThrottleCooldownManager(
         regime_classifier=mock_regime,
         confidence=mock_confidence,
         cancel_window=mock_cancel_window,

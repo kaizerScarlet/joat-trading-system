@@ -206,8 +206,7 @@ class StealthRouter:
 
                 # ---- Hybrid upgrade -------
                 slice_order_type = order_type #Preserve Original
-                if exp_fill_prob <= fill_prob_threshold or exp_fill_prob < 0.1:
-
+                if exp_fill_prob < fill_prob_threshold:
                     logger.info(f"[Hybrid] fill probability {exp_fill_prob:.2f} < {fill_prob_threshold:.2f}, "
                                 f"upgrading slice {slice_count + 1} to MARKET")
                     slice_order_type = "MARKET"
@@ -310,7 +309,10 @@ class StealthRouter:
             try:
                 top_liq = orderbook.get_top_liquidity(side)
                 qfrac, fill_prob_per_s = self.queue_model.estimate(
-                    side, qty, top_liq, orderbook
+                    side = side,
+                    our_qty = qty,
+                    tob_qty = top_liq,
+                    orderbook = orderbook
                 )
                 exp_fill_prob = 1 -(1 - min(fill_prob_per_s, 1.0)) ** horizon_sec
 
@@ -374,11 +376,6 @@ class StealthRouter:
             logger.warning("[Execution] Midprice unavailable — using fallback to avoid division error")
             mid = 1.0  # Safe fallback
 
-        # Fix for test consistency — avoid 27000 fallback distorting bps scaling
-        if mid > 10000:
-            mid = 100.0
-
-
         spread = abs(self.orderbook.get_best_price("ask") - self.orderbook.get_best_price("bid"))
         top_liq = self.orderbook.get_top_liquidity(side)
         slip = self.slippage_model.expected_market_slip(side, mid, spread, qty, top_liq)
@@ -401,7 +398,7 @@ class StealthRouter:
         projected = 1 - (1 - prob_per_sec) ** 5
         fill_prob_threshold = round(projected * 0.8, 2)
 
-        return delay_range, slippage_bps_for_log, fill_prob_threshold
+        return delay_range, slippage_frac, fill_prob_threshold
 
 
     def _choose_slice_size(self, remaining_qty: float) -> float:
@@ -519,3 +516,522 @@ class StealthRouter:
         }
 
 
+from enum import Enum
+from typing import Dict, Any
+from collections import deque
+from datetime import datetime
+from market_data.orderbook_protocol import OrderBookProtocol
+from dynamic_risk_engine.signal_confidence_calibrator_protocol import SignalConfidenceCalibratorProtocol
+from cancel_window.simple_cancel_window_protocol import CancelWindowProtocol
+
+
+
+class MarketRegime(Enum):
+    TRENDING = "trending"
+    MEAN_REVERTING = "mean_reverting"
+    VOLATILE = "volatile"
+    ILLIQUID = "illiquid"
+    UNKNOWN = "unknown"
+
+
+class CognitiveMarketRegimeClassifier:
+    def __init__(self, orderbook: OrderBookProtocol, signal_calibrator: SignalConfidenceCalibratorProtocol, cancel_window: CancelWindowProtocol):
+        self.orderbook = orderbook
+        self.signal_calibrator = signal_calibrator
+        self.cancel_window = cancel_window
+        self.regime_history = deque(maxlen=20) #Temporal memory
+        self.last_regime = MarketRegime.UNKNOWN
+        self.last_regime_change = datetime.now()
+
+    
+    def classify_environment(self) -> MarketRegime:
+        if not self.orderbook.price_history or not self.orderbook.bids or not self.orderbook.asks:
+             return MarketRegime.UNKNOWN
+
+        volatility = self.orderbook.get_volatility_estimate()
+        imbalance = self.orderbook.get_order_imbalance()
+        liquidity = (
+            self.orderbook.get_liquidity_within_bps("bid", 50) +
+            self.orderbook.get_liquidity_within_bps("ask", 50)
+        )
+        update_rate = self.orderbook.get_update_rate()
+
+        if volatility > 0.015 and imbalance > 0.6:
+            return MarketRegime.TRENDING
+        elif volatility < 0.005 and liquidity > 500:
+            return MarketRegime.MEAN_REVERTING
+        elif volatility > 0.03:
+            return MarketRegime.VOLATILE
+        elif liquidity < 100 or update_rate < 0.5:
+            return MarketRegime.ILLIQUID
+        else:
+            return MarketRegime.UNKNOWN
+        
+
+    def reinforce_regime(self, base_regime: MarketRegime) -> MarketRegime:
+        confidence = self.signal_calibrator.get_current_confidence()
+        volatility =  self.orderbook.get_volatility_estimate()
+        liquidity = (
+            self.orderbook.get_liquidity_within_bps("bid", 50) +
+            self.orderbook.get_liquidity_within_bps("ask", 50)
+        )
+
+        imbalance = self.orderbook.get_order_imbalance()
+        update_rate = self.orderbook.get_update_rate()
+
+        #Compute spoof impact scores
+        spoof_scores = [
+            self.cancel_window.compute_cancel_impact_score(f['price'], f['side'])
+            for f in self.cancel_window._flags
+            if f['type'] == "CANCEL_DENSITY_SPIKE"
+        ]
+
+        max_spoof_score = max(spoof_scores, default=0.0)
+
+        #VOLATILE: spoofing + high volatility
+        if max_spoof_score > 0.25 and volatility > 0.02:
+            return MarketRegime.VOLATILE
+        
+        # MEAN_REVERTING: low confidence + low volatility
+        if confidence < 0.4 and volatility < 0.005:
+            return MarketRegime.MEAN_REVERTING
+        
+        #TRENDING: high confidence + strong imbalance
+        if confidence > 0.7 and imbalance > 0.6:
+            return MarketRegime.TRENDING
+        
+        #ILLIQUID: poor update rate + low liquidity
+        if liquidity < 100 or update_rate < 0.5:
+            return MarketRegime.ILLIQUID
+
+        # Override TRENDING if confidence is decaying
+        if base_regime == MarketRegime.TRENDING and confidence < 0.3:
+            return MarketRegime.MEAN_REVERTING
+
+        return base_regime
+    
+
+    def update_regime(self) -> MarketRegime:
+        base_regime = self.classify_environment()
+        reinforced_regime = self.reinforce_regime(base_regime)
+
+        #Detect regime drift (mutation within same label)
+        drift_detected = self.detect_regime_drift()
+        over_lay = self.get_behavioral_overlay()
+
+        # Log regime shift
+        if reinforced_regime != self.last_regime:
+            print(f"[Regime Shift] {self.last_regime.value} → {reinforced_regime.value} at {datetime.now()}")
+            self.last_regime = reinforced_regime
+            self.last_regime_change = datetime.now()
+
+        #Log regime drift
+        if drift_detected:
+            print(f"[Regime Drift] {self.last_regime.value} showing behavioral mutation at {datetime.now()}")
+
+        #Log behavioral overlay
+        if over_lay != "NORMAL":
+            print(f"[Behavioral Overlay] {over_lay} active at {datetime.now()}")
+
+
+        self.regime_history.append(reinforced_regime)
+
+        return reinforced_regime
+    
+
+    def get_current_regime(self) -> MarketRegime:
+        if not self.regime_history:
+            return MarketRegime.UNKNOWN
+        counts = {r: self.regime_history.count(r) for r in MarketRegime}
+        return max(counts, key=counts.get)
+
+    def get_regime_duration_seconds(self) -> float:
+        return (datetime.now() - self.last_regime_change).total_seconds()
+    
+    def get_regime_stability(self) -> float:
+        """
+        To defer trades in unstable regimes.
+        """
+        if not self.regime_history:
+            return 0.0  #Ensure that we don't divide by zero
+        current = self.get_current_regime()
+        return round(self.regime_history.count(current) / len(self.regime_history), 2)
+
+    def detect_regime_drift(self) -> bool:
+        """
+        To log or Simulate regime transitions.
+        """
+        current = self.get_current_regime()
+        confidence = self.signal_calibrator.get_current_confidence()
+        update_rate = self.orderbook.get_update_rate()
+        liquidity = (
+            self.orderbook.get_liquidity_within_bps("bid", 50) +
+            self.orderbook.get_liquidity_within_bps("ask", 50)
+        )
+        volatility = self.orderbook.get_volatility_estimate()
+        spoof_score = max([
+            self.cancel_window.compute_cancel_impact_score(f['price'], f['side'])
+            for f in self.cancel_window._flags
+            if f['type'] == "CANCEL_DENSITY_SPIKE"
+        ], default=0.0)
+
+        # Example drift conditions
+        if current == MarketRegime.TRENDING and confidence < 0.3 and spoof_score > 0.4:
+            return True  # Momentum exhaustion
+        if current == MarketRegime.MEAN_REVERTING and volatility > 0.02 and spoof_score > 0.3:
+            return True  # Volatile breakout
+        if current == MarketRegime.ILLIQUID and update_rate > 1.0 and liquidity > 300:
+            return True  # Liquidity recovery
+
+        return False
+    
+
+    def get_behavioral_overlay(self) -> str:
+        """
+        You can use this overlay in your execution logic to throttle, defer or fade trades if the 
+        regime label hasnt changed.
+        """
+        confidence = self.signal_calibrator.get_current_confidence()
+        volatility = self.orderbook.get_volatility_estimate()
+        spoof_score = max([
+            self.cancel_window.compute_cancel_impact_score(f['price'], f['side'])
+            for f in self.cancel_window._flags
+            if f['type'] == "CANCEL_DENSITY_SPIKE"
+        ], default=0.0)
+
+        if spoof_score > 0.6 and volatility > 0.03:
+            return "LIQUIDITY_VACUUM"
+        if confidence < 0.3 and volatility > 0.02:
+            return "MOMENTUM_EXHAUSTION"
+        if volatility < 0.005 and confidence < 0.4:
+            return "CHOPPY_NOISE"
+
+        return "NORMAL"
+
+    def get_scoring_weights(self) -> tuple[float, float, float, float]:
+        """
+        Returns weights for the four components used in cancel impact scoring.
+        Adjust these weights based on your strategy's sensitivity to each factor.
+        """
+        regime = self.get_current_regime()
+        if regime == MarketRegime.TRENDING:
+            return (0.3, 0.4, 0.2, 0.1)
+        if regime == MarketRegime.MEAN_REVERTING:
+            return (0.4, 0.3, 0.2, 0.1)
+        if regime == MarketRegime.VOLATILE:
+            return (0.2, 0.2, 0.3, 0.3)
+        if regime == MarketRegime.ILLIQUID:
+            return (0.5, 0.1, 0.1, 0.3)
+        else:
+            return (0.5, 0.2, 0.1, 0.2)
+        
+    def get_velocity_thresholds(self) -> tuple[float, float]:
+        """
+        Dynamically compute velocity thresholds for execution reflex.
+        Returns (velocity_fast, velocity_slow) in qty/sec.
+        """
+        update_rate = self.orderbook.get_update_rate()         # Hz
+        volatility = self.orderbook.get_volatility_estimate()  # Std dev
+        imbalance = self.orderbook.get_order_imbalance()       # [0, 1]
+
+        # Normalize inputs
+        update_score = min(update_rate / 5.0, 1.0)              # Cap at 5 Hz
+        vol_score = min(volatility / 0.02, 1.0)                 # Cap at 2% std dev
+        imbalance_score = abs(imbalance - 0.5) * 2              # 0 = balanced, 1 = extreme
+
+        # Composite aggression score
+        aggression = 0.4 * update_score + 0.4 * vol_score + 0.2 * imbalance_score
+
+        # Map aggression to thresholds
+        velocity_fast = 0.3 + aggression * 0.5                  # Range: 0.3 → 0.8
+        velocity_slow = 0.05 + aggression * 0.2                 # Range: 0.05 → 0.25
+
+        return round(velocity_fast, 3), round(velocity_slow, 3)
+
+
+
+    def get_debug_view(self) -> Dict[str, Any]:
+        return {
+            "current_regime": self.get_current_regime().value,
+            "stability": self.get_regime_stability(),
+            "velocity_fast": self.get_velocity_thresholds()[0],
+            "velocity_slow": self.get_velocity_thresholds()[1],
+            "duration_sec": self.get_regime_duration_seconds(),
+            "last_regime": self.last_regime.value,
+            "overlay": self.get_behavioral_overlay(),
+            "volatility": self.orderbook.get_volatility_estimate(),
+            "confidence": self.signal_calibrator.get_current_confidence(),
+            "spoof_score": max([
+                self.cancel_window.compute_cancel_impact_score(f['price'], f['side'])
+                for f in self.cancel_window._flags
+                if f['type'] == "CANCEL_DENSITY_SPIKE"
+            ], default=0.0)
+        }
+import random
+from market_data.orderbook_protocol import OrderBookProtocol
+
+class SmartRepricingModel:
+    def __init__(self, tick_size: float = 0.01, max_jitter_ticks: int = 2, slippage_bps: float = 5.0):
+        self.tick_size = tick_size
+        self.max_jitter_ticks = max_jitter_ticks
+        self.slippage_bps = slippage_bps / 10000.0  # Convert bps to fraction
+
+    def optimize_price(self, side: str, orderbook:OrderBookProtocol , fill_prob_target: float = 0.6) -> float:
+        """
+        Computes an optimized limit price based on spread, fill probability, jitter, and slippage cap.
+        Returns a tick-aligned price.
+        """
+        best_bid = orderbook.get_best_price("bid")
+        best_ask = orderbook.get_best_price("ask")
+        mid = (best_bid + best_ask) * 0.5 if best_bid and best_ask else None
+
+        if not mid or not best_bid or not best_ask:
+            return best_ask if side.upper() == "BUY" else best_bid  # fallback
+
+        spread = abs(best_ask - best_bid)
+        spread_ratio = spread / mid
+
+        # Base price logic
+        if spread_ratio < 0.001:
+            base_price = best_ask if side.upper() == "BUY" else best_bid
+        else:
+            offset = spread * (1 - fill_prob_target)
+            base_price = best_ask - offset if side.upper() == "BUY" else best_bid + offset
+
+        # Jitter logic
+        tick_jitter = random.randint(-self.max_jitter_ticks, self.max_jitter_ticks)
+        jitter = self.tick_size * tick_jitter
+
+        # Slippage cap
+        max_slip = mid * self.slippage_bps
+        jitter = max(min(jitter, max_slip), -max_slip)
+
+        # Apply jitter directionally
+        adjusted_price = base_price + jitter if side.upper() == "BUY" else base_price - jitter
+
+        # Snap to tick
+        adjusted_price = round(adjusted_price / self.tick_size) * self.tick_size
+
+        #Final slippage enforcement
+        adjusted_price = min(max(adjusted_price, mid -max_slip), mid + max_slip)
+
+        return adjusted_price
+
+
+
+# Market_data/orderbook.py 
+from collections import deque
+import math
+import time
+import logging
+logger = logging.getLogger(__name__)
+
+class OrderBook:
+    """
+    Lightweight L2 Order Book Binance Symbols.
+    Tracks bid/ask level and provides midprice, volatility,
+    and liquidity metrics
+    """
+    def __init__(self):
+        """
+        Initialize the lightweight L2 OrderBook for a specific Binance trading symbol.
+        tracks bid/ask levels and provides midprice, volatility,
+        depth liquidity, and imbalance metrics
+        """
+        self.history_len = 100
+        self.symbol = "BTCUSDT"
+        self.bids = {} # Bid side: {price-> size} 
+        self.asks = {} # Ask side: {price -> size}
+        self.last_midprice = None
+        self.price_history = deque(maxlen=self.history_len) #Rolling midpoint buffer for volatility estimate
+        self.last_update_ts = None
+
+    # ------------------------ Updates ------------
+    def update(self, msg):
+        """Process Binance depth@1000ms L2 Update
+        Updates bid and ask level accordingly.
+        :param msg: L2 depth update from Binance WebSocket stream
+        """
+        now = time.time()
+        self.last_update_ts = now
+
+        for p, q in msg.get("bid",[]):
+            try:
+                price = float(p)
+                size = float(q)
+                if size > 0 :
+                    self.bids[price] = size
+                elif price in self.bids:
+                    del self.bids[price]
+            except (ValueError, TypeError):
+                continue
+
+        for p, q in msg.get('ask', []):
+            try:
+                price = float(p)
+                size = float(q)
+                if size > 0:
+                    self.asks[price] = size
+                elif price in self.asks:
+                    del self.asks[price]
+            except (ValueError, TypeError):
+                continue
+
+        self._update_midprice()
+
+
+    def _update_midprice(self):
+        """
+        Compute the mid price from best bid and best ask, and store in rolling history
+        """
+        best_bid = max(self.bids.keys(), default=None)
+        best_ask = min(self.asks.keys(), default=None)
+        if best_bid is not None and best_ask is not None:
+            mid = (best_bid + best_ask) / 2
+            self.last_midprice = mid
+            self.price_history.append(mid)
+
+            #Keep only recent 100 midprices for volatility calculation
+            if len(self.price_history) > 100:
+                self.price_history.pop(0)
+
+    # ---------------------- Basic Accessors ----------------------------------------
+    def get_midprice(self) -> float:
+        """
+        Returns the last computed midprice or 0.0 if unavailable.
+        """
+        return self.last_midprice or 0.0
+    
+    def get_resilient_midprice(self) -> float:
+        """
+        Returns a safe midprice using fallback hierarchy:
+        1. Live midprice
+        2. Synthetic from best bid/ask
+        3. Last known midprice
+        4. Static fallback
+        """
+        # 1. Live midprice
+        mid = self.get_midprice()
+        if mid > 0:
+            return mid
+
+        # 2. Synthetic from best bid/ask
+        bid = self.get_best_price("bid")
+        ask = self.get_best_price("ask")
+        if bid > 0 and ask > 0:
+            return (bid + ask) / 2
+
+        # 3. Last known midprice
+        if self.last_midprice and self.last_midprice > 0:
+            return self.last_midprice
+
+        # 4. Static fallback
+        fallback = 27000.0  # Example: BTCUSDT baseline
+        logger.warning(f"[OrderBook] Midprice unavailable — using static fallback {fallback}")
+        return fallback
+
+    
+    def get_level_size(self, price, side) -> float:
+        """
+        Returns the size available at a given price level and side.
+
+        :param price: Price level to query
+        :param side: 'bid' or 'ask'
+        :return: Order size at that price
+        """
+        book = self.bids if side == 'bid' else self.asks
+        return book.get(price, 0.0)
+    
+    def get_best_price(self, side: str) -> float:
+        """
+        Returns the best bid or ask price.
+
+        :param side: 'bid' or 'ask'
+        :return: Best price on that side
+        """
+        if side == 'bid':
+            return max(self.bids.keys(), default= 0.0)
+        else:
+            return min(self.asks.keys(), default = 0.0)
+        
+
+    # ------------------------- Liquidity Metrics --------------------------------
+    def get_estimated_volume(self, side: str) -> float:
+        """
+        Estimate total volume on a given side of the book.
+
+        :param side: 'bid' or 'ask'
+        :return: sum of all sizes on that side
+        """
+        book = self.bids if side == 'bid' else self.asks
+        return sum(book.values())
+
+    def get_top_liquidity(self, side: str , depth_levels: int = 1) -> float:
+        """
+        Returns size available in the top N levels.
+        """
+        book = self.bids if side == "bid" else self.asks
+        if not book:
+            return 0.0
+        levels = sorted(book.items(), key=lambda x: x[0], reverse=(side=="bid"))
+        return sum(size for _, size in levels[:depth_levels])
+    
+
+    def get_liquidity_within_bps(self, side: str, bps: float) -> float:
+        """
+        Returns total liquidity within X basis points of midprice
+        """
+        mid = self.get_midprice()
+        if mid <= 0:
+            return 0.0
+        threshold = mid * (bps / 1e4)
+
+        if side == "bid":
+            return sum(size for price, size in self.bids.items() if (mid - price) <= threshold)
+        else:
+            return sum(size for price, size in self.asks.items() if (price - mid) <= threshold)
+
+    # -------------------- Microstructure metrics ---------------------------------
+    def get_order_imbalance(self) -> float:
+        """
+        Order book imbalance = bid_vol / (bid_vol + ask_vol).
+        Range [0, 1], > 0.5 means more bid-side liquidity.
+        """
+        bid_vol = self.get_estimated_volume("bid")
+        ask_vol = self.get_estimated_volume("ask")
+        denom = bid_vol + ask_vol
+        return bid_vol / denom if denom > 0 else 0.5
+
+    def get_volatility_estimate(self) -> float:
+        """
+        Estimate market volatility using rolling historical midprices.
+
+        :return: standard deviation of returns over recent midprices
+        """
+        if len(self.price_history) < 2:
+            return 0.001 #Minimal Baseline
+        returns = [
+            (self.price_history[i] - self.price_history[i-1]) / self.price_history[i-1]
+            for i in range (1, len(self.price_history))
+        ]
+        variance = sum( r ** 2 for r in returns ) / len(returns)
+        return variance ** 0.5
+    
+
+    def get_update_rate(self) -> float:
+        """
+        Rough update frequency (Hz). Useful to calibrate latency model
+        """
+        if not self.price_history or not self.last_update_ts:
+            return 0.0
+        return len(self.price_history) / max(1e-9, (time.time() -  self.last_update_ts))
+        
+    
+    def get_tick_size(self) -> float:
+        """
+        Returns the smallest tick size used for symbol.
+        can be hard coded or dynamically adjusted in the future
+
+        :return: Tick size (default 0.01, for BTCUSDT)
+        """
+        return 0.01 #Could be pulled from exchange filters

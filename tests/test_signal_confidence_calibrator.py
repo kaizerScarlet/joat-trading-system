@@ -1,18 +1,18 @@
 import pytest 
 from dynamic_risk_engine.signal_confidence_calibrator import SignalConfidenceCalibrator
-
+from dynamic_risk_engine.signal_confidence_calibrator_protocol import SignalConfidenceCalibratorProtocol
 
 def test_initial_confidence_returns_base():
-    calibrator = SignalConfidenceCalibrator(base_confidence=0.7)
+    calibrator : SignalConfidenceCalibratorProtocol = SignalConfidenceCalibrator(base_confidence=0.7)
     assert calibrator.get_current_confidence() == 0.7
 
 def test_single_correct_signal_boosts_confidence():
-    calibrator = SignalConfidenceCalibrator(base_confidence=0.5)
+    calibrator : SignalConfidenceCalibratorProtocol = SignalConfidenceCalibrator(base_confidence=0.5)
     calibrator.update_signal_result('signal1', True)
     assert calibrator.get_current_confidence() == 1.0  # 1 correct out of 1
 
 def test_mixed_signals_adjusts_confidence_correctly():
-    calibrator = SignalConfidenceCalibrator(base_confidence=0.5)
+    calibrator : SignalConfidenceCalibratorProtocol = SignalConfidenceCalibrator(base_confidence=0.5)
     calibrator.update_signal_result('signal1', True)
     calibrator.update_signal_result('signal2', False)
     calibrator.update_signal_result('signal3', True)
@@ -23,7 +23,7 @@ def test_mixed_signals_adjusts_confidence_correctly():
 
 
 def test_reset_clears_history():
-    calibrator = SignalConfidenceCalibrator(base_confidence=0.5)
+    calibrator : SignalConfidenceCalibratorProtocol = SignalConfidenceCalibrator(base_confidence=0.5)
     calibrator.update_signal_result('signal1', True)
     calibrator.update_signal_result('signal2', False)
     calibrator.update_signal_result('signal3', True)
@@ -33,7 +33,7 @@ def test_reset_clears_history():
 
 
 def test_precision_rounding():
-    calibrator  = SignalConfidenceCalibrator(base_confidence=0.5)
+    calibrator  : SignalConfidenceCalibratorProtocol = SignalConfidenceCalibrator(base_confidence=0.5)
     #7 out of 10 correct 0.7
     for i in range(7):
         calibrator.update_signal_result(f'signal{i}', True)
@@ -46,7 +46,7 @@ def test_precision_rounding():
 
 
 def test_multiple_resets():
-    calibrator = SignalConfidenceCalibrator(base_confidence=0.5)
+    calibrator : SignalConfidenceCalibratorProtocol = SignalConfidenceCalibrator(base_confidence=0.5)
     calibrator.update_signal_result('signal1', True)
     calibrator.update_signal_result('signal2', False)
     calibrator.reset()
@@ -58,7 +58,7 @@ def test_multiple_resets():
 
 
 def test_confidence_breakdown_structure():
-    calibrator = SignalConfidenceCalibrator(base_confidence=0.5)
+    calibrator : SignalConfidenceCalibratorProtocol = SignalConfidenceCalibrator(base_confidence=0.5)
     for i in range(12):
         calibrator.update_signal_result(f'signal{i}', was_correct=(i % 2 == 0))
     breakdown = calibrator.get_confidence_breakdown()
@@ -69,7 +69,7 @@ def test_confidence_breakdown_structure():
 
 
 def test_summary_snapshot():
-    calibrator = SignalConfidenceCalibrator(base_confidence=0.5)
+    calibrator : SignalConfidenceCalibratorProtocol = SignalConfidenceCalibrator(base_confidence=0.5)
     for i in range(10):
         calibrator.update_signal_result(f'signal{i}', was_correct=(i < 7))  # 7 wins
     summary = calibrator.get_summary()
@@ -79,7 +79,7 @@ def test_summary_snapshot():
 
 
 def test_last_signal_trace():
-    calibrator = SignalConfidenceCalibrator()
+    calibrator : SignalConfidenceCalibratorProtocol = SignalConfidenceCalibrator()
     calibrator.update_signal_result("signalX", True)
     last = calibrator.get_last_signal()
     assert last["signal_id"] == "signalX"

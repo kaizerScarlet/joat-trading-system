@@ -23,6 +23,7 @@ class AdaptiveDensityWindow:
 
     def get_current_window(self) -> int:
         return int(self.current_window)
+    
     def get_debug_view(self) -> Dict[str, Any]:
          return {
             "current_window_ms": self.get_current_window(),

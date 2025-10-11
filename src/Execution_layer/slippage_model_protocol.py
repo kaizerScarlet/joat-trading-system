@@ -24,4 +24,5 @@ class SlippageModelProtocol(Protocol):
     ) -> float:
         """
         Estimates limit order price nudged toward mid by a micro-reversion term.
+        
         """

@@ -1,8 +1,9 @@
 import pytest 
 from dynamic_risk_engine.performance_tracker import PerformanceTracker
+from dynamic_risk_engine.performance_tracker_protocol import PerformanceTrackerProtocol
 
 def test_tracker_basic_metrics():
-    tracker =  PerformanceTracker()
+    tracker : PerformanceTrackerProtocol =  PerformanceTracker()
 
     #Simulate 3 trades: 2 wins and 1 loss
     tracker.record_trade(order_id= 't1',pnl=100, risk=50, reward=150)
@@ -19,7 +20,7 @@ def test_tracker_basic_metrics():
 
 
 def test_track_edge_cases_no_trades():
-    tracker = PerformanceTracker()
+    tracker : PerformanceTrackerProtocol = PerformanceTracker()
 
     summary = tracker.get_summary()
     assert summary['total_trades'] == 0
@@ -29,7 +30,7 @@ def test_track_edge_cases_no_trades():
     assert summary['final_balance'] == 0.0
 
 def test_tracker_reset():
-    tracker = PerformanceTracker()
+    tracker : PerformanceTrackerProtocol = PerformanceTracker()
 
     # Simulate some trades
     tracker.record_trade(order_id='t1', pnl=100, risk=50, reward=150)
@@ -52,7 +53,7 @@ def test_tracker_reset():
 
 
 def test_sl_tp_drift_recording():
-    tracker = PerformanceTracker()
+    tracker : PerformanceTrackerProtocol = PerformanceTracker()
     tracker.record_sl_tp_drift(order_id="t1", sl=95.0, tp=120.0)
     assert len(tracker.sl_tp_history) == 1
     drift = tracker.sl_tp_history[0]
@@ -62,7 +63,7 @@ def test_sl_tp_drift_recording():
 
 
 def test_trade_diagnostics_recording():
-    tracker = PerformanceTracker()
+    tracker : PerformanceTrackerProtocol = PerformanceTracker()
     tracker.record_slippage(order_id="t1", slippage=0.5, side="buy", qty=1.0, price=100.0, symbol="BTCUSDT")
     tracker.record_fee(order_id="t1", fee=0.1, side="buy", qty=1.0, price=100.0, symbol="BTCUSDT")
     tracker.record_latency(order_id="t1", latency_ms=120.0, side="buy", qty=1.0, price=100.0, symbol="BTCUSDT")
@@ -75,14 +76,14 @@ def test_trade_diagnostics_recording():
 
 
 def test_get_last_trade():
-    tracker = PerformanceTracker()
+    tracker : PerformanceTrackerProtocol = PerformanceTracker()
     tracker.record_trade(order_id="t1", pnl=100, risk=50, reward=150)
     last = tracker.get_last_trade()
     assert last["order_id"] == "t1"
     assert last["pnl"] == 100
 
 def test_diagnostics_snapshot():
-    tracker = PerformanceTracker()
+    tracker : PerformanceTrackerProtocol = PerformanceTracker()
     tracker.record_trade(order_id="t1", pnl=100, risk=50, reward=150)
     tracker.record_slippage(order_id="t1", slippage=0.5, side="buy", qty=1.0, price=100.0, symbol="BTCUSDT")
     diagnostics = tracker.get_diagnostics()

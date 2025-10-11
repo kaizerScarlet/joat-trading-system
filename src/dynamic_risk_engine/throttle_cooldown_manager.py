@@ -324,6 +324,9 @@ class ThrottleCooldownManager:
         }
     
     def get_status(self) -> dict:
+        
+        """Unified Diagnostic Snapshot"""
+
         return {
             "in_cooldown": self.is_in_cooldown(),
             "loss_streak": self.loss_streak,

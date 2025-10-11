@@ -316,6 +316,8 @@ class OrderAgeDistribution:
      
      
     def get_debug_view(self) -> Dict[str, Any]:
+        """Returns internal state for debugging purposes."""
+        
         current_time = max([
             *(o['timestamp'] for o in self.cancelled_orders),
             *(o['timestamp'] for o in self.filled_orders)

@@ -31,3 +31,12 @@ class OrderBookProtocol(Protocol):
 
     def get_tick_size(self) -> float:
         """Returns the smallest tick size used for the symbol."""
+
+    def get_resilient_midprice(self) -> float:
+        """
+        Returns a safe midprice using fallback hierarchy:
+        1. Live midprice
+        2. Synthetic from best bid/ask
+        3. Last known midprice
+        4. Static fallback
+        """

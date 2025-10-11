@@ -61,6 +61,8 @@ class DynamicRiskEngine:
         self.max_risk_per_trade = self.dynamic_position_sizer.max_risk_per_trade
 
     def update_market_regime(self):
+        """Updates the current market regime using the classifier."""
+
         self.current_regime = self.market_regime_classifier.update_regime()
 
     def can_trade(self) -> bool:
@@ -76,6 +78,8 @@ class DynamicRiskEngine:
     
 
     def get_risk_for_trade(self) -> float:
+        """Returns the current max risk per trade."""
+
         return self.max_risk_per_trade
 
     
@@ -113,6 +117,7 @@ class DynamicRiskEngine:
         :param was_correct: Whether the signal was correct (True) or incorrect (False)
         :param metadata: Optional metadata about the trade
         """
+        
         self.performance_tracker.record_trade(pnl, risk, reward, metadata)
         self.daily_drawdown_manager.record_pnl(datetime.now(), pnl)
         self.signal_confidence_calibrator.update_signal_result(
@@ -122,6 +127,8 @@ class DynamicRiskEngine:
         self.throttle_cooldown_manager.register_trade_result(pnl)
 
     def get_risk_curve_value(self) -> float:
+        """Returns the current risk curve value based on signal confidence."""
+
         confidence = self.signal_confidence_calibrator.get_current_confidence()
         risk_curve = lambda c: 0.005 + (c ** 2) * 0.045
         return round(risk_curve(confidence), 4)
@@ -178,6 +185,8 @@ class DynamicRiskEngine:
         }
     
     async def get_debug_view(self) -> dict:
+        """This lets you explain every trade with behavioral clarity."""
+
         diagnostics = await self.get_diagnostic()
         return {
             "timestamp": datetime.now().isoformat(),
@@ -195,6 +204,7 @@ class DynamicRiskEngine:
 
     async def get_trade_rationale(self, stop_loss_distance: float) -> dict:
         """This lets you explain every trade with behavioral clarity."""
+
         size = await self.get_position_size(stop_loss_distance)
         confidence = self.signal_confidence_calibrator.get_current_confidence()
         regime = self.current_regime.value

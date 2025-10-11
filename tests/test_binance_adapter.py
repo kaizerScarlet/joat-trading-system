@@ -2,7 +2,7 @@ import pytest
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from Execution_layer.binance_adapter_protocol import BinanceExecutionAdapter
+from Execution_layer.binance_adapter import BinanceExecutionAdapter
 from Execution_layer.binance_adapter_protocol import BinanceExecutionAdapterProtocol
 
 # ------------------------------

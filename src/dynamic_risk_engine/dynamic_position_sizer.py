@@ -72,7 +72,7 @@ class DynamicPositionSizer:
         volatility = self.volatility.get_volatility_estimate()
         max_risk_per_trade = self.max_risk_per_trade
         risk_amount = balance* max_risk_per_trade
-        adjusted_risk = risk_amount * self.confidence.get_current_confidence()*(0.5 + self.win_rate.win_rate())*volatility  *   throttle  #Scale with confidence and win rate
+        adjusted_risk = risk_amount * self.confidence.get_current_confidence() * (0.5 + self.win_rate.win_rate()) * volatility  * throttle  #Scale with confidence and win rate
 
         if stop_loss_distance == 0:
             return 0 # Avoid division by zero

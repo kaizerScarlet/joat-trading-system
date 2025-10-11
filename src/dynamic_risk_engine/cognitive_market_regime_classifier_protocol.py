@@ -42,3 +42,9 @@ class CognitiveMarketRegimeClassifierProtocol(Protocol):
 
     def get_debug_view(self) -> Dict[str, Any]:
         """Debug view for introspection and debugging"""
+
+    def get_velocity_thresholds(self) -> tuple[float, float]:
+        """
+        Dynamically compute velocity thresholds for execution reflex.
+        Returns (velocity_fast, velocity_slow) in qty/sec.
+        """

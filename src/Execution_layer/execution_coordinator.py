@@ -610,7 +610,7 @@ class ExecutionCoordinator:
          #Log current SL/TP state for traceability
          try:
                sl, tp = self.sl_and_tp.get_sl_tp()
-               self.performance_tracker.record_sl_tp_drift( sl, tp)
+               self.performance_tracker.record_sl_tp_drift(sl, tp)
                debug_snapshot = self.sl_and_tp.debug_state()
                logger.debug("SLTP Debug State: %s", debug_snapshot)
          except Exception:

@@ -185,6 +185,8 @@ class PerformanceTracker:
         }
     
     def get_last_trade(self) -> Optional[Dict]:
+        """This helps trace recetn behaviour in tests or logs"""
+
         return self.trades[-1] if self.trades else None
 
 

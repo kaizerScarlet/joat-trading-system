@@ -12,6 +12,7 @@ class QueuePositionModel:
 
     def estimate(self, side: str, our_qty: float, tob_qty: float, orderbook = OrderBookProtocol) -> tuple[float, float]:
         """
+        Estimates our queue position and fill probability.
         :param side: "BUY" or "SELL"
         :param our_qty: how much we want to post
         :param tob_qty: visible top-of-book liquidity

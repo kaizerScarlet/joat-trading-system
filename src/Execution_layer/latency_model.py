@@ -12,6 +12,7 @@ class LatencyModel:
         self.tail_multiplier = tail_multiplier
 
     def sample_ms(self) -> int:
+        """Returns a simulated one-way latency in milliseconds, with jitter and tail risk."""
         draw = random.uniform(-self.jitter_ms, self.jitter_ms)
         ms = max(0.0, self.base_ms + draw)
         if random.random() < self.p_tail:
