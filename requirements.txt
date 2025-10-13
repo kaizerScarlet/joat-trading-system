@@ -10,3 +10,4 @@ pytest-asyncio>=0.23
 scikit-learn
 numpy
 python-dotenv
+requests
