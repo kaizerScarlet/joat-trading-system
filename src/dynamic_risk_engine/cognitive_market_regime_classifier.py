@@ -197,14 +197,39 @@ class CognitiveMarketRegimeClassifier:
         """
         regime = self.get_current_regime()
         if regime == MarketRegime.TRENDING:
+            # w1 : norm_density
+            # w2: dist_from_mid
+            # w3: fill_score
+            # w4: inv_book_depth
+
             return (0.3, 0.4, 0.2, 0.1)
         if regime == MarketRegime.MEAN_REVERTING:
+            # w1 : norm_density
+            # w2: dist_from_mid
+            # w3: fill_score
+            # w4: inv_book_depth
+
             return (0.4, 0.3, 0.2, 0.1)
         if regime == MarketRegime.VOLATILE:
+            # w1 : norm_density
+            # w2: dist_from_mid
+            # w3: fill_score
+            # w4: inv_book_depth
+
             return (0.2, 0.2, 0.3, 0.3)
         if regime == MarketRegime.ILLIQUID:
+            # w1 : norm_density
+            # w2: dist_from_mid
+            # w3: fill_score
+            # w4: inv_book_depth
+
             return (0.5, 0.1, 0.1, 0.3)
         else:
+            # w1 : norm_density
+            # w2: dist_from_mid
+            # w3: fill_score
+            # w4: inv_book_depth
+
             return (0.5, 0.2, 0.1, 0.2)
         
     def get_velocity_thresholds(self) -> tuple[float, float]:

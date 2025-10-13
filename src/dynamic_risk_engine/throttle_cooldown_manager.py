@@ -36,8 +36,8 @@ class ThrottleCooldownManager:
             max_orders_per_10s = 100,
             max_orders_per_day = 200000,
             max_weight_per_minute = 6000,
-            min_conversion_rate = 0.05, #5%  of orders must convert
-            min_fill_weight = 0.05, #5%  of volume must fill
+            min_conversion_rate = 0.98, #98%  of orders must convert
+            min_fill_weight = 0.98, #98%  of volume must fill
 
         
             

@@ -2,6 +2,11 @@ from typing import Protocol, runtime_checkable
 
 @runtime_checkable
 class OrderBookProtocol(Protocol):
+    def update(self, msg):
+        """Process Binance depth@1000ms L2 Update
+        Updates bid and ask level accordingly.
+        :param msg: L2 depth update from Binance WebSocket stream
+        """
     def get_midprice(self) -> float:
         """Returns the last computed midprice or 0.0 if unavailable."""
 
