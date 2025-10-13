@@ -281,11 +281,11 @@ class SimpleCancelWindow(CancelWindow):
                 # size == 0 -> Cancel
                 #Delete (Cancel)
                 else:
-                    removed_size = book.get(price, 0.0) #fallback if price not in book
+                    removed_size = book.get(price, 0.0) #Fallback if price not in book
                     self.register_cancel(ts, price, side, removed_size)
 
-                    #Only proceed with scoring and flagging if price was in book
                     if price in book:
+                        removed_size = book[price]
                         #Use last reduction timestamp instead of first add_ts
                         last_reduction_ts = self.reduction_timestamps.get(key, [self.add_ts.get(key)])[-1]
                         dt = ts - last_reduction_ts
@@ -295,15 +295,14 @@ class SimpleCancelWindow(CancelWindow):
                             self.tuner.update(dt)
                             self.window_ms = self.tuner.current_window_ms()
                         
+                        #Register the cancel
+                        self.register_cancel(ts, price, side, removed_size)
 
                         # cache the cancel for a potential trade match
                         self.cancel_cache[key] = (ts, removed_size)
 
 
-                        #Debugging
-                        print(f"[Cancel @ {price}] ts={ts}")
                         self.cancel_density.setdefault(side, {}).setdefault(price, []).append(ts)
-                        print(f"[Density Timestamps] {self.cancel_density[side][price]}")
 
 
 
@@ -639,8 +638,7 @@ class SimpleCancelWindow(CancelWindow):
             'size': size}
         
         self.cancel_events.append(event)
-        print(f"[Register Cancel] {side} @ {price} size={size} ts={timestamp}")
-
+        self.cancel_timestamps.setdefault((side, price), []).append(timestamp)
         #Buffer cancels for ice detection
         key = (price, side)
         self.iceberg_buffer[key].append(event)
@@ -666,16 +664,12 @@ class SimpleCancelWindow(CancelWindow):
         Called automatically after each L2 update.
         """
         
-        print(f"[Cancel Events Count] {len(self.cancel_events)}")
 
         density = self.compute_cancel_density()
-        #Debugging Print
-        print(f"[Computed Cancel Density] {density}")
         for (side, price), count in density.items():
             threshold = self.cancel_density_threshold_bid if side == "bid" else self.cancel_density_threshold_ask
             threshold.update(self.orderbook.get_estimated_volume(side), self.orderbook.get_volatility_estimate())
-           #Debugging Print
-            print(f"[Density Check] {side} @ {price} → count={count}, threshold={threshold.get_threshold()}")
+           
 
             if count >= threshold.get_threshold():
                 orderid = self._next_id()
@@ -692,8 +686,6 @@ class SimpleCancelWindow(CancelWindow):
                         "Cancel Density": self.get_cancel_density(side)
                     }
                 })
-        #Debugging print
-        print(f"[Cancel Density] {density}")
 
 
 
@@ -841,17 +833,15 @@ class SimpleCancelWindow(CancelWindow):
             self.iceberg_buffer[key].clear()
 
 
-    def get_cancel_density(self, side:str) -> Dict[float, int]:
+    def get_cancel_density(self, side:str) -> dict:
         """
         :param side: str
         :Returns a dictironary of {price: cancel_count} for the given side
         Helps quantify where cancel activity is concentrated
         """
-        current_ts = int(time.time() * 1000)
-        window = self.cancel_density_window_ms.get_current_window()
         density = defaultdict(int)
         for event in self.cancel_events:
-            if event['side'] == side and current_ts - event['timestamp'] <= window:
+            if event['side'] == side:
                 price = event['price']
                 density[price] +=  1
         return dict(density)
