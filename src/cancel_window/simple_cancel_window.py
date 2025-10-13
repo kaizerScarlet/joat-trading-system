@@ -288,6 +288,8 @@ class SimpleCancelWindow(CancelWindow):
                         removed_size = book[price]
                         #Use last reduction timestamp instead of first add_ts
                         last_reduction_ts = self.reduction_timestamps.get(key, [self.add_ts.get(key)])[-1]
+                        if last_reduction_ts is None:
+                            return # Or skip this cancel
                         dt = ts - last_reduction_ts
 
                         #---Adaptive tuner update -------
@@ -358,37 +360,7 @@ class SimpleCancelWindow(CancelWindow):
                        
                         # Record cancel timestamp
                         self.cancel_timestamps.setdefault(key, []).append(ts)
-                        #check for high cancel density
-                        recent_cancels = [
-                            t for t in self.cancel_timestamps[key]
-                            if ts - t <= self.cancel_density_window_ms.get_current_window()
-                        ]
-
-                        recent_cancel_rate = len(recent_cancels) / (self.cancel_density_window_ms.get_current_window() / 1000)
-                        self.cancel_density_window_ms.update(ts, recent_cancel_rate)
-
-                        vol = self.orderbook.get_estimated_volume(side)
-                        volty = self.orderbook.get_volatility_estimate()
-                        threshold = self.cancel_density_threshold_bid if side == "bid" else self.cancel_density_threshold_ask
-                        threshold.update(vol, volty)
-
-
-                        if len(recent_cancels) >= threshold.get_threshold():
-                            orderid = self._next_id() #Auto generate
-                            self._flags.append({
-                                'orderid': orderid,
-                                "timestamp": ts,
-                                "type": "HIGH_CANCEL_DENSITY",
-                                "side": side,
-                                'size': size,
-                                "price": price,
-                                "count": len(recent_cancels),
-                                "density_window_ms": self.cancel_density_window_ms.get_current_window(),
-                                "context": {
-                                    "window_ms": self.get_window_ms(),
-                                    "Cancel Density": self.get_cancel_density(side)
-                                }
-                            })
+            
 
                         #Check for ladder cancels
                         if self.active_ladder and key[0] == self.active_ladder['side'] and price in self.active_ladder['prices']:
@@ -466,6 +438,8 @@ class SimpleCancelWindow(CancelWindow):
         #Did we see a cancel at this price recently?
         if key in self.cancel_cache:
             cancel_ts, removed_size = self.cancel_cache[key]
+            if cancel_ts is None:
+                return # Cancel timestamp missing for key at ts
             dt = ts - cancel_ts
 
             if self.adaptive and dt >= 0:
