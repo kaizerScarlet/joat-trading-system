@@ -474,7 +474,7 @@ class SimpleCancelWindow(CancelWindow):
                                 }
                 })
                 #Pass along to OrderAgeDistribution to tag
-                self.order_age_tracker.fill_order(orderid=orderid, timestamp=ts, event_type=flag_type, price=price, size=qty, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
+                self.order_age_tracker.fill_order(orderid=orderid, timestamp=ts, event_type=fill_type, price=price, size=qty, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
 
             if self.active_ladder and ts -self.active_ladder['timestamp'] > 300:
                 self.active_ladder =  None
