@@ -164,6 +164,10 @@ class SimpleCancelWindow(CancelWindow):
         # when a level is first seen
         self.add_ts: Dict[tuple[str, float], int ] = {} #("bid"/"asks", price) -> epoch-ms
 
+        #Order-ids for order tracking
+        self.order_ids: Dict[Tuple[str, float], str] = {}
+
+
         # New -> cache of most-recent cancels so trades can match them
         # key -> ("bid"/"ask", price);  value -> (cancel_ts, removed_size)
         self.cancel_cache: Dict[Tuple[str, float], Tuple[int, float]] = {}
@@ -231,6 +235,18 @@ class SimpleCancelWindow(CancelWindow):
                     # New order
                     if price not in book:
                         self.add_ts[key] = ts
+                        
+                        #Tag order creation for age tracking
+                        orderid = self._next_id()
+                        self.order_ids[key] = orderid
+
+                        self.order_age_tracker.register_event(orderid=orderid,
+                                                            timestamp=ts,
+                                                            price=price,
+                                                            size=size,
+                                                            side=side,
+                                                            #distance_from_best=abs(self.orderbook.get_best_price(side) - price)
+                                                            )
                     else:
                         if prev_size is not None:
                             reduction = prev_size - size
@@ -253,7 +269,7 @@ class SimpleCancelWindow(CancelWindow):
                         self.laddering_buffer = [e for e in self.laddering_buffer if ts - e['timestamp'] <= self.get_window_ms()]
                         recent_levels =[e['price'] for e in self.laddering_buffer if e['side'] == side]
                         if len(set(recent_levels)) >= 3:
-                            orderid = self._next_id() #Auto generate
+                            orderid = self.order_ids.get(key, self._next_id())
                             self._flags.append({
                                 'type': 'MULTILEVEL_LADDERING',
                                 'orderid': orderid,
@@ -311,7 +327,7 @@ class SimpleCancelWindow(CancelWindow):
                         # --- Spoof cancel detection (short-lived orders) ---
                         if dt < self.get_window_ms():
                             spoof_score = self._quantitative_iceberg_spoof(side, price, dt, removed_size, ts)
-                            orderid = self._next_id()
+                            orderid = self.order_ids.get(key, self._next_id())
                             self._flags.append({
                                 "timestamp": ts,
                                 "orderid": orderid,
@@ -342,7 +358,7 @@ class SimpleCancelWindow(CancelWindow):
 
                         # --- Ladder cancel tagging ---
                         if self.active_ladder and key[0] == self.active_ladder["side"] and price in self.active_ladder["prices"]:
-                            orderid = self._next_id()
+                            orderid = self.order_ids.get(key, self._next_id())
                             self._flags.append({
                                 "orderid": orderid,
                                 "type": "LADDER_CANCEL_ONLY",
@@ -370,6 +386,8 @@ class SimpleCancelWindow(CancelWindow):
                         self.add_ts.pop(key, None)
                         self.reduction_history.pop(key, None)
                         self.reduction_timestamps.pop(key, None)
+                        self.order_ids.pop(key, None)
+
 
 
         _handle("bid", self.bids, bid_updates)
@@ -411,7 +429,7 @@ class SimpleCancelWindow(CancelWindow):
 
             if dt < self.get_window_ms():
                 flag_type = "TRUE_FILL" if qty >= removed_size else "PARTIAL_FILL"
-                orderid = self._next_id() #Auto generate
+                orderid = self.order_ids.get(key, self._next_id())
                 self._flags.append({
                     'orderid': orderid,
                     "timestamp": ts,
@@ -433,7 +451,7 @@ class SimpleCancelWindow(CancelWindow):
                 best_price = self.orderbook.get_best_price('ask' if side == 'bid' else 'bid')
                 spread = abs(best_price - price)
                 if spread < 2 * self.orderbook.get_tick_size(): # Near top of book
-                    orderid = self._next_id() #Auto generate
+                    orderid = self.order_ids.get(key, self._next_id())
                     self._flags.append({
                         'orderid': orderid,
                         'timestamp': ts,
@@ -460,7 +478,7 @@ class SimpleCancelWindow(CancelWindow):
             if self.active_ladder and price in self.active_ladder['prices'] and side == self.active_ladder['side']:
                 self.active_ladder['filled'] = True
                 fill_type = "LADDER_TRUE_FILL" if qty >= self.orderbook.get_level_size(price, side) else 'LADDER_PARTIAL_FILL'
-                orderid = self._next_id() #Auto generate
+                orderid = self.order_ids.get(key, self._next_id())
                 self._flags.append({
                     'orderid': orderid,
                     'timestamp': ts,
@@ -481,6 +499,8 @@ class SimpleCancelWindow(CancelWindow):
 
             self.add_ts.pop(key, None)  # cleanup
             self.reduction_history.pop(key, None)
+            self.order_ids.pop(key, None)
+
             #Keep cancel_cache until it ages out (> window), dont pop immediately
             self._expire_cancel_cache()
 
@@ -625,7 +645,9 @@ class SimpleCancelWindow(CancelWindow):
            
 
             if count >= threshold.get_threshold():
-                orderid = self._next_id()
+                key = (side, price)
+
+                orderid = self.order_ids.get(key, self._next_id())
                 self._flags.append({
                     "timestamp": timestamp,
                     "orderid": orderid,
@@ -653,7 +675,9 @@ class SimpleCancelWindow(CancelWindow):
         threshold.update(vol, volty)
 
         if len(recent) >= threshold.get_threshold():
-            orderid = self._next_id() #Auto generate
+            key = (side, price)
+
+            orderid = self.order_ids.get(key, self._next_id())
             self._flags.append({
                 'orderid': orderid,
                 'type': 'BURST_CANCEL',
@@ -684,7 +708,8 @@ class SimpleCancelWindow(CancelWindow):
                 for i in range(len(cancels_at_price)-1)
             ]
             if any(delta < self.get_window_ms() for delta in deltas): #Arbitary ping delta
-                orderid = self._next_id() #Auto generate
+                key = (side, price)
+                orderid = self.order_ids.get(key, self._next_id())
                 self._flags.append({
                     'orderid': orderid,
                     'type': 'PING_CANCEL',
@@ -703,7 +728,8 @@ class SimpleCancelWindow(CancelWindow):
         """Tracks cancel at price and re-add at same/ nearby price (spoofing/layering)"""
         book = self.bids if side == 'bid' else self.asks
         if (side, price) in self.cancel_cache and price in book:
-            orderid = self._next_id() #Auto generate
+            key = (side, price)
+            orderid = self.order_ids.get(key, self._next_id())
             self._flags.append({
                 'orderid': orderid,
                 'type': 'REPOSTING_BEHAVIOUR',
@@ -727,7 +753,8 @@ class SimpleCancelWindow(CancelWindow):
         threshold.update(vol, volty)
         
         if len(active_levels) >= threshold.get_threshold(): #arbitary threshold
-            orderid = self._next_id() #Auto generate
+            key = (side, price)
+            orderid = self.order_ids.get(key, self._next_id())
             self._flags.append({
                 'orderid': orderid,
                 'type': 'LAYER_WIPE',
@@ -775,7 +802,7 @@ class SimpleCancelWindow(CancelWindow):
         )
 
         if iceberg_score >= 0.30:  # Score gate
-            orderid = self._next_id()
+            orderid = self.order_ids.get(key, self._next_id())
             flag = {
                 'orderid': orderid,
                 'type': 'ICEBERG_CANCEL',
