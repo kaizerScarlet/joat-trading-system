@@ -1037,3 +1037,746 @@ class SimpleCancelWindow(CancelWindow):
         self.fill_events.clear()
 
 
+import time #will need to change this at production so that it is the server time taken not my machine time
+import pytest
+from market_data.orderbook_protocol import OrderBookProtocol
+from cancel_window.order_age_distribution_protocol import OrderAgeDistributionProtocol
+from dynamic_risk_engine.cognitive_market_regime_classifier_protocol import CognitiveMarketRegimeClassifierProtocol, MarketRegime 
+from cancel_window.simple_cancel_window_protocol import CancelWindowProtocol
+from cancel_window.simple_cancel_window import SimpleCancelWindow, CancelWindowTuner
+
+class DummyOrderAgeTracker(OrderAgeDistributionProtocol):
+    def get_order_age(self, price: float, side: str) -> float:
+        return 0.0
+
+class DummyOrderBook(OrderBookProtocol):
+    def get_level_size(self, price: float, side: str) -> float:
+        return 1.0
+    def update_midprice(self) -> float:
+        return 30000.0
+    def get_update_rate(self) -> float:
+        return 1.0
+    def get_liquidity_within_bps(self, side: str, bps: float) -> float:
+        return 1000.0
+    def get_volatility_estimate(self) -> float:
+        return 0.001
+    def get_estimated_volume(self, side: str) -> float:
+        return 100.0
+    def get_best_price(self, side: str) -> float:
+        return 30000.0 if side == 'bid' else 30001.0
+    def get_midprice(self) -> float:
+        return 30000.5
+
+class DummyRegimeClassifier(CognitiveMarketRegimeClassifierProtocol):
+    def get_current_regime(self): return MarketRegime.UNKNOWN
+    def get_regime_stability(self): return 1.0
+    def get_scoring_weights(self): return (0.5, 0.2, 0.1, 0.2)
+
+#test fast cancel on bid side
+def test_fast_cancel_flag_bid():
+    cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier()
+        )
+
+    #add level at t0
+    cw.process_l2_update({"E": 1000, "b": [["30000", "1.0"]], "a": []})
+    # cancel same level 20ms later
+    cw.process_l2_update({"E": 1020, "b": [["30000", "0"]], "a": []})
+
+    flags = cw.get_flags()
+    spoof_flags = [f for f in flags if f["type"] == "CANCEL_SPOOF"]
+    print(flags)
+    assert spoof_flags, "Expected CANCEL_SPOOF flag"
+    assert flags and flags[0]["type"] == "CANCEL_SPOOF"
+    assert flags[0]["latency_ms"] == 20
+    
+    debug = cw.get_debug_view()
+    assert debug["cancel_density_bid"][30000.0] == 1
+
+
+#test fast cancel on ask side
+def test_fast_cancel_flag_ask():
+    cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier()
+        )
+
+    #add level at t0
+    cw.process_l2_update({"E": 1000, "b": [],   "a": [["30000", "1.0"]]})
+    # cancel same level 20ms later
+    cw.process_l2_update({"E": 1020, "b": [],   "a": [["30000", "0"]]})
+
+    flags = cw.get_flags()
+    print(flags)
+    assert flags and flags[0]["type"] == "CANCEL_SPOOF"
+    assert flags[0]["latency_ms"] == 20
+
+
+
+#Test True fill flag on ask side
+def test_true_fill_flag_ask():
+    cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier()
+    )
+    #1. add order
+    cw.process_l2_update({"E": 1000, "a": [["30050", "2.0"]], "b":[]})
+    #2. Cancel order 20ms later
+    cw.process_l2_update({"E": 1020, "a": [["30050", "0"]], "b": []})
+    #3. Trade hits that price 40ms after cancel
+    cw.process_trade({
+        "T": 1060,
+        "p": "30050",
+        "q": "2.0",
+        "m": False # buyer is taker
+        })
+    flags = cw.get_flags()
+    print(flags)
+    assert any(f["type"] == "TRUE_FILL" for f in flags)
+
+#Test True fill flag bid
+def test_true_fill_flag_bid():
+    cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier()
+    )
+    #1. add order
+    cw.process_l2_update({"E": 1000, "b": [["30050", "2.0"]], "a":[]})
+    #2. Cancel order 20ms later
+    cw.process_l2_update({"E": 1020, "b": [["30050", "0"]], "a": []})
+    #3. Trade hits that price 40ms after cancel
+    cw.process_trade({
+        "T": 1060,
+        "p": "30050",
+        "q": "2.0",
+        "m": True   #seller is taker
+        })
+    flags = cw.flush_flags()
+    print(flags)
+    assert any(f["type"] == "TRUE_FILL" for f in flags)
+
+#Test partial fill flag bid side
+#@pytest.mark.asyncio
+def test_partial_fill_flag_bid():
+    """
+    Order is added -> partially removed via  trade smaller than original size
+    in <window_ms. Expect PARTIAL_FILL, not TRUE_FILL.
+    """
+    cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier()
+    )
+    #1. add 2 BTC ask @ 30 070
+    cw.process_l2_update({"E": 1_000, "b": [["30070", "2.0"]], "a":[]})
+
+    #2. cancel level 20ms later
+    cw.process_l2_update({"E": 1_020, "b": [["30070", "0"]], "a": []})
+    #3. only 0.5 BTC trades through -> partial
+    cw.process_trade({
+        "T": 1_040,
+        "p": "30070",
+        "q": "0.5",
+        "m": True     #taker is seller-> hitting bid
+    })
+
+    flags = cw.get_flags()
+    print(flags)
+    types = [f["type"] for f in flags]
+    assert "PARTIAL_FILL" in types
+    assert "TRUE_FILL" not in types 
+
+
+#Test partial fill flag ask side
+#@pytest.mark.asyncio
+def test_partial_fill_flag_ask():
+    """
+    Order is added -> partially removed via  trade smaller than original size
+    in <window_ms. Expect PARTIAL_FILL, not TRUE_FILL.
+    """
+    cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier()
+    )
+    #1. add 2 BTC ask @ 30 070
+    cw.process_l2_update({"E": 1_000, "a": [["30070", "2.0"]], "b":[]})
+
+    #2. cancel level 20ms later
+    cw.process_l2_update({"E": 1_020, "a": [["30070", "0"]], "b": []})
+    #3. only 0.5 BTC trades through -> partial
+    cw.process_trade({
+        "T": 1_040,
+        "p": "30070",
+        "q": "0.5",
+        "m": False  #taker is buyer -> hitting ask
+    })
+
+    flags = cw.get_flags()
+    print(flags)
+    types = [f["type"] for f in flags]
+    assert "PARTIAL_FILL" in types
+    assert "TRUE_FILL" not in types 
+
+
+# Test iceberg cancel flag emitted ask side
+def test_iceberg_cancel_flag_emitted_ask():
+    tuner = CancelWindowTuner()
+    cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner,
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier()
+    )
+
+    base_ts = 100000
+    #simulate  3 quick size reductions at same price, no  trades
+    #1. Add new ask level at 30090 with size 4.0
+    cw.process_l2_update({"E": base_ts, "a": [["30090", "4.0"]], "b": []})
+    #2. reduce to 3.0
+    cw.process_l2_update({"E": base_ts + 10, "a": [["30090", " 3.0"]], "b": []})
+    #3. reduce again to 2.0
+    cw.process_l2_update({"E": base_ts + 20, "a": [["30090", "2.0"]], "b": []})
+    #4. Cancel (set at 0)
+    cw.process_l2_update({"E": base_ts + 30, "a": [["30090", "0"]], "b": []})
+
+    flags = cw.get_flags()
+    print(flags)
+    assert any(f["type"] == "ICEBERG_CANCEL" for f in flags)
+    assert flags[0]["type"] == "ICEBERG_CANCEL"
+    assert flags[0]["price"] == 30090.0
+    assert flags[0]["side"] == "ask"
+    assert "reductions" in flags[0]
+    assert len(flags[0]["reductions"]) == 2
+
+#Test iceberg cancel flag emitted bid side
+def test_iceberg_cancel_flag_emitted_bid():
+    tuner = CancelWindowTuner()
+    cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner,
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier()
+    )
+
+    base_ts = 100000
+    #simulate  3 quick size reductions at same price, no  trades
+    #1. Add new ask level at 30090 with size 4.0
+    cw.process_l2_update({"E": base_ts, "b": [["30090", "4.0"]], "a": []})
+    #2. reduce to 3.0
+    cw.process_l2_update({"E": base_ts + 10, "b": [["30090", " 3.0"]], "a": []})
+    #3. reduce again to 2.0
+    cw.process_l2_update({"E": base_ts + 20, "b": [["30090", "2.0"]], "a": []})
+    #4. Cancel (set at 0)
+    cw.process_l2_update({"E": base_ts + 30, "b": [["30090", "0"]], "a": []})
+
+    flags = cw.get_flags()
+    iceberg_flags = [f for f in flags if f['type'] == 'ICEBERG_CANCEL']
+    print(flags)
+    assert any(f["type"] == "ICEBERG_CANCEL" for f in flags)
+    assert flags[0]["type"] == "ICEBERG_CANCEL"
+    assert flags[0]["price"] == 30090.0
+    assert flags[0]["side"] == "bid"
+    assert "reductions" in flags[0]
+    assert len(flags[0]["reductions"]) == 2
+
+
+#Test no iceberg if only one reduction ask
+def test_no_iceberg_if_only_one_reduction_ask():
+    cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier()
+    )
+
+    base_ts = 100000
+    #simulate  3 quick size reductions at same price, no  trades
+    #1. Add new ask level at 30090 with size 5.0
+    cw.process_l2_update({"E": base_ts, "a": [["30090", "5.0"]], "b": []})
+    #3. reduce to 2.0
+    cw.process_l2_update({"E": base_ts + 20, "a": [["30090", "2.0"]], "b": []})
+    #4. Cancel (set at 0)
+    cw.process_l2_update({"E": base_ts + 30, "a": [["30090", "0"]], "b": []})
+    
+    flags = cw.get_flags()
+    assert len(flags) == 1
+    assert flags[0]["type"] == "CANCEL_SPOOF"
+
+
+#Test no iceberg if only one reduction bid
+def test_no_iceberg_if_only_one_reduction_bid():
+    cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier()
+    )
+
+    base_ts = 100000
+    #simulate  3 quick size reductions at same price, no  trades
+    #1. Add new ask level at 30090 with size 5.0
+    cw.process_l2_update({"E": base_ts, "b": [["30090", "5.0"]], "a": []})
+    #3. reduce to 2.0
+    cw.process_l2_update({"E": base_ts + 20, "b": [["30090", "2.0"]], "a": []})
+    #4. Cancel (set at 0)
+    cw.process_l2_update({"E": base_ts + 30, "b": [["30090", "0"]], "a": []})
+    
+    flags = cw.get_flags()
+    assert len(flags) == 1
+    assert flags[0]["type"] == "CANCEL_SPOOF"
+
+
+
+#Test no iceberg if cancel outside window on the ask side
+def test_no_iceberg_if_cancel_outside_window_ask():
+    cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier()
+    )
+
+    base_ts = 100000
+    #simulate  3 quick size reductions at same price, no  trades
+    #1. Add new ask level at 30090 with size 5.0
+    cw.process_l2_update({"E": base_ts, "a": [["30090", "5.0"]], "b": []})
+    #3. reduce to 2.0
+    cw.process_l2_update({"E": base_ts + 20, "a": [["30090", "2.0"]], "b": []})
+    #4. Cancel (set at 0)
+    cw.process_l2_update({"E": base_ts + 100, "a": [["30090", "0"]], "b": []})
+    
+    flags = cw.get_flags()
+    #No iceberg or spoof because outside window
+    assert len(flags) == 0
+
+
+#Test no iceberg if cancel outside window on the bid side
+def test_no_iceberg_if_cancel_outside_window_bid():
+    cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier()
+    )
+
+    base_ts = 100000
+    #simulate  3 quick size reductions at same price, no  trades
+    #1. Add new ask level at 30090 with size 5.0
+    cw.process_l2_update({"E": base_ts, "b": [["30090", "5.0"]], "a": []})
+    #3. reduce to 2.0
+    cw.process_l2_update({"E": base_ts + 20, "b": [["30090", "2.0"]], "a": []})
+    #4. Cancel (set at 0)
+    cw.process_l2_update({"E": base_ts + 100, "b": [["30090", "0"]], "a": []})
+    
+    flags = cw.get_flags()
+    #No iceberg or spoof because outside window
+    assert len(flags) == 0
+
+
+#Test Cancel Density flag ask side
+def test_high_cancel_density_flag_ask():
+    cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier()
+    )
+    cw.set_cancel_density_params(initial_threshold=3, initial_window_ms=100)
+
+    base_ts = 100000
+    #simulate  3 quick size reductions at same price, no  trades
+    #1. Add new ask level at 30090 with size 5.0
+    cw.process_l2_update({"E": base_ts, "a": [["30090", "5.0"]], "b": []})
+    #2. Cancel to 0
+    cw.process_l2_update({"E": base_ts + 20, "a": [["30090", "0"]], "b": []})
+    #3. add
+    cw.process_l2_update({"E": base_ts + 30, "a": [["30090", "2.0"]], "b": []})
+    #4  Cancel
+    cw.process_l2_update({"E": base_ts + 40, "a": [["30090", "0"]], "b": []})
+    #5. Add
+    cw.process_l2_update({"E": base_ts + 50, "a": [["30090", "2.0"]], "b": []})
+    #6. Cancel
+    cw.process_l2_update({"E": base_ts + 60, "a": [["30090", "0"]], "b": []})
+    
+    flags = cw.get_flags()
+    
+    #Should contain HIGH_CANCEL_DENSITY
+    density_flags = [f for f in flags if f["type"] ==  "CANCEL_DENSITY_SPIKE"]
+    assert len(density_flags) > 0
+    print("Test Passed. High_CANCEL_DENSITY triggered", density_flags)
+
+def test_high_cancel_density_flag_ask2():
+    cw = SimpleCancelWindow(
+        tuner=CancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier()
+    )
+    cw.set_cancel_density_params(initial_threshold=3, initial_window_ms=100)
+
+    base_ts = 100000
+    # Add and cancel 3 times within 100ms
+    cw.process_l2_update({"E": base_ts, "a": [["30090", "5.0"]], "b": []})
+    cw.process_l2_update({"E": base_ts + 10, "a": [["30090", "0"]], "b": []})
+    cw.process_l2_update({"E": base_ts + 20, "a": [["30090", "2.0"]], "b": []})
+    cw.process_l2_update({"E": base_ts + 30, "a": [["30090", "0"]], "b": []})
+    cw.process_l2_update({"E": base_ts + 40, "a": [["30090", "2.0"]], "b": []})
+    cw.process_l2_update({"E": base_ts + 60, "a": [["30090", "0"]], "b": []})
+
+    # Trigger density evaluation
+    cw.process_l2_update({"E": base_ts + 70, "a": [], "b": []})
+
+    flags = cw.get_flags()
+    print(flags)
+    density_flags = [f for f in flags if f["type"] == "CANCEL_DENSITY_SPIKE"]
+    assert density_flags, "Expected CANCEL_DENSITY_SPIKE flag"
+
+
+def test_high_cancel_density_flag_ask2():
+    cw = SimpleCancelWindow(
+        tuner=CancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier()
+    )
+    cw.set_cancel_density_params(initial_threshold=3, initial_window_ms=100)
+
+    base_ts = 100000
+    # Add and cancel 3 times within 100ms
+    cw.process_l2_update({"E": base_ts, "a": [["30090", "5.0"]], "b": []})
+    cw.process_l2_update({"E": base_ts + 10, "a": [["30090", "0"]], "b": []})
+    cw.process_l2_update({"E": base_ts + 20, "a": [["30090", "2.0"]], "b": []})
+    cw.process_l2_update({"E": base_ts + 30, "a": [["30090", "0"]], "b": []})
+    cw.process_l2_update({"E": base_ts + 40, "a": [["30090", "2.0"]], "b": []})
+    cw.process_l2_update({"E": base_ts + 60, "a": [["30090", "0"]], "b": []})
+
+    # Manually trigger density evaluation
+    cw._detect_cancel_density_spike(base_ts + 70)
+
+    flags = cw.get_flags()
+    print(flags)
+    density_flags = [f for f in flags if f["type"] == "CANCEL_DENSITY_SPIKE"]
+    assert density_flags, "Expected CANCEL_DENSITY_SPIKE flag"
+
+
+#Test Cancel Density flag bid side
+def test_high_cancel_density_flag_bid():
+    cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier()
+    )
+    cw.set_cancel_density_params(initial_threshold=3, initial_window_ms=100)
+
+    base_ts = 100000
+    #simulate  3 quick size reductions at same price, no  trades
+    #1. Add new ask level at 30090 with size 5.0
+    cw.process_l2_update({"E": base_ts, "b": [["30090", "5.0"]], "a": []})
+    #2. Cancel to 0
+    cw.process_l2_update({"E": base_ts + 20, "b": [["30090", "0"]], "a": []})
+    #3. add
+    cw.process_l2_update({"E": base_ts + 30, "b": [["30090", "2.0"]], "a": []})
+    #4  Cancel
+    cw.process_l2_update({"E": base_ts + 40, "b": [["30090", "0"]], "a": []})
+    #5. Add
+    cw.process_l2_update({"E": base_ts + 50, "b": [["30090", "2.0"]], "a": []})
+    #6. Cancel
+    cw.process_l2_update({"E": base_ts + 60, "b": [["30090", "0"]], "a": []})
+    
+    flags = cw.get_flags()
+    
+    #Should contain HIGH_CANCEL_DENSITY
+    density_flags = [f for f in flags if f["type"] ==  "CANCEL_DENSITY_SPIKE"]
+    assert len(density_flags) > 0
+    print("Test Passed. High_CANCEL_DENSITY triggered", density_flags)
+def test_high_cancel_density_flag_bid3():
+    cw = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier()
+    )
+    cw.set_cancel_density_params(initial_threshold=3, initial_window_ms=100)
+
+    base_ts = 100000
+    cw.process_l2_update({"E": base_ts, "b": [["30090", "5.0"]], "a": []})
+    cw.process_l2_update({"E": base_ts + 10, "b": [["30090", "0"]], "a": []})
+    cw.process_l2_update({"E": base_ts + 20, "b": [["30090", "2.0"]], "a": []})
+    cw.process_l2_update({"E": base_ts + 30, "b": [["30090", "0"]], "a": []})
+    cw.process_l2_update({"E": base_ts + 40, "b": [["30090", "2.0"]], "a": []})
+    cw.process_l2_update({"E": base_ts + 60, "b": [["30090", "0"]], "a": []})
+
+    flags = cw.get_flags()
+    print(flags)
+    density_flags = [f for f in flags if f["type"] == "CANCEL_DENSITY_SPIKE"]
+    assert len(density_flags) > 0
+
+
+
+#@pytest.mark.skip(reason="REGISTER_CANCEL missing positional arguments, correct it first")
+#Test Compute cancel density correctly
+def test_cancel_density_computation():
+    cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier()
+    )
+
+    # Simple 10 cancels at level 100, 5 at  101, 1 at 102
+    for _ in range(10):
+        cw.register_cancel(price=100.0, side='ask', timestamp=123456789, size=1.0)
+    for _ in range(5):
+        cw.register_cancel(price=102.0, side='ask', timestamp=123456789, size=1.0)
+    cw.register_cancel(price=103.0, side='ask', timestamp=123456789, size=1.0)
+
+
+    density = cw.get_cancel_density('ask')
+    assert density[100.0] == 10
+    assert density[102.0] == 5
+    assert density[103.0] == 1
+
+#@pytest.mark.skip(reason="REGISTER_CANCEL missing positional arguments, correct it first")
+#Test Normalize Cancel Density
+def test_normalized_cancel_density():
+    cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier()
+    )
+    for price, count in [(100.0, 10), (101.0, 5), (102.0, 1)]:
+        for _ in range(count):
+           cw.register_cancel(price=price, side='ask', timestamp=0, size=1.0)
+    
+    norm = cw.get_normalized_cancel_density()
+    assert norm['num_cancels'] == 16
+    assert norm['time_window_ms'] == 0 #since all timestamps were 0
+    assert norm['cancel_density_per_sec'] > 0
+    assert norm['cancel_density_per_price'] > 0
+    assert norm['normalized_score'] > 0
+
+
+#@pytest.mark.skip(reason="REGISTER_CAMCEL missing positional arguments, correct it")
+#Test Clear Density after Flush
+def test_cancel_density_flush():
+    window : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier()
+    )
+
+    window.register_cancel(price=100.0,side='ask', timestamp=0, size=5.0)
+
+    window.flush()
+    density = window.get_cancel_density('ask')
+    assert density == {}
+
+
+
+# Test for Icerberg Cancels
+def test_iceberg_cancel_detection():
+    cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier()
+    )
+    ts = 100
+    for _ in range(5):
+        cw.register_cancel(price= 101.0, side='ask', timestamp=ts, size=2.5)
+        ts += 10
+    flags = cw.get_flags()
+    assert any(f['type'] == 'ICEBERG_CANCEL' for f in flags)
+
+
+#Test for Orderflow impact scoring
+# #Test case 1: High Density + Near mid High Score = high score
+
+#Test-only Mock
+class MockOrderBook:
+    def get_level_size(self, price, side):
+        if price == 100.1:
+            return 1.0 #Fixed Book depth
+        return 1000.0
+#@pytest.mark.skip(reason="UPDATE_BOOK, COMPUTE_IMPACT_SCORE not implemented yet, also has incorrect parameters for REGISTER_CANCEL")
+def test_high_impact_cancel():
+    cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier()
+    )
+    cw.update_midprice(mid_price=100.0)
+    #cw.orderbook = MockOrderBook() #Inject Mock dependency
+    cw.fill_events = [{'price': 101.0, 'side':'ask'}] * 3
+    cw.register_cancel(price=100.1, side='ask',timestamp=0 ,size=5)
+    cw.register_cancel(price=100.1, side='ask',timestamp=0 ,size=5)
+    cw.register_cancel(price=100.1, side='ask',timestamp=0, size=5)
+
+    score = cw.compute_cancel_impact_score(price=100.1, side='ask')
+    assert score >= 0.7
+
+
+#Test case 2: Far from mid + low = low score
+#@pytest.mark.skip(reason="UPDATE_BOOK, COMPUTE_CANCEL_IMPACT_SCORE npt implemented yet, aslo has incorrect parameters for REGISTER_CANCEL")
+def test_low_impact_cancel():
+    cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier()
+    )
+    cw.update_midprice(mid_price=100.0)
+    
+    #cw.orderbook = MockOrderBook() #Inject Mock dependency
+    cw.fill_events = [{'price': 101.0, 'side':'ask'}] * 3
+    cw.register_cancel(price=101.0, side='ask',timestamp=123456789 ,size=1)
+
+    score = cw.compute_cancel_impact_score(price=102.0, side='ask')
+    assert score <= 0.2
+
+
+
+#Test Case 3: Score adjusts After Book Update
+#@pytest.mark.skip(reason="UPDATE_BOOK, COMPUTE_CANCEL_IMPACT_SCORE not implemented yet, also has incorrect parameters for REGISTER_CANCEL")
+def test_score_changes_with_book():
+    cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier()
+    )
+    cw.update_midprice(mid_price=100.0)
+    #cw.orderbook = MockOrderBook() #Inject Mock dependency
+    cw.fill_events = [{'price': 101.0, 'side':'ask'}] * 3
+    cw.register_cancel(price=101.0, side='ask',timestamp=123456789, size=1)
+    score1 = cw.compute_cancel_impact_score(101.0, 'ask')
+
+    cw.update_midprice(mid_price=100.5) #Price Moves away from cancel
+    score2 = cw.compute_cancel_impact_score(100.2, 'ask')
+
+    assert score2 < score1 # Cancel less relevant now
+
+
+
+def test_snapshot_state_integrity():
+    window : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier()
+        )
+    window.bids = {30000.0: 1.0}
+    window.asks = {30001.0: 1.0}
+    window.cancel_cache = {("bid", 30000.0): (1000, 1.0)}
+    window._flags.append({"type": "TEST_FLAG"})
+    snapshot = window.snapshot_state()
+    assert snapshot["flag_count"] == 1
+    assert snapshot["bids"] == 1
+    assert snapshot["asks"] == 1
+    assert snapshot["cancel_cache"] == 1
+    assert snapshot["flags"][0]["type"] == "TEST_FLAG"
+
+
+
+#Window Tunning Tool Test Cases
+#Test Case 1: Load Config and Apply
+@pytest.mark.skip(reason="CancelConfig() function not implemented yet")
+def test_config_load():
+    config = CancelConfig(window_size = 2.0, density_thresh=0.2)
+    cw : CancelWindowProtocol = SimpleCancelWindow(order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier()
+        )
+    assert cw.config.density_thresh == 0.2
+
+
+
+#Test Case 2 Replay maintains order
+@pytest.mark.skip(reason="CancelWindowReplayer() function not implemented")
+def test_replay_preserves_order():
+    replayer = CancelWindowReplayer(data_path='test_orderflow.csv')
+    events = replayer.get_events()
+    assert events[0].timestamp <= events[1].timestamp   #sorted
+
+
+#Test Case 3: Tuning increases F1 score
+@pytest.mark.skip(reason="SimpleCancelWindowTuner() not implemented")
+def test_optimizer_improves_performance():
+    tuner = SimpleCancelWindowTuner(...)
+    f1_before = tuner.evaluate_baseline()
+    f1_after = tuner.optimize()
+    assert f1_after > f1_before
+
+
+........FF..............sss                                                                                                                                                      [100%]
+====================================================================================== FAILURES =======================================================================================
+______________________________________________________________________ test_no_iceberg_if_only_one_reduction_ask ______________________________________________________________________
+
+    def test_no_iceberg_if_only_one_reduction_ask():
+        cw : CancelWindowProtocol = SimpleCancelWindow(
+            tuner = CancelWindowTuner(),
+            order_age_tracker=DummyOrderAgeTracker(),
+            order_book=DummyOrderBook(),
+            classifier=DummyRegimeClassifier()
+        )
+    
+        base_ts = 100000
+        #simulate  3 quick size reductions at same price, no  trades
+        #1. Add new ask level at 30090 with size 5.0
+        cw.process_l2_update({"E": base_ts, "a": [["30090", "5.0"]], "b": []})
+        #3. reduce to 2.0
+        cw.process_l2_update({"E": base_ts + 20, "a": [["30090", "2.0"]], "b": []})
+        #4. Cancel (set at 0)
+        cw.process_l2_update({"E": base_ts + 30, "a": [["30090", "0"]], "b": []})
+
+        flags = cw.get_flags()
+>       assert len(flags) == 1
+E       AssertionError: assert 2 == 1
+E        +  where 2 = len([{'context': {'cancel_density': {30090.0: 2}, 'window_ms': 50}, 'latency_ms': 10, 'orderid': '0604a1bd-97fd-4921-b0fa-...el Density': {30090.0: 2}, 'window_ms': 50}, 'orderid': 'ca69d182-c1a5-40f3-881b-977acfbcb8d6', 'price': 30090.0, ...}])
+
+tests\test_cancel_lifetime.py:275: AssertionError
+______________________________________________________________________ test_no_iceberg_if_only_one_reduction_bid ______________________________________________________________________ 
+
+    def test_no_iceberg_if_only_one_reduction_bid():
+        cw : CancelWindowProtocol = SimpleCancelWindow(
+            tuner = CancelWindowTuner(),
+            order_age_tracker=DummyOrderAgeTracker(),
+            order_book=DummyOrderBook(),
+            classifier=DummyRegimeClassifier()
+        )
+
+        base_ts = 100000
+        #simulate  3 quick size reductions at same price, no  trades
+        #1. Add new ask level at 30090 with size 5.0
+        cw.process_l2_update({"E": base_ts, "b": [["30090", "5.0"]], "a": []})
+        #3. reduce to 2.0
+        cw.process_l2_update({"E": base_ts + 20, "b": [["30090", "2.0"]], "a": []})
+        #4. Cancel (set at 0)
+        cw.process_l2_update({"E": base_ts + 30, "b": [["30090", "0"]], "a": []})
+
+        flags = cw.get_flags()
+>       assert len(flags) == 1
+E       AssertionError: assert 2 == 1
+E        +  where 2 = len([{'context': {'cancel_density': {30090.0: 2}, 'window_ms': 50}, 'latency_ms': 10, 'orderid': '0466d09b-b8f9-452e-b7a4-...el Density': {30090.0: 2}, 'window_ms': 50}, 'orderid': '188cd561-3b59-4218-9667-44dc90bae345', 'price': 30090.0, ...}])
+
+tests\test_cancel_lifetime.py:298: AssertionError
+=============================================================================== short test summary info =============================================================================== 
+FAILED tests/test_cancel_lifetime.py::test_no_iceberg_if_only_one_reduction_ask - AssertionError: assert 2 == 1
+FAILED tests/test_cancel_lifetime.py::test_no_iceberg_if_only_one_reduction_bid - AssertionError: assert 2 == 1
+2 failed, 22 passed, 3 skipped in 0.35s

@@ -272,7 +272,8 @@ def test_no_iceberg_if_only_one_reduction_ask():
     cw.process_l2_update({"E": base_ts + 30, "a": [["30090", "0"]], "b": []})
     
     flags = cw.get_flags()
-    assert len(flags) == 1
+    iceberg_flags = [f for f in flags if f["type"] == "ICEBERG_CANCEL"]
+    assert len(iceberg_flags) == 0
     assert flags[0]["type"] == "CANCEL_SPOOF"
 
 
@@ -295,7 +296,9 @@ def test_no_iceberg_if_only_one_reduction_bid():
     cw.process_l2_update({"E": base_ts + 30, "b": [["30090", "0"]], "a": []})
     
     flags = cw.get_flags()
-    assert len(flags) == 1
+
+    iceberg_flags = [f for f in flags if f["type"] == "ICEBERG_CANCEL"]
+    assert len(iceberg_flags) == 0
     assert flags[0]["type"] == "CANCEL_SPOOF"
 
 

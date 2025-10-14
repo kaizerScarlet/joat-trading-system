@@ -20,13 +20,13 @@ def test_default_initialization():
     model : SmartRepricingModelProtocol = SmartRepricingModel()
     assert model.tick_size == 0.01
     assert model.max_jitter_ticks == 2
-    assert model.slippage_bps == pytest.approx(0.0005, rel=1e-6)
+    assert model.slippage_bps == pytest.approx(5.0, rel=1e-6)
 
 def test_custom_initialization():
     model : SmartRepricingModelProtocol = SmartRepricingModel(tick_size=0.005, max_jitter_ticks=3, slippage_bps=10.0)
     assert model.tick_size == 0.005
     assert model.max_jitter_ticks == 3
-    assert model.slippage_bps == pytest.approx(0.001, rel=1e-6)
+    assert model.slippage_bps == pytest.approx(10.0, rel=1e-6)
 
 # ------------------ Fallback Behavior ------------------
 

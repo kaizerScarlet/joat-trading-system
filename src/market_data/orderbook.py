@@ -4,6 +4,9 @@ import math
 import time
 import requests
 import logging
+from colorama import Fore, Style, init
+init(autoreset=True)
+
 logger = logging.getLogger(__name__)
 
 class OrderBook:
@@ -25,6 +28,8 @@ class OrderBook:
         self.last_midprice = None
         self.price_history = deque(maxlen=self.history_len) #Rolling midpoint buffer for volatility estimate
         self.last_update_ts = None
+        self._tick_size = None  # Cached tick size
+
 
     # ------------------------ Updates ------------
     def update(self, msg):
@@ -209,16 +214,30 @@ class OrderBook:
     
     def get_tick_size(self) -> float:
         """
-        Returns the smallest tick size used for the current symbol.
-        Dynamically fetched from Binance or falls back to default.
+        Returns the tick size for the symbol.
+        Tries Binance live fetch → cached value → default fallback.
         """
-        return self._get_tick_size_from_binance(self.symbol)
+        if self._tick_size is not None:
+            return self._tick_size
+
+        tick_size = self._get_tick_size_from_binance(self.symbol)
+        if tick_size:
+            self._tick_size = tick_size
+            return tick_size
+
+        # If fetch failed and no cache, fallback
+        print(Fore.RED + f"[WARNING] Using default tick size fallback for {self.symbol}")
+        return 0.01
+
 
     def _get_tick_size_from_binance(self, symbol: str) -> float:
         """
-        Dynamically fetches the tick size for a given symbol from Binance exchangeInfo.
-        Falls back to default if request fails or data is missing.
+        Attempts to fetch the tick size for a given symbol from Binance's exchangeInfo endpoint.
+        If successful, returns the live tick size and caches it.
+        If the request fails (due to network issues, DNS errors, or API downtime), returns None.
+        This function is used as part of a layered fallback strategy: live fetch → cached value → default.
         """
+
         url = f"https://api.binance.com/api/v3/exchangeInfo?symbol={symbol}"
         try:
             response = requests.get(url, timeout=5)
@@ -228,9 +247,9 @@ class OrderBook:
             for f in filters:
                 if f["filterType"] == "PRICE_FILTER":
                     tick_size = float(f["tickSize"])
-                    print(f"[INFO] Tick size for {symbol}: {tick_size}")
+                    print(Fore.GREEN + f"[INFO] Tick size for {symbol}: {tick_size}")
                     return tick_size
         except Exception as e:
-            print(f"[ERROR] Failed to fetch tick size for {symbol}: {e}")
-        return 0.01  # fallback default
+            print(Fore.MAGENTA + f"[ERROR] Failed to fetch tick size for {symbol}: {e}")
+        return None  # Signal failure
 

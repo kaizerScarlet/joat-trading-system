@@ -7,7 +7,7 @@ class SlippageModel:
     """
     def __init__(self, impact_coeff: float = 0.5):
         
-        self.impact_coeff = impact_coeff  # multiplier on qty/liquidity
+        self.impact_coeff = impact_coeff # multiplier on qty/liquidity
 
     def expected_market_slip(self, side: str, mid: float, spread: float, qty: float, top_liquidity: float) -> float:
         """

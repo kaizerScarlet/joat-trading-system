@@ -84,6 +84,8 @@ class DummyOrderBook(OrderBookProtocol):
         return 30000.0 if side == 'bid' else 30001.0
     def get_midprice(self) -> float:
         return 30000.5
+    def get_order_imbalance(self) -> float:
+        return 0.6
     
 class DummySignalCalibrator(SignalConfidenceCalibratorProtocol):
     def __init__(self):
