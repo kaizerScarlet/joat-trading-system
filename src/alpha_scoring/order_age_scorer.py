@@ -47,8 +47,8 @@ class OrderAgeDistributionScorer:
     def fill_order(self, orderid, timestamp, event_type, price, size, distance_from_best, side):
         self.tracker.fill_order(orderid, timestamp, event_type, price, size, distance_from_best, side)
 
-    def compute_score(self, side: str, current_time: Optional[int] = None) -> Dict[str, float]:
-        current_time = current_time or int(time.time() * 1000)
+    def compute_score(self) -> Dict[str, float]:
+        current_time = int(time.time() * 1000)
         scores = {}
 
         for s in ['ask', 'bid']:
@@ -59,16 +59,11 @@ class OrderAgeDistributionScorer:
                 placed_ts = self.order_registration_time.get(o['orderid'], o['timestamp'])
                 age = o.get('age', max(0, o['timestamp'] - placed_ts))
 
-                # 🔍 Debug each order's contribution
-                print(f"[DEBUG] Order={o['orderid']}, Side={s}, Age={age}, Size={o.get('size')}, Decay={0.5 ** (age / self.decay_half_life_ms)}")
 
                 if age <= self.short_lived_threshold:
                     decay = 0.5 ** (age / float(self.decay_half_life_ms))
                     weight = o.get('size', 1.0) if self.enable_volume_weighting else 1.0
                     short_lived_contributions.append(weight * decay)
-
-            # 🔍 Summary debug for the side
-            print(f"[DEBUG] Side={s}, TotalOrders={len(recent_orders)}, ShortLivedCount={len(short_lived_contributions)}")
 
             if short_lived_contributions:
                 short_score_sum = sum(short_lived_contributions)
@@ -97,8 +92,6 @@ class OrderAgeDistributionScorer:
                 norm_score = 0.5 + 0.5 * ((raw_score - self.min_score_by_side[s]) / score_range)
                 scores[s] = max(0.0, min(1.0, norm_score))
 
-            # 🔍 Final score debug
-            print(f"[DEBUG] FinalScore[{s}] = {scores[s]} (Raw={raw_score})")
 
         return scores if self.enable_side_scoring else {'combined': sum(scores.values()) / 2}
     
@@ -128,8 +121,8 @@ class OrderAgeDistributionScorer:
                 'filled': self.tracker.filled_orders
             },
             'normalized_scores': {
-                'ask': self.compute_score(side='ask', current_time=latest_ts)['ask'],
-                'bid': self.compute_score(side='bid', current_time=latest_ts)['bid']
+                'ask': self.compute_score()['ask'],
+                'bid': self.compute_score()['bid']
             }
         }
 
