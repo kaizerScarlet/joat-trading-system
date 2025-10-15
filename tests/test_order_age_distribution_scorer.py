@@ -41,7 +41,7 @@ class StubOrderAgeTracker:
 def test_empty_state_returns_baseline():
     tracker = StubOrderAgeTracker()
     scorer : OrderAgeDistributionScorerProtocol= OrderAgeDistributionScorer(tracker=tracker )
-    score = scorer.compute_score('bid')
+    score = scorer.compute_score()
     assert score['bid'] == 0.0
     assert score['ask'] == 0.0
 
@@ -56,7 +56,7 @@ def test_short_lived_burst_triggers_score():
         scorer.register_events(oid, ts, 'PLACE_ORDER', 100.0 + i * 0.01, 5.0, 0, 'bid')     #Place order is for whern order first arrives in order book, now you need to figure out when it gets arrives first, then cancelled or filled
         scorer.register_events(oid, ts + 50, 'CANCEL_SPOOF', 100.0 + i * 0.01, 5.0, 0, 'bid')
 
-    score = scorer.compute_score('bid')
+    score = scorer.compute_score()
     assert score['bid'] > 0.5
     assert score['ask'] == 0.0
 
@@ -70,7 +70,7 @@ def test_long_lived_orders_produce_baseline_score():
     scorer.register_events('o2', 1600, 'PLACE_ORDER', 100.1, 1.0, 5, 'bid')
     scorer.register_events('o2', 2100, 'TRUE_FILL', 100.1, 1.0, 5, 'bid')
 
-    score = scorer.compute_score('bid')
+    score = scorer.compute_score()
     assert score['bid'] == 0.0
     assert score['ask'] == 0.0
 
@@ -87,7 +87,7 @@ def test_mixed_orders_below_threshold_returns_baseline():
     scorer.register_events('o3', 1300, 'PLACE_ORDER', 100.2, 1.0, 0, 'bid')
     scorer.register_events('o3', 1450, 'TRUE_FILL', 100.2, 1.0, 0, 'bid')
 
-    score = scorer.compute_score('bid')
+    score = scorer.compute_score()
     assert score['bid'] > 0.5
     assert score['ask'] == 0.0
 
@@ -98,11 +98,11 @@ def test_reset_clears_all_data():
     scorer.register_events('o1', 1000, 'PLACE_ORDER', 100.0, 5.0, 0, 'bid')
     scorer.register_events('o1', 1050, 'CANCEL_SPOOF', 100.0, 5.0, 0, 'bid')
 
-    score_before = scorer.compute_score('bid')['bid']
+    score_before = scorer.compute_score()['bid']
     assert score_before > 0.5
 
     scorer.reset()
-    score_after = scorer.compute_score('bid')['bid']
+    score_after = scorer.compute_score()['bid']
     assert score_after == 0.0
 
 def test_volume_weighting_effect():
@@ -115,7 +115,7 @@ def test_volume_weighting_effect():
     scorer.register_events('o2', 1100, 'PLACE_ORDER', 100.1, 1.0, 0, 'bid')
     scorer.register_events('o2', 1150, 'TRUE_FILL', 100.1, 1.0, 0, 'bid')
 
-    score = scorer.compute_score('bid')
+    score = scorer.compute_score()
     assert score['bid'] > 0.5
 
 def test_decay_half_life_sensitivity():
@@ -127,8 +127,8 @@ def test_decay_half_life_sensitivity():
         scorer.register_events('o1', 1000, 'PLACE_ORDER', 100.0, 5.0, 0, 'bid')
         scorer.register_events('o1', 1050, 'CANCEL_SPOOF', 100.0, 5.0, 0, 'bid')
 
-    score_fast = scorer_fast_decay.compute_score('bid')['bid']
-    score_slow = scorer_slow_decay.compute_score('bid')['bid']
+    score_fast = scorer_fast_decay.compute_score()['bid']
+    score_slow = scorer_slow_decay.compute_score()['bid']
     assert score_slow > score_fast
 
 def test_side_scoring_toggle():
@@ -138,7 +138,7 @@ def test_side_scoring_toggle():
     scorer.register_events('o1', 1000, 'PLACE_ORDER', 100.0, 5.0, 0, 'bid')
     scorer.register_events('o1', 1050, 'CANCEL_SPOOF', 100.0, 5.0, 0, 'bid')
 
-    score = scorer.compute_score('bid')
+    score = scorer.compute_score()
     assert 'combined' in score
     assert isinstance(score['combined'], float)
 
@@ -149,7 +149,7 @@ def test_zero_size_order_handling():
     scorer.register_events('o1', 1000, 'PLACE_ORDER', 100.0, 0.0, 0, 'bid')
     scorer.register_events('o1', 1050, 'CANCEL_SPOOF', 100.0, 0.0, 0, 'bid')
 
-    score = scorer.compute_score('bid')
+    score = scorer.compute_score()
     assert score['bid'] == 0.0
 
 def test_debug_view_exposes_keys():

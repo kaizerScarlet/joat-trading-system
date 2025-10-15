@@ -203,6 +203,7 @@ class BinanceCancelWindowRunner:
                     print(Fore.YELLOW + f"[SCORE VOLATILITY] : {order_layering_tracker_debug['score_volatility']}")
                     print(Fore.YELLOW + f"[CLUSTER DENSITY] : {order_layering_tracker_debug['cluster_density']}")
                     print(Fore.YELLOW + f"[LAST SCORE] : {order_layering_tracker_debug['last_score']}")
+                    print(Fore.YELLOW + f"[RECENT SCORE] : {order_layering_tracker_debug['recent_score']}")
                     print(Fore.YELLOW + f"[RECENT ORDERS] : {order_layering_tracker_debug['recent_orders']}")
                     print(Fore.YELLOW + f"[RECENT CANCELS] : {order_layering_tracker_debug['recent_cancels']}")
 
@@ -213,8 +214,8 @@ class BinanceCancelWindowRunner:
                     print(Fore.GREEN + "[ALPHA BLENDER DIAGNOSTICS]")
                     print(Fore.GREEN + f"[BLENDING METHOD] : {alpha_signal_pipeline_debug['method']}")
                     print(Fore.GREEN + f"[ADAPTIVE] : {alpha_signal_pipeline_debug['adaptive']}")
-                    print(Fore.GREEN + f"[WEIGHTS] : {alpha_signal_pipeline_debug['weights']}")
-                    print(Fore.GREEN + f"[SIGNAL] : {alpha_signal_pipeline_debug['signals']}")
+                    print(Fore.GREEN + f"[WEIGHTS] : {alpha_signal_pipeline_debug['weight']}")
+                    print(Fore.GREEN + f"[SIGNAL] : {alpha_signal_pipeline_debug['signal']}")
                     print(Fore.GREEN + f"[BLENDED SCORE] : {alpha_signal_pipeline_debug['blended_score']}")
                     print(Fore.GREEN + f"[PERFORMANCE] : {alpha_signal_pipeline_debug['performance']}")
 
