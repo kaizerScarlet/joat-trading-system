@@ -687,3 +687,161 @@ def test_optimizer_improves_performance():
     f1_after = tuner.optimize()
     assert f1_after > f1_before
 
+# ====== TEST SYNTHETICS
+
+import unittest
+from unittest.mock import MagicMock
+from cancel_window.simple_cancel_window import SimpleCancelWindow, CancelWindowTuner
+from cancel_window.order_layering_detection import OrderLayeringDetection
+
+class TestSyntheticFillDetection(unittest.TestCase):
+    def setUp(self):
+        self.tuner = CancelWindowTuner()
+        self.layering = OrderLayeringDetection(tuner=self.tuner)
+        self.orderbook = MagicMock()
+        self.orderbook.get_best_price.side_effect = lambda side: 100.0 if side == "ask" else 99.0
+        self.orderbook.get_tick_size.return_value = 0.1
+        self.orderbook.get_level_size.return_value = 0.0
+        self.orderbook.get_volatility_estimate.return_value = 0.2
+
+        self.age_tracker = MagicMock()
+        self.classifier = MagicMock()
+
+        self.window = SimpleCancelWindow(
+            tuner=self.tuner,
+            order_layering=self.layering,
+            order_age_tracker=self.age_tracker,
+            order_book=self.orderbook,
+            classifier=self.classifier,
+            market_type="futures"
+        )
+
+
+
+def test_synthetic_true_fill(self):
+    ts = 100000
+    price = 99.5
+    qty = 10.0
+    side = "bid"
+    key = (side, price)
+
+    self.window.cancel_cache[key] = (ts - 50, 10.0)
+    trade_msg = {"T": ts, "p": str(price), "q": str(qty), "m": True}
+
+    self.window.process_trade(trade_msg)
+
+    flags = [f for f in self.window._flags if f["type"] == "SYNTHETIC_TRUE_FILL"]
+    self.assertEqual(len(flags), 1)
+
+
+
+def test_synthetic_partial_fill(self):
+    ts = 100000
+    price = 99.5
+    qty = 5.0
+    side = "bid"
+    key = (side, price)
+
+    self.window.cancel_cache[key] = (ts - 50, 10.0)
+    trade_msg = {"T": ts, "p": str(price), "q": str(qty), "m": True}
+
+    self.window.process_trade(trade_msg)
+
+    flags = [f for f in self.window._flags if f["type"] == "SYNTHETIC_PARTIAL_FILL"]
+    self.assertEqual(len(flags), 1)
+
+
+def test_synthetic_weak_fill(self):
+    ts = 100000
+    price = 99.5
+    qty = 1.0
+    side = "bid"
+    key = (side, price)
+
+    self.window.cancel_cache[key] = (ts - 50, 10.0)
+    trade_msg = {"T": ts, "p": str(price), "q": str(qty), "m": True}
+
+    self.window.process_trade(trade_msg)
+
+    flags = [f for f in self.window._flags if f["type"] == "SYNTHETIC_WEAK_FILL"]
+    self.assertEqual(len(flags), 1)
+
+
+
+def test_synthetic_ladder_fill(self):
+    ts = 100000
+    price = 99.5
+    qty = 10.0
+    side = "bid"
+    key = (side, price)
+
+    self.window.cancel_cache[key] = (ts - 50, 10.0)
+    self.window.active_ladder = {
+        "side": side,
+        "prices": {price},
+        "timestamp": ts - 100,
+        "filled": False
+    }
+
+    trade_msg = {"T": ts, "p": str(price), "q": str(qty), "m": True}
+    self.window.process_trade(trade_msg)
+
+    flags = [f for f in self.window._flags if f["type"] == "SYNTHETIC_LADDER_FILL"]
+    self.assertEqual(len(flags), 1)
+
+
+
+def test_synthetic_layer_fill(self):
+    ts = 100000
+    price = 99.5
+    qty = 10.0
+    side = "bid"
+    key = (side, price)
+
+    self.window.cancel_cache[key] = (ts - 50, 10.0)
+    orderid = self.window._next_id()
+    self.window.order_ids[key] = orderid
+    self.layering.register_order(orderid, ts - 100, price, qty, side)
+    self.layering.register_cancel(orderid, ts - 50, "cancel", price, qty, side)
+
+    trade_msg = {"T": ts, "p": str(price), "q": str(qty), "m": True}
+    self.window.process_trade(trade_msg)
+
+    flags = [f for f in self.window._flags if f["type"] == "SYNTHETIC_LAYER_FILL"]
+    self.assertEqual(len(flags), 1)
+
+
+
+
+def test_synthetic_fill_no_cancel(self):
+    ts = 100000
+    price = 99.9
+    qty = 10.0
+    side = "bid"
+
+    trade_msg = {"T": ts, "p": str(price), "q": str(qty), "m": True}
+    self.window.process_trade(trade_msg)
+
+    flags = [f for f in self.window._flags if f["type"] == "SYNTHETIC_FILL_NO_CANCEL"]
+    self.assertEqual(len(flags), 1)
+
+
+
+def test_synthetic_ladder_fill_expired(self):
+    ts = 100000
+    price = 99.5
+    qty = 10.0
+    side = "bid"
+
+    self.window.active_ladder = {
+        "side": side,
+        "prices": {price},
+        "timestamp": ts - 1000,
+        "filled": False
+    }
+
+    trade_msg = {"T": ts, "p": str(price), "q": str(qty), "m": True}
+    self.window.process_trade(trade_msg)
+
+    flags = [f for f in self.window._flags if f["type"] == "SYNTHETIC_LADDER_FILL_EXPIRED"]
+    self.assertEqual(len(flags), 1)

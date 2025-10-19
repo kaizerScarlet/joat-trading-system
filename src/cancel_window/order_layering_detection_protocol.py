@@ -28,3 +28,27 @@ class OrderLayeringDetectionProtocol(Protocol):
 
     def get_debug_view(self) -> Dict[str, Any]:
         """Returns a snapshot of internal state for debugging and inspection."""
+
+    def refresh_layering_cache(self):
+        """
+        Refresh the layering cache if enough time has passed since the last update.
+        This avoids recomputing layering clusters on every fill.
+        """
+
+    def force_refresh_layering_cache(self):
+        """
+        Manually refresh layering cache regardless of interval.
+        Useful for batch updates or diagnostic snapshots.
+        """
+
+    def get_layering_clusters(self) -> List[Dict[str, Any]]:
+        """
+        Returns the current cached layering clusters.
+        Useful for overlays, dashboards, or symbolic narration.
+        """
+
+    def is_layered_order(self, orderid: str) -> bool:
+        """
+        Returns True if the given orderid was part of a detected layering cluster.
+        Uses cached clusters for performance.
+        """

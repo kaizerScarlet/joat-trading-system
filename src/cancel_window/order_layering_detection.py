@@ -55,6 +55,12 @@ class OrderLayeringDetection:
         self.retention_ms = retention_ms
         self.min_size_per_order = min_size_per_order
 
+        self._layering_cache: List[Dict[str, Any]] = []  # Stores recent layering clusters
+        self._last_cache_time: int = 0                  # Timestamp of last cache refresh
+        self._cache_interval_ms: int = 1000             # Minimum interval between refreshes (1 second)
+
+
+
 
 
         self.orders_log: List[Dict[str, Any]] = []  #All order placements
@@ -203,6 +209,49 @@ class OrderLayeringDetection:
        
 
         return suspicious_clusters
+    
+    def refresh_layering_cache(self):
+        """
+        Refresh the layering cache if enough time has passed since the last update.
+        This avoids recomputing layering clusters on every fill.
+        """
+        current_time = int(time.time() * 1000)
+        if current_time - self._last_cache_time >= self._cache_interval_ms:
+            self._layering_cache = self.detect_layering()
+            self._last_cache_time = current_time
+
+    def force_refresh_layering_cache(self):
+        """
+        Manually refresh layering cache regardless of interval.
+        Useful for batch updates or diagnostic snapshots.
+        """
+        self._layering_cache = self.detect_layering()
+        self._last_cache_time = int(time.time() * 1000)
+
+    def get_layering_clusters(self) -> List[Dict[str, Any]]:
+        """
+        Returns the current cached layering clusters.
+        Useful for overlays, dashboards, or symbolic narration.
+        """
+        self.refresh_layering_cache()
+        return self._layering_cache
+
+
+
+
+    def is_layered_order(self, orderid: str) -> bool:
+        """
+        Returns True if the given orderid was part of a detected layering cluster.
+        Uses cached clusters for performance.
+        """
+        self.refresh_layering_cache()
+        for cluster in self._layering_cache:
+            for order in cluster["orders"]:
+                if order["orderid"] == orderid:
+                    return True
+        return False
+
+
     
     def _prune(self):
         """Hybrid pruning: keep only events within retention window """

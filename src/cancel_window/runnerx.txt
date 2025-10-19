@@ -16,6 +16,8 @@ from alpha_scoring.alpha_pipeline import AlphaSignalPipeline
 
 from market_data.orderbook import OrderBook
 
+from cancel_window.flag_router import FlagRouter
+
 from cancel_window.simple_cancel_window import CancelWindowTunerForLayering
 from cancel_window.simple_cancel_window import CancelWindowTuner
 
@@ -41,6 +43,7 @@ class BinanceCancelWindowRunner:
                 order_age_scorer: OrderAgeDistributionScorer, 
                 orderbook: OrderBook, 
                 cancel_window: SimpleCancelWindow, 
+                flag_router = FlagRouter,
                 symbol: str = SYMBOL):
         
         self.symbol = symbol.lower()
@@ -108,7 +111,8 @@ class BinanceCancelWindowRunner:
                     l2_seen = trade_seen = False
                     flags = self.cancel_window.flush_flags()
 
-                
+                    for flag in flags:
+                        self.flag_router.route(flag)
 
                     # === Simple Cancel Activity  Diagnostics ===
                     simpleCancelActivityDiagnostics = self.cancel_window.get_debug_view()
@@ -287,6 +291,11 @@ if __name__ == "__main__":
         tunerforlayering = CancelWindowTunerForLayering()
         order_layering_tracker = OrderLayeringDetection(tunerforlayering)
 
+        flag_router =  FlagRouter()
+
+        flag_router.register_detector(order_layering_tracker)
+        flag_router.enable_introspection()
+
         tuner = CancelWindowTuner()
 
         order_layering_score = LayeringScoring(layering_detector=order_layering_tracker)
@@ -340,6 +349,7 @@ if __name__ == "__main__":
             order_age_scorer=order_age_tracker_score,
             cancel_window=cancel_window,
             orderbook=order_book,
+            flag_router=flag_router
         )
 
         await runner.connect()
