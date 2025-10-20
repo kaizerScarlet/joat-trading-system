@@ -355,6 +355,7 @@ class ExecutionCoordinator:
           ladder_type = laddering_signal.get('type')
           ladder_side = laddering_signal.get('side')
           ladder_filled = laddering_signal.get('filled', False)
+          
           # Laddering overrides
           if ladder_type == "LADDER_CANCEL_ONLY" :
                if ladder_side == "bid":
