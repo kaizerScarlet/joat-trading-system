@@ -9,8 +9,15 @@ class CancelDensityDetection:
         self.threshold = threshold
         self.events: List[Dict[str, Any]] = []
 
-    def register_cancel(self, timestamp: int, price: float, side: str):
-        self.events.append({'timestamp': timestamp, 'price': price, 'side': side})
+    def register_cancel(self, orderid: str, timestamp: int, event_type, price: float, size:float ,  side: str):
+        self.events.append({
+            'orderid': orderid,
+            'timestamp': timestamp,
+            'event_type': event_type,
+            'size': size,
+            'price': price, 
+            'side': side})
+        
         self._prune()
 
     def _prune(self):

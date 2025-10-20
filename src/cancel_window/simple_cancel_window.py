@@ -12,6 +12,11 @@ from cancel_window.order_age_distribution_protocol import OrderAgeDistributionPr
 from cancel_window.order_layering_detection_protocol import OrderLayeringDetectionProtocol
 from cancel_window.order_laddering_detection_protocol import OrderLadderingDetectionProtocol
 from cancel_window.synthetic_fill_detector import SyntheticFillDetection
+from cancel_window.order_spoofing_detection import OrderSpoofingDetection
+from cancel_window.cancel_density_detection import CancelDensityDetection
+from cancel_window.order_iceberg_detection import OrderIcebergDetection
+
+
 
 # ====== adaptive_density_tuner.py
 class AdaptiveDensityWindow:
@@ -154,6 +159,9 @@ class SimpleCancelWindow(CancelWindow):
     def __init__(self, tuner: CancelWindowTuner, order_layering:OrderLayeringDetectionProtocol,
                   order_ladder_tracker: OrderLadderingDetectionProtocol,
                   synthetic_fill_detector: SyntheticFillDetection,
+                  order_spoofing: OrderSpoofingDetection,
+                  order_cancel_density: CancelDensityDetection,
+                  order_iceberg_detection: OrderIcebergDetection,
                   order_age_tracker: OrderAgeDistributionProtocol, 
                   order_book: OrderBookProtocol, classifier: CognitiveMarketRegimeClassifierProtocol, market_type: str = "spot"):
         
@@ -165,6 +173,9 @@ class SimpleCancelWindow(CancelWindow):
         self.order_age_tracker = order_age_tracker
         self.order_ladder_tracker = order_ladder_tracker
         self.synthetic_fill_detector = synthetic_fill_detector
+        self.order_spoofing_detector = order_spoofing
+        self.order_iceberg_detector = order_iceberg_detection
+        self.order_cancel_density_detector = order_cancel_density
 
         self._flags: List[Dict[str,Any]] = []
 
@@ -380,6 +391,16 @@ class SimpleCancelWindow(CancelWindow):
                                 side=side
                             )
 
+                            self.order_spoofing_detector.register_event(
+                                orderid=orderid,
+                                timestamp=ts,
+                                event_type="CANCEL_SPOOF",
+                                price=price,
+                                size=size,
+                                side=side
+
+                            )
+
                         # --- Record cancel timestamp ---
                         self.cancel_timestamps.setdefault(key, []).append(ts)
 
@@ -491,6 +512,15 @@ class SimpleCancelWindow(CancelWindow):
                     })
                     #Pass along to OrderAgeDistribution to tag
                     self.order_age_tracker.fill_order(orderid=orderid, timestamp=ts, event_type=flag_type, price=price, size=qty, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
+
+                    self.order_iceberg_detector.register_event(
+                        orderid=orderid,
+                        timestamp=ts,
+                        event_type=flag_type,
+                        price=price,
+                        size=qty,
+                        side=side
+                    )
 
                 else:
                     #Fallback detection: fill seen at meaningful price w/o cancel
@@ -707,7 +737,7 @@ class SimpleCancelWindow(CancelWindow):
                 }
              })
                 self.order_age_tracker.fill_order(orderid=orderid, timestamp=ts, event_type="SYNTHETIC_LADDER_FILL_EXPIRED", price=price, size=qty, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
-                self.order_ladder_tracker.register_event(orderid=orderid, timestamp=ts, event_type="SYNTHETIC_LADDER_FILL_EXPIRED", price=price, size=size, side=side)
+                self.order_ladder_tracker.register_event(orderid=orderid, timestamp=ts, event_type="SYNTHETIC_LADDER_FILL_EXPIRED", price=price, size=qty, side=side)
 
             # === Layering fallback ===
             already_tagged_as_layered = any(f["type"] == "SYNTHETIC_LAYER_FILL" and f["orderid"] == orderid for f in self._flags)
@@ -899,6 +929,8 @@ class SimpleCancelWindow(CancelWindow):
                         "Cancel Density": self.get_cancel_density(side)
                     }
                 })
+                self.order_age_tracker.cancel_order(orderid=orderid, timestamp=timestamp, event_type='CANCEL_DENSITY_SPIKE', price=price, size=0.0, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
+                self.order_cancel_density_detector.register_cancel(orderid=orderid, timestamp=timestamp, event_type='CANCEL_DENSITY_SPIKE', price=price, size=0.0, side=side)
 
 
 
@@ -933,6 +965,7 @@ class SimpleCancelWindow(CancelWindow):
             })
             #Pass along to OrderAgeDistribution to tag
             self.order_age_tracker.cancel_order(orderid=orderid, timestamp=timestamp, event_type='BURST_CANCEL', price=price, size=size, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
+            self.order_spoofing_detector.register_event(orderid=orderid, timestamp=timestamp, event_type='BURST_CANCEL', price=price, size=size, side=side)
 
     def detect_ping_cancel(self, timestamp: int, price: float, side: str, size: float):
         "Tracks orders placed for a very short time (ping for liquidity)"
@@ -969,6 +1002,7 @@ class SimpleCancelWindow(CancelWindow):
                 })
                 #Pass along to OrderAgeDistribution to tag
                 self.order_age_tracker.cancel_order(orderid=orderid, timestamp=timestamp, event_type='PING_CANCEL', price=price, size=size, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
+                self.order_spoofing_detector.register_event(orderid=orderid, timestamp=timestamp, event_type='PING_CANCEL', price=price, size=size, side=side) 
 
     def detect_reposting_behavior(self, timestamp: int, price: float, side:str, size: float):
         """Tracks cancel at price and re-add at same/ nearby price (spoofing/layering)"""
@@ -990,6 +1024,7 @@ class SimpleCancelWindow(CancelWindow):
             })
             #Pass along to OrderAgeDistribution to tag
             self.order_age_tracker.cancel_order(orderid=orderid, timestamp=timestamp, event_type='REPOSTING_BEHAVIOUR', price=price, size=size, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
+            self.order_spoofing_detector.register_event(orderid=orderid, timestamp=timestamp, event_type='REPOSTING_BEHAVIOUR', price=price, size=size, side=side)  
 
     def detect_layer_wipe(self, timestamp: int, price: float, side:str, size:float):
         """Cancelling several price at once in a single direction(layer wipe)"""
@@ -1097,6 +1132,15 @@ class SimpleCancelWindow(CancelWindow):
                 price=price,
                 size=total_size,
                 distance_from_best=abs(self.orderbook.get_best_price(side) - price),
+                side=side
+            )
+
+            self.order_iceberg_detector.register_event(
+                orderid=orderid,
+                timestamp=last_ts,
+                event_type='ICEBERG_CANCEL',
+                price=price,
+                size=total_size,
                 side=side
             )
 
