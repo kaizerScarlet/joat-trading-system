@@ -4,6 +4,12 @@ from typing import Dict, Optional, Tuple, Any
 import logging
 from alpha_scoring.alpha_pipeline_protocol import AlphaSignalPipelineProtocol
 from cancel_window.simple_cancel_window_protocol import CancelWindowProtocol
+from alpha_scoring.order_spoofing_scorer import SpoofingScorer
+from alpha_scoring.synthetic_fill_scorer import SyntheticFillScorer
+from alpha_scoring.order_laddering_scorer import LadderingScorer
+from alpha_scoring.order_iceberg_scorer import IcebergScorer
+from alpha_scoring.cancel_density_scorer import CancelDensityScorer
+
 from dynamic_risk_engine.dynamic_risk_engine_protocol import DynamicRiskEngineProtocol
 from dynamic_risk_engine.throttle_cooldown_manager_protocol import ThrottleCooldownManagerProtocol
 from dynamic_risk_engine.performance_tracker_protocol import PerformanceTrackerProtocol
@@ -63,6 +69,11 @@ class ExecutionCoordinator:
             dynamic_position_sizer: DynamicPositionSizerProtocol,
             cancel_window: CancelWindowProtocol,
             order_book: OrderBookProtocol,
+            cancel_density_scorer: CancelDensityScorer,
+            synthetic_fill_scorer: SyntheticFillScorer,
+            iceberg_scorer: IcebergScorer,
+            laddering_scorer: LadderingScorer,
+            cancel_spoofing_scorer: SpoofingScorer,
             cancel_activity_scorer: CancelActivityScorerProtocol,
             layering_scorer: LayeringScoringProtocol,
             order_age_scorer: OrderAgeDistributionScorerProtocol,
@@ -97,6 +108,13 @@ class ExecutionCoordinator:
         self.spoofing_detector = cancel_activity_scorer
         self.layering_scorer = layering_scorer
         self.order_age_scorer= order_age_scorer
+        self.cancel_density_detector = cancel_density_scorer
+        self.order_ladder_tracker = laddering_scorer
+        self.iceberg_detector = iceberg_scorer
+        self.synthetic_fill_detector = synthetic_fill_scorer
+        self.cancel_spoof_scorer = cancel_spoofing_scorer
+
+
 
         #Instantiate adaptive SL/TP and give it the orderbook so it can fetch microstructure score
         self.sl_and_tp = sl_and_tp
@@ -298,65 +316,101 @@ class ExecutionCoordinator:
          logger.info(f"Adjusted SL/TP after stealth slice fill: SL={sl_price}, TP={tp_price}")
 
     def _decide_trade_side(self) -> Optional[str]:
-               """
-               Decide trade direction based on bid/ask scores.
-               Args:
-                    :param alpha: Dict {'bid": score, 'Ask': score}
-               """
-               alpha = self.alpha_pipeline.get_alpha_signal()
-               bid_score = alpha.get("bid", 0.0)
-               ask_score = alpha.get("ask", 0.0)
+          """
+          Decide trade direction based on alpha scores, behavioral overlays, and regime cognition.
+          """
+          alpha = self.alpha_pipeline.get_alpha_signal()
+          bid_score = alpha.get("bid", 0.0)
+          ask_score = alpha.get("ask", 0.0)
 
-               regime = self.regime_classifier.get_current_regime()
-               current_time = int(time.time() * 1000)
-               spoof_pressure = self.spoofing_detector.compute_score(current_time, side=None)
-               layering_score = self.layering_scorer.compute_score(current_time)
-               order_age_bias = self.order_age_scorer.compute_score(side=None) #returns {'bid': float, 'ask': float }
+          regime = self.regime_classifier.get_current_regime()
+          current_time = int(time.time() * 1000)
 
-               #---- Interpret order age bias ----
-               bid_age_score = order_age_bias.get('bid', 0.0)
-               ask_age_score = order_age_bias.get('ask', 0.0)
+          # Behavioral overlays
+          spoof_pressure = self.cancel_spoof_scorer.compute_score(current_time)
+          layering_score = self.layering_scorer.compute_score(current_time)
+          iceberg_score = self.iceberg_detector.compute_score(current_time)
+          synthetic_fill_confidence = self.synthetic_fill_detector.compute_score(current_time=current_time)
+          cancel_density = self.cancel_density_detector.compute_score(current_time)
+          laddering_signal = self.order_ladder_tracker.compute_score()
 
-               # ----Interpret spoof pressure ----
-               bid_cancel_spoof = spoof_pressure.get('bid', 0.0)
-               ask_cancel_spoof = spoof_pressure.get('ask', 0.0)
+          order_age_bias = self.order_age_scorer.compute_score(side=None)
+          bid_age_score = order_age_bias.get('bid', 0.0)
+          ask_age_score = order_age_bias.get('ask', 0.0)
 
-               #---- Interpret layering score ----
-               bid_layering_score = layering_score.get('layering_score', 0.0)
-               ask_layering_score = layering_score.get('layering_score', 0.0)
-               
-               # ---- Decision Logic ----
-               if bid_score >= self.config["min_confidence_to_trade"] and bid_score > ask_score:
-                    if regime == "TRENDING":
-                         if bid_cancel_spoof < 0.3 or bid_layering_score > 0.5:
-                              return "BUY"
-                    elif regime == "MEAN_REVERTING":
-                         if bid_cancel_spoof > 0.7 or bid_age_score < 0.0:
-                              return None # Fade spoof
-                         return "SELL" # fade bid aggression
-                    elif regime == "ILLIQUID":
-                         if order_age_bias > 0.5 and bid_layering_score > 0.4:
-                              return "BUY" #Follow strong bid aggression
-                    elif regime == "LIQUID":
-                         return "BUY" #Spoof impact low
-                    
-               elif ask_score >= self.config["min_confidence_to_trade"] and ask_score > bid_score:
-                    if regime == "TRENDING":
-                         if ask_cancel_spoof < 0.3 or ask_layering_score > 0.5:
-                              return "SELL"
-                    elif regime == "MEAN_REVERTING":
-                         if ask_cancel_spoof > 0.7 or ask_age_score < 0.0:
-                              return None
-                         return "BUY" # fade ask aggression
-                    elif regime == "ILLIQUID":
-                         if order_age_bias > 0.5 and ask_layering_score > 0.4:
-                              return "SELL" #Follow strong ask aggression
-                    elif regime == "VOLATILE":
-                         if ask_cancel_spoof < 0.5 and ask_layering_score > 0.3:
-                              return "SELL"
-                    elif regime == "LIQUID":
+          bid_cancel_spoof = spoof_pressure.get('bid', 0.0)
+          ask_cancel_spoof = spoof_pressure.get('ask', 0.0)
+
+          bid_layering_score = layering_score.get('bid', 0.0)
+          ask_layering_score = layering_score.get('ask', 0.0)
+
+          bid_density = cancel_density.get('bid', 0.0)
+          ask_density = cancel_density.get('ask', 0.0)
+
+          bid_fill_conf = synthetic_fill_confidence.get('bid', 0.0)
+          ask_fill_conf = synthetic_fill_confidence.get('ask', 0.0)
+
+          iceberg_bias = 'bid' if iceberg_score > 0.6 else 'ask' if iceberg_score < -0.6 else None
+
+          ladder_type = laddering_signal.get('type')
+          ladder_side = laddering_signal.get('side')
+          ladder_filled = laddering_signal.get('filled', False)
+          # Laddering overrides
+          if ladder_type == "LADDER_CANCEL_ONLY" :
+               if ladder_side == "bid":
+                    return "SELL" #Fade simulated bid depth laddering
+               elif ladder_side == "ask":
+                    return "BUY"  #Fade simulated ask depth laddering
+          elif ladder_type == "LADDER_FILL" or ladder_type == "SYNTHETIC_LADDER_FILL":
+               if ladder_side == "bid":
+                    return "BUY"  #Follow through on filled bid laddering
+               elif ladder_side == "ask":
+                    return "SELL" #Follow through on filled ask laddering
+          
+     
+          # --- Decision Logic ---
+          if bid_score >= self.config["min_confidence_to_trade"] and bid_score > ask_score:
+               if regime == "TRENDING":
+                    if bid_cancel_spoof < 0.3 and bid_layering_score > 0.5:
+                         return "BUY"
+                    if iceberg_bias == "bid" and bid_fill_conf > 0.6:
+                         return "BUY"
+               elif regime == "MEAN_REVERTING":
+                    if bid_cancel_spoof > 0.7 or bid_age_score < 0.0 or bid_density > 0.6:
+                         return None  # Fade spoof
+                    return "SELL"  # Fade bid aggression
+               elif regime == "ILLIQUID":
+                    if bid_layering_score > 0.4 and bid_fill_conf > 0.5:
+                         return "BUY"
+               elif regime == "VOLATILE":
+                    if bid_cancel_spoof < 0.5 and bid_layering_score > 0.3:
+                         return "BUY"
+               elif regime == "LIQUID":
+                    if bid_fill_conf > 0.5 and bid_cancel_spoof < 0.4:
+                         return "BUY"
+
+          elif ask_score >= self.config["min_confidence_to_trade"] and ask_score > bid_score:
+               if regime == "TRENDING":
+                    if ask_cancel_spoof < 0.3 and ask_layering_score > 0.5:
                          return "SELL"
-               return None
+                    if iceberg_bias == "ask" and ask_fill_conf > 0.6:
+                         return "SELL"
+               elif regime == "MEAN_REVERTING":
+                    if ask_cancel_spoof > 0.7 or ask_age_score < 0.0 or ask_density > 0.6:
+                         return None
+                    return "BUY"  # Fade ask aggression
+               elif regime == "ILLIQUID":
+                    if ask_layering_score > 0.4 and ask_fill_conf > 0.5:
+                         return "SELL"
+               elif regime == "VOLATILE":
+                    if ask_cancel_spoof < 0.5 and ask_layering_score > 0.3:
+                         return "SELL"
+               elif regime == "LIQUID":
+                    if ask_fill_conf > 0.5 and ask_cancel_spoof < 0.4:
+                         return "SELL"
+
+          return None
+
 
     def _check_pre_trade_conditions(self) -> bool:
             
