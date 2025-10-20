@@ -10,6 +10,8 @@ from dynamic_risk_engine.cognitive_market_regime_classifier_protocol import Cogn
 from market_data.orderbook_protocol import OrderBookProtocol
 from cancel_window.order_age_distribution_protocol import OrderAgeDistributionProtocol
 from cancel_window.order_layering_detection_protocol import OrderLayeringDetectionProtocol
+from cancel_window.order_laddering_detection_protocol import OrderLadderingDetectionProtocol
+from cancel_window.synthetic_fill_detector import SyntheticFillDetection
 
 # ====== adaptive_density_tuner.py
 class AdaptiveDensityWindow:
@@ -150,6 +152,8 @@ class SimpleCancelWindow(CancelWindow):
     """
     # -----------------------------------------------------------------------------------------------#
     def __init__(self, tuner: CancelWindowTuner, order_layering:OrderLayeringDetectionProtocol,
+                  order_ladder_tracker: OrderLadderingDetectionProtocol,
+                  synthetic_fill_detector: SyntheticFillDetection,
                   order_age_tracker: OrderAgeDistributionProtocol, 
                   order_book: OrderBookProtocol, classifier: CognitiveMarketRegimeClassifierProtocol, market_type: str = "spot"):
         
@@ -159,6 +163,8 @@ class SimpleCancelWindow(CancelWindow):
 
         self.order_layering_tracker = order_layering
         self.order_age_tracker = order_age_tracker
+        self.order_ladder_tracker = order_ladder_tracker
+        self.synthetic_fill_detector = synthetic_fill_detector
 
         self._flags: List[Dict[str,Any]] = []
 
@@ -301,7 +307,7 @@ class SimpleCancelWindow(CancelWindow):
                             })
                             #Pass along to OrderAgeDistribution to tag
                             self.order_age_tracker.cancel_order(orderid=orderid, timestamp=ts, event_type='MULTILEVEL_LADDERING', price=price, size=size, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
-                            self.order_layering_tracker.register_cancel(orderid=orderid, timestamp=ts, event_type='MULTILEVEL_LADDERING', price=price, size=size, side=side)
+                            self.order_ladder_tracker.register_event(orderid=orderid, timestamp=ts, event_type='MULTILEVEL_LADDERING', price=price, size=size, side=side)
                             
                             self.active_ladder = {
                                 'side': side,
@@ -406,7 +412,7 @@ class SimpleCancelWindow(CancelWindow):
                                 side=side
                             )
 
-                            self.order_layering_tracker.register_cancel(
+                            self.order_ladder_tracker.register_event(
                                 orderid=orderid,
                                 timestamp=ts,
                                 event_type="LADDER_CANCEL_ONLY",
@@ -542,8 +548,8 @@ class SimpleCancelWindow(CancelWindow):
                     #Pass along to OrderAgeDistribution to tag
                     self.order_age_tracker.fill_order(orderid=orderid, timestamp=ts, event_type=fill_type, price=price, size=qty, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
 
-                    #Pass along to OrderLayeringDetection to tag
-                    self.order_layering_tracker.register_fill(orderid=orderid, timestamp=ts, event_type=fill_type, price=price, size=qty, side=side)
+                    #Pass along to OrderLadderingDetection to tag
+                    self.order_ladder_tracker.register_event(orderid=orderid, timestamp=ts, event_type=fill_type, price=price, size=qty, side=side)
 
                 if self.active_ladder and ts -self.active_ladder['timestamp'] > 300:
                     self.active_ladder =  None
@@ -594,7 +600,7 @@ class SimpleCancelWindow(CancelWindow):
                     }
                 })
                 self.order_age_tracker.fill_order(orderid=orderid, timestamp=ts, event_type=fill_type, size=qty, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
-                
+                self.synthetic_fill_detector.register_event(orderid=orderid, timestamp=ts, event_type=fill_type, price=price, size=qty, side=side)
                 #Tag ladder fill activate ladder matches
                 if self.active_ladder and price in self.active_ladder["prices"] and side == self.active_ladder["side"]:
                     self.active_ladder["filled"] = True
@@ -617,7 +623,7 @@ class SimpleCancelWindow(CancelWindow):
                             "cancel_density": self.get_cancel_density(side)
                         }
                     })
-                    self.order_layering_tracker.register_fill(orderid=orderid, timestamp=ts, event_type=ladder_fill_type, price=price, size=qty, side=side)
+                    self.order_ladder_tracker.register_event(orderid=orderid, timestamp=ts, event_type=ladder_fill_type, price=price, size=qty, side=side)
                     self.order_age_tracker.fill_order(orderid=orderid, timestamp=ts, event_type=ladder_fill_type, price=price, size=qty, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
                 
                 #Tag layered fill if order was part of layering
@@ -676,8 +682,8 @@ class SimpleCancelWindow(CancelWindow):
                         "cancel_density": self.get_cancel_density(side)
                     }
                 })
-
-            self.order_age_tracker.fill_order(orderid=orderid, timestamp=ts, event_type="SYNTHETIC_FILL_NO_CANCEL", price=price, size=qty, distance_from_best=spread, side=side)
+                self.order_age_tracker.fill_order(orderid=orderid, timestamp=ts, event_type="SYNTHETIC_FILL_NO_CANCEL", price=price, size=qty, distance_from_best=spread, side=side)
+                self.synthetic_fill_detector.register_event(orderid=orderid, timestamp=ts, event_type="SYNTHETIC_FILL_NO_CANCEL", price=price, size=qty, side=side)
             self.fill_events.append({
                 "timestamp": ts,
                 "price": price,
@@ -700,6 +706,8 @@ class SimpleCancelWindow(CancelWindow):
                         "depth_depleted": depth_depleted
                 }
              })
+                self.order_age_tracker.fill_order(orderid=orderid, timestamp=ts, event_type="SYNTHETIC_LADDER_FILL_EXPIRED", price=price, size=qty, distance_from_best=abs(self.orderbook.get_best_price(side) - price), side=side)
+                self.order_ladder_tracker.register_event(orderid=orderid, timestamp=ts, event_type="SYNTHETIC_LADDER_FILL_EXPIRED", price=price, size=size, side=side)
 
             # === Layering fallback ===
             already_tagged_as_layered = any(f["type"] == "SYNTHETIC_LAYER_FILL" and f["orderid"] == orderid for f in self._flags)

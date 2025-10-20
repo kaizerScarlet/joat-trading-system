@@ -2,6 +2,7 @@ from alpha_scoring.cancel_activity_scorer_protocol import CancelActivityScorerPr
 from alpha_scoring.order_age_distribution_scorer_protocol import OrderAgeDistributionScorerProtocol
 from alpha_scoring.Order_layering_scorer_protocol import LayeringScoringProtocol
 from alpha_scoring.Alphablender_protocol import AlphaBlenderProtocol
+from alpha_scoring.order_laddering_scorer_protocol import OrderLadderingScoringProtocol
 
 from typing import Dict, Any
 
@@ -15,6 +16,7 @@ class AlphaSignalPipeline:
 
     def __init__(self,
                   cancel_scorer : CancelActivityScorerProtocol,
+                  order_ladder_scorer: OrderLadderingScoringProtocol,
                   age_scorer: OrderAgeDistributionScorerProtocol,
                   layering_scorer: LayeringScoringProtocol,
                   blender: AlphaBlenderProtocol, 
@@ -22,6 +24,7 @@ class AlphaSignalPipeline:
         self.cancel_scorer = cancel_scorer
         self.layering_scorer = layering_scorer
         self.age_scorer = age_scorer
+        self.order_ladder_scorer = order_ladder_scorer
 
         self.blender = blender
 
