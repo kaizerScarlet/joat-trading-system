@@ -1,11 +1,16 @@
 import unittest
+from unittest.mock import MagicMock
 import time
+from dynamic_risk_engine.cognitive_market_regime_classifier import CognitiveMarketRegimeClassifier, MarketRegime    
 from cancel_window.order_iceberg_detection import OrderIcebergDetection
 
 class TestOrderIcebergDetection(unittest.TestCase):
 
     def setUp(self):
-        self.detector = OrderIcebergDetection(retention_ms=300_000)
+        mock_regime = MagicMock()
+        mock_regime.get_current_regime.return_value = MarketRegime.UNKNOWN
+        mock_regime.get_behavioral_overlay.return_value = "NORMAL"
+        self.detector = OrderIcebergDetection(regime_classifier=mock_regime,retention_ms=300_000)
         self.now = int(time.time() * 1000)
 
     def _register_event(self, orderid, offset_ms, event_type, size=1.0, side="bid", price=100.0):
@@ -118,6 +123,21 @@ class TestOrderIcebergDetection(unittest.TestCase):
         self._register_event("orderX", 200, "CANCEL_SPOOF", side="ask")
         iceberg = self.detector.detect_icebergs()[0]
         self.assertEqual(iceberg['side'], "ask")
+    
+    def test_score_amplified_in_volatile_regime(self):
+        self.detector.regime_classifier.get_current_regime.return_value = MarketRegime.VOLATILE
+        self.detector.regime_classifier.get_behavioral_overlay.return_value = "LIQUIDITY_VACUUM"
+
+        for i in range(5):
+            oid = f"order{i}"
+            self._register_event(oid, 0, "REDUCTION")
+            self._register_event(oid, 100, "REDUCTION")
+            self._register_event(oid, 200, "CANCEL_SPOOF")
+
+        score = self.detector.get_iceberg_score()
+        self.assertGreater(score, 0.9)
+        self.assertLessEqual(score, 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()

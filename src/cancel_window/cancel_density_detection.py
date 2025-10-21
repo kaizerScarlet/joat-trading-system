@@ -1,10 +1,12 @@
 from collections import defaultdict
 from typing import List, Dict, Any
+from dynamic_risk_engine.cognitive_market_regime_classifier import CognitiveMarketRegimeClassifier, MarketRegime
 import time
 
 class CancelDensityDetection:
     """Detects abnormal cancel concentration (CANCEL_DENSITY_SPIKE, LAYER_WIPE)."""
-    def __init__(self, window_ms: int = 1000, threshold: int = 5):
+    def __init__(self,regime_classifier: CognitiveMarketRegimeClassifier, window_ms: int = 1000, threshold: int = 5):
+        self.regime_classifier = regime_classifier
         self.window_ms = window_ms
         self.threshold = threshold
         self.events: List[Dict[str, Any]] = []
@@ -34,8 +36,39 @@ class CancelDensityDetection:
                 spikes.append({'side': side, 'count': len(prices), 'unique_prices': len(set(prices))})
         return spikes
 
-    def get_density_score(self):
+    def get_density_score(self, side: str = None) -> float:
         spikes = self.detect_spikes()
-        if not spikes: return 0.0
-        score = sum(s['count'] for s in spikes) / 50.0
+        if side:
+            spikes = [s for s in spikes if s['side'] == side]
+        if not spikes:
+            return 0.0
+
+        # Regime and overlay context
+        regime = self.regime_classifier.get_current_regime()
+        overlay = self.regime_classifier.get_behavioral_overlay()
+
+        # Regime-based weight modulation
+        regime_weights = {
+            MarketRegime.TRENDING: 1.2,
+            MarketRegime.MEAN_REVERTING: 0.9,
+            MarketRegime.VOLATILE: 1.5,
+            MarketRegime.ILLIQUID: 1.3,
+            MarketRegime.UNKNOWN: 1.0
+        }
+        regime_weight = regime_weights.get(regime, 1.0)
+
+        # Overlay-based amplification
+        overlay_boost = {
+            "LAYER_WIPE": 1.4,
+            "CANCEL_DENSITY_SPIKE": 1.3,
+            "CHOPPY_NOISE": 0.8,
+            "NORMAL": 1.0
+        }
+        overlay_factor = overlay_boost.get(overlay, 1.0)
+
+        # Raw score: cancel count per side
+        raw_score = sum(s['count'] for s in spikes) / 50.0
+
+        # Final score with behavioral modulation
+        score = raw_score * regime_weight * overlay_factor
         return min(1.0, score)

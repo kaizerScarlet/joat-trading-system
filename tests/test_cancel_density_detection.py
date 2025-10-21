@@ -1,11 +1,17 @@
 import unittest
+from unittest.mock import Mock
 import time
+from dynamic_risk_engine.cognitive_market_regime_classifier import CognitiveMarketRegimeClassifier, MarketRegime
 from cancel_window.cancel_density_detection import CancelDensityDetection
 
 class TestCancelDensityDetection(unittest.TestCase):
 
     def setUp(self):
-        self.detector = CancelDensityDetection(window_ms=1000, threshold=5)
+        # Mock the regime classifier
+        mock_regime = Mock()
+        mock_regime.get_current_regime.return_value = MarketRegime.UNKNOWN
+        mock_regime.get_behavioral_overlay.return_value = "NORMAL"
+        self.detector = CancelDensityDetection(regime_classifier= mock_regime,window_ms=1000, threshold=5)
         self.now = int(time.time() * 1000)
 
     def _register_batch(self, side: str, count: int, price_start: float = 100.0, spacing: float = 0.1):
@@ -109,6 +115,17 @@ class TestCancelDensityDetection(unittest.TestCase):
             )
         spikes = self.detector.detect_spikes()
         self.assertEqual(spikes[0]['unique_prices'], 1)
+
+    def test_score_amplified_in_volatile_regime(self):
+        self.detector.regime_classifier.get_current_regime.return_value = MarketRegime.VOLATILE
+        self.detector.regime_classifier.get_behavioral_overlay.return_value = "CANCEL_DENSITY_SPIKE"
+
+        self._register_batch("bid", count=20)
+        score = self.detector.get_density_score()
+        self.assertGreaterEqual(score, 0.75)
+        self.assertLessEqual(score, 1.0)
+
+
 
 if __name__ == "__main__":
     unittest.main()
