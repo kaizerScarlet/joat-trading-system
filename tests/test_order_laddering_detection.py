@@ -1,11 +1,16 @@
 import unittest
+from unittest.mock import MagicMock
 import time
+from dynamic_risk_engine.cognitive_market_regime_classifier import MarketRegime, CognitiveMarketRegimeClassifier
 from cancel_window.order_laddering_detection import OrderLadderingDetection
 
 class TestOrderLadderingDetection(unittest.TestCase):
 
     def setUp(self):
-        self.detector = OrderLadderingDetection(retention_ms=300_000, step_window_ms=500)
+        mock_regime = MagicMock()
+        mock_regime.get_current_regime.return_value = MarketRegime.UNKNOWN
+        mock_regime.get_behavioral_overlay.return_value = "NORMAL"
+        self.detector = OrderLadderingDetection(regime_classifier=mock_regime,retention_ms=300_000, step_window_ms=500)
         self.now = int(time.time() * 1000)
 
     def _register_ladder_event(self, orderid, offset_ms, event_type, price, size, side):
@@ -65,6 +70,9 @@ class TestOrderLadderingDetection(unittest.TestCase):
         """
         for i in range(20):
             self._register_ladder_event(f"order{i}", i * 10, "LADDER_TRUE_FILL", 100.0 + i, 5.0, "bid")
+        self.detector.regime_classifier.get_current_regime.return_value = MarketRegime.VOLATILE
+        self.detector.regime_classifier.get_behavioral_overlay.return_value = "LIQUIDITY_VACUUM"
+
         score = self.detector.get_laddering_score()
         self.assertEqual(score, 1.0)
 
@@ -126,6 +134,19 @@ class TestOrderLadderingDetection(unittest.TestCase):
         self._register_ladder_event("order3", 200, "MULTILEVEL_LADDERING", 100.0, 1.0, "ask")
         direction = self.detector.detect_laddering_sequeces()[0]['direction']
         self.assertEqual(direction, "down")
+
+    def test_score_amplified_in_volatile_regime(self):
+        self.detector.regime_classifier.get_current_regime.return_value = MarketRegime.VOLATILE
+        self.detector.regime_classifier.get_behavioral_overlay.return_value = "LIQUIDITY_VACUUM"
+        # Register dense laddering events...
+        for i in range(20):
+            self._register_ladder_event(
+            f"order{i}", i * 10, "LADDER_TRUE_FILL", 100.0 + i, 5.0, "bid"
+        )
+
+        score = self.detector.get_laddering_score()
+        self.assertEqual(score, 1.0)  # Expect cap due to amplification
+
 
 if __name__ == "__main__":
     unittest.main()

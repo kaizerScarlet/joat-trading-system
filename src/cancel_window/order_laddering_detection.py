@@ -1,5 +1,6 @@
 from collections  import defaultdict
 from typing import List, Dict, Any
+from dynamic_risk_engine.cognitive_market_regime_classifier import MarketRegime, CognitiveMarketRegimeClassifier
 import time
 
 class OrderLadderingDetection:
@@ -11,7 +12,8 @@ class OrderLadderingDetection:
 
     """
 
-    def __init__(self, retention_ms: int = 300_000, step_window_ms: int = 500):
+    def __init__(self,regime_classifier: CognitiveMarketRegimeClassifier, retention_ms: int = 300_000, step_window_ms: int = 500):
+        self.regime_classifier = regime_classifier
         self.retention_ms = retention_ms
         self.step_window_ms = step_window_ms
         self.events: List[Dict[str, Any]] = []
@@ -19,6 +21,7 @@ class OrderLadderingDetection:
     def register_event(self, orderid: str, timestamp: int, event_type: str, price: float, size: float, side: str):
         self.events.append({
             "orderid": orderid,
+            "event_type": event_type,  
             "timestamp": timestamp,
             "price": price,
             "size": size,
@@ -46,21 +49,34 @@ class OrderLadderingDetection:
 
         for side, events in by_side.items():
             events.sort(key=lambda x: x['timestamp'])
+            if not events:
+                continue
+
             seq = [events[0]]
             for e in events[1:]:
                 prev = seq[-1]
                 time_diff = e['timestamp'] - prev['timestamp']
                 price_diff = abs(e['price'] - prev['price'])
 
+                # Price step movement in one direction, within short time window
+                if side == "bid":
+                    same_direction = e['price'] > prev['price']
+                else:
+                    same_direction = e['price'] < prev['price']
 
-                #Price step movement in one direction, within short time window
-                same_direction = (e['price'] > prev['price'] == (side == "bid"))
                 if time_diff <= self.step_window_ms and price_diff > 0 and same_direction:
                     seq.append(e)
                 else:
                     if len(seq) >= 3:
                         sequences.append(self._summarize_sequence(side, seq))
+                    seq = [e]
+
+            # Final sequence capture
+            if len(seq) >= 3:
+                sequences.append(self._summarize_sequence(side, seq))
+
         return sequences
+
     
 
     def _summarize_sequence(self, side, seq):
@@ -75,9 +91,39 @@ class OrderLadderingDetection:
             "types": list({e['event_type'] for e in seq})
         }
     
-    def get_laddering_score(self) -> float:
+    def get_laddering_score(self, side: str = None) -> float:
         sequences = self.detect_laddering_sequeces()
+        if side:
+            sequences = [s for s in sequences if s['side'] == side]
         if not sequences:
             return 0.0
-        score = sum(s['count'] * s['avg_size'] / (s['duration_ms'] + 1) for s in sequences)
-        return min(1.0, score / 10.0)
+
+        # Regime and overlay context
+        regime = self.regime_classifier.get_current_regime()
+        overlay = self.regime_classifier.get_behavioral_overlay()
+
+        # Regime-based weight modulation
+        regime_weights = {
+            MarketRegime.TRENDING: 1.2,
+            MarketRegime.MEAN_REVERTING: 0.9,
+            MarketRegime.VOLATILE: 1.5,
+            MarketRegime.ILLIQUID: 1.3,
+            MarketRegime.UNKNOWN: 1.0
+        }
+        regime_weight = regime_weights.get(regime, 1.0)
+
+        # Overlay-based amplification
+        overlay_boost = {
+            "LIQUIDITY_VACUUM": 1.4,
+            "MOMENTUM_EXHAUSTION": 1.2,
+            "CHOPPY_NOISE": 0.8,
+            "NORMAL": 1.0
+        }
+        overlay_factor = overlay_boost.get(overlay, 1.0)
+
+        # Raw score: density-weighted laddering intensity
+        raw_score = sum(s['count'] * s['avg_size'] / (s['duration_ms'] + 1) for s in sequences)
+
+        # Final score with behavioral modulation
+        score = raw_score * regime_weight * overlay_factor
+        return min(1.0, score)

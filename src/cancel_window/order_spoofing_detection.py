@@ -1,4 +1,5 @@
 from collections import defaultdict
+from dynamic_risk_engine.cognitive_market_regime_classifier import CognitiveMarketRegimeClassifier, MarketRegime
 from typing import List, Dict, Any
 import time
 
@@ -8,7 +9,8 @@ class OrderSpoofingDetection:
     Inputs: events like CANCEL_SPOOF, PING_CANCEL, REPOSTING_BEHAVIOUR, BURST_CANCEL.
     Output: clusters summarizing spoof-like bursts per side.
     """
-    def __init__(self, retention_ms: int = 300_000, burst_window_ms: int = 250):
+    def __init__(self, regime_classifier:CognitiveMarketRegimeClassifier,  retention_ms: int = 300_000, burst_window_ms: int = 250):
+        self.regime_classifier = regime_classifier
         self.retention_ms = retention_ms
         self.burst_window_ms = burst_window_ms
         self.events: List[Dict[str, Any]] = []
@@ -49,8 +51,48 @@ class OrderSpoofingDetection:
             'types': list({e['event_type'] for e in cluster})
         }
 
-    def get_spoofing_score(self) -> float:
+    def get_spoofing_score(self, side: str = None) -> float:
         clusters = self.detect_spoofing_clusters()
-        if not clusters: return 0.0
-        score = sum(c['count'] / (c['duration_ms'] + 1) for c in clusters)
-        return min(1.0, score / 50.0)
+        if side:
+            clusters = [c for c in clusters if c['side'] == side]
+        if not clusters:
+            return 0.0
+
+        # Regime and overlay context
+        regime = self.regime_classifier.get_current_regime()
+        overlay = self.regime_classifier.get_behavioral_overlay()
+
+        # Regime-based weight modulation
+        regime_weights = {
+            MarketRegime.TRENDING: 0.8,
+            MarketRegime.MEAN_REVERTING: 1.2,
+            MarketRegime.VOLATILE: 1.5,
+            MarketRegime.ILLIQUID: 1.3,
+            MarketRegime.UNKNOWN: 1.0
+        }
+        weight = regime_weights.get(regime, 1.0)
+
+        # Overlay-based amplification
+        overlay_boost = {
+            "LIQUIDITY_VACUUM": 1.4,
+            "MOMENTUM_EXHAUSTION": 1.2,
+            "CHOPPY_NOISE": 0.8,
+            "NORMAL": 1.0
+        }
+        overlay_factor = overlay_boost.get(overlay, 1.0)
+
+        # Density scoring
+        densities = [c['count'] / (c['duration_ms'] + 1) for c in clusters]
+        max_density = max(densities)
+        avg_duration = sum(c['duration_ms'] for c in clusters) / len(clusters)
+
+        adjusted_scores = [
+            (d / max_density) * (avg_duration / (c['duration_ms'] + 1))
+            for d, c in zip(densities, clusters)
+        ]
+
+        # Final score with regime and overlay modulation
+        score = sum(adjusted_scores) * weight * overlay_factor
+        return min(1.0, score)
+
+

@@ -1,11 +1,16 @@
 import unittest
+from unittest.mock import MagicMock
 import time
 from cancel_window.synthetic_fill_detector import SyntheticFillDetection
+from dynamic_risk_engine.cognitive_market_regime_classifier import CognitiveMarketRegimeClassifier, MarketRegime
 
 class TestSyntheticFillDetection(unittest.TestCase):
 
     def setUp(self):
-        self.detector = SyntheticFillDetection(retention_ms=300_000)
+        mock_regime = MagicMock()
+        mock_regime.get_current_regime.return_value = MarketRegime.UNKNOWN
+        mock_regime.get_behavioral_overlay.return_value = "NORMAL"
+        self.detector = SyntheticFillDetection(regime_classifier=mock_regime,retention_ms=300_000)
         self.now = int(time.time() * 1000)
 
     def _register_event(self, orderid, offset_ms, event_type, price=100.0, size=1.0, side="bid"):
