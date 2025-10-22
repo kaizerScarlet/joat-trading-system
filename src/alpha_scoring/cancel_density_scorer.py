@@ -11,7 +11,20 @@ class CancelDensityScorer:
 
     def compute_score(self, current_time=None) -> Dict[str, float]:
         current_time = current_time or int(time.time() * 1000)
-        spikes = self.detector.detect_spikes()
+        spikes = self.detector.detect_spikes(current_time=current_time)
+        
+        # If no spikes are detected, decay the last score and return it
+        if not spikes:
+            decay = 1.0 if not self.last_time else 0.5 ** ((current_time - self.last_time) / self.decay_half_life)
+            score = {
+                'ask': self.last_score['ask'] * decay,
+                'bid': self.last_score['bid'] * decay
+            }
+            self.last_time = current_time
+            self.last_score = score
+            return score
+
+        # Other wise compute fresh
         score = {'ask': 0.0, 'bid': 0.0}
         for s in spikes:
             side = s['side']
@@ -19,7 +32,8 @@ class CancelDensityScorer:
             score[side] += self.base_score * intensity
         for s in ['ask', 'bid']:
             decay = 1.0 if not self.last_time else 0.5 ** ((current_time - self.last_time) / self.decay_half_life)
-            score[s] = min(1.0, score[s] * decay + self.last_score[s] * (1 - decay))
+            score[s] = min(1.0, score[s] + self.last_score[s] * (1.0 - decay))
+
         self.last_time = current_time
         self.last_score = score
         return score

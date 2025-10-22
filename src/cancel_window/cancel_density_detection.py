@@ -20,15 +20,20 @@ class CancelDensityDetection:
             'price': price, 
             'side': side})
         
-        self._prune()
+        self._prune(timestamp)
 
-    def _prune(self):
-        cutoff = int(time.time() * 1000) - self.window_ms
+    def _prune(self, current_time: int = None) -> None:
+        current_time = current_time or int(time.time() * 1000)
+        cutoff = current_time - self.window_ms
         self.events = [e for e in self.events if e['timestamp'] >= cutoff]
 
-    def detect_spikes(self) -> List[Dict[str, Any]]:
+    def detect_spikes(self, current_time: int = None) -> List[Dict[str, Any]]:
+        current_time = current_time or int(time.time() * 1000)
+        cutoff = current_time - self.window_ms
         by_side = defaultdict(list)
-        for e in self.events: by_side[e['side']].append(e)
+        for e in self.events:
+            if e['timestamp'] >= cutoff: 
+                by_side[e['side']].append(e)
         spikes = []
         for side, evs in by_side.items():
             prices = [e['price'] for e in evs]
@@ -36,8 +41,8 @@ class CancelDensityDetection:
                 spikes.append({'side': side, 'count': len(prices), 'unique_prices': len(set(prices))})
         return spikes
 
-    def get_density_score(self, side: str = None) -> float:
-        spikes = self.detect_spikes()
+    def get_density_score(self, side: str = None, current_time: int = None) -> float:
+        spikes = self.detect_spikes(current_time=current_time)
         if side:
             spikes = [s for s in spikes if s['side'] == side]
         if not spikes:

@@ -4,11 +4,12 @@ from typing import Dict, Optional, Tuple, Any
 import logging
 from alpha_scoring.alpha_pipeline_protocol import AlphaSignalPipelineProtocol
 from cancel_window.simple_cancel_window_protocol import CancelWindowProtocol
-from alpha_scoring.order_spoofing_scorer import SpoofingScorer
-from alpha_scoring.synthetic_fill_scorer import SyntheticFillScorer
-from alpha_scoring.order_laddering_scorer import LadderingScorer
-from alpha_scoring.order_iceberg_scorer import IcebergScorer
-from alpha_scoring.cancel_density_scorer import CancelDensityScorer
+
+from cancel_window.order_spoofing_detection import OrderSpoofingDetection
+from cancel_window.synthetic_fill_detector import SyntheticFillDetection
+from cancel_window.order_laddering_detection import OrderLadderingDetection
+from cancel_window.order_iceberg_detection import OrderIcebergDetection
+from cancel_window.cancel_density_detection import CancelDensityDetection
 
 from dynamic_risk_engine.dynamic_risk_engine_protocol import DynamicRiskEngineProtocol
 from dynamic_risk_engine.throttle_cooldown_manager_protocol import ThrottleCooldownManagerProtocol
@@ -69,11 +70,11 @@ class ExecutionCoordinator:
             dynamic_position_sizer: DynamicPositionSizerProtocol,
             cancel_window: CancelWindowProtocol,
             order_book: OrderBookProtocol,
-            cancel_density_scorer: CancelDensityScorer,
-            synthetic_fill_scorer: SyntheticFillScorer,
-            iceberg_scorer: IcebergScorer,
-            laddering_scorer: LadderingScorer,
-            cancel_spoofing_scorer: SpoofingScorer,
+            cancel_density_scorer: CancelDensityDetection,
+            synthetic_fill_scorer: SyntheticFillDetection,
+            iceberg_scorer: OrderIcebergDetection,
+            laddering_scorer: OrderLadderingDetection,
+            cancel_spoofing_scorer: OrderSpoofingDetection,
             cancel_activity_scorer: CancelActivityScorerProtocol,
             layering_scorer: LayeringScoringProtocol,
             order_age_scorer: OrderAgeDistributionScorerProtocol,
@@ -327,14 +328,14 @@ class ExecutionCoordinator:
           current_time = int(time.time() * 1000)
 
           # Behavioral overlays
-          spoof_pressure = self.cancel_spoof_scorer.compute_score(current_time)
-          layering_score = self.layering_scorer.compute_score(current_time)
-          iceberg_score = self.iceberg_detector.compute_score(current_time)
-          synthetic_fill_confidence = self.synthetic_fill_detector.compute_score(current_time=current_time)
-          cancel_density = self.cancel_density_detector.compute_score(current_time)
-          laddering_signal = self.order_ladder_tracker.compute_score()
+          spoof_pressure = self.cancel_spoof_scorer.get_spoofing_score()
+          layering_score = self.layering_scorer.compute_score(current_time) #Confirm this first
+          iceberg_score = self.iceberg_detector.get_iceberg_score()
+          synthetic_fill_confidence = self.synthetic_fill_detector.get_anomaly_score()
+          cancel_density = self.cancel_density_detector.get_density_score()
+          laddering_signal = self.order_ladder_tracker.get_laddering_score()
 
-          order_age_bias = self.order_age_scorer.compute_score(side=None)
+          order_age_bias = self.order_age_scorer.compute_score(side=None) #Confirm first
           bid_age_score = order_age_bias.get('bid', 0.0)
           ask_age_score = order_age_bias.get('ask', 0.0)
 
@@ -370,8 +371,9 @@ class ExecutionCoordinator:
           
      
           # --- Decision Logic ---
-          if bid_score >= self.config["min_confidence_to_trade"] and bid_score > ask_score:
+          if bid_score >= self.config["min_confidence_to_trade"] and bid_score > ask_score: #[Intent Layer]
                if regime == "TRENDING":
+                    #[Pressure Modulation Layer]
                     if bid_cancel_spoof < 0.3 and bid_layering_score > 0.5:
                          return "BUY"
                     if iceberg_bias == "bid" and bid_fill_conf > 0.6:
@@ -390,8 +392,9 @@ class ExecutionCoordinator:
                     if bid_fill_conf > 0.5 and bid_cancel_spoof < 0.4:
                          return "BUY"
 
-          elif ask_score >= self.config["min_confidence_to_trade"] and ask_score > bid_score:
+          elif ask_score >= self.config["min_confidence_to_trade"] and ask_score > bid_score: #[Intent Layer]
                if regime == "TRENDING":
+                    #[Pressure Modulation Layer]
                     if ask_cancel_spoof < 0.3 and ask_layering_score > 0.5:
                          return "SELL"
                     if iceberg_bias == "ask" and ask_fill_conf > 0.6:
