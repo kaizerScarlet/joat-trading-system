@@ -5,7 +5,16 @@ from alpha_scoring.Alphablender_protocol import AlphaBlenderProtocol
 #Test Protocol compliance
 def  test_blender_protoocol_compliance():
     blender: AlphaBlenderProtocol = AlphaBlender(
-        weights = {'cancel_activity': 0.5, 'layering': 0.3, 'order_age': 0.2},
+        weights = {
+            'cancel_activity': 0.2,
+            'cancel_density_score': 0.1,
+            'layering': 0.15,
+            'order_age': 0.1,
+            'order_laddering_score': 0.1,
+            'iceberg_score': 0.1,
+            'order_spoofing_score': 0.15,
+            'synthetic_fill_score': 0.1
+        },
         blending_method = 'weighted average',
         adaptive = False
     )
@@ -18,15 +27,29 @@ def  test_blender_protoocol_compliance():
 
 def test_weighted_average_static():
     blender = AlphaBlender(
-        weights = {'cancel_activity': 0.5, 'layering': 0.3, 'order_age': 0.2},
+        weights = {
+            'cancel_activity': 0.2,
+            'cancel_density_score': 0.1,
+            'layering': 0.15,
+            'order_age': 0.1,
+            'order_laddering_score': 0.1,
+            'iceberg_score': 0.1,
+            'order_spoofing_score': 0.15,
+            'synthetic_fill_score': 0.1
+        },
         blending_method = 'weighted average',
         adaptive = False
     )
 
     blender.update_signals(123,{
-        'cancel_activity': 0.6,
+        'cancel_activity': 0.5,
+        'cancel_density_score': 0.3,
         'layering': 0.4,
-        'order_age': 0.2
+        'order_age': 0.6,
+        'order_laddering_score': 0.2,
+        'iceberg_score': 0.1,
+        'order_spoofing_score': 0.25,
+        'synthetic_fill_score': 0.15
     })
 
     score = blender.compute_alpha_score()
@@ -36,7 +59,18 @@ def test_weighted_average_static():
 
 def test_min_blending():
     blender = AlphaBlender(
-        weights = {'cancel_activity': 1, 'layering' : 1, 'order_age': 1},
+        weights = {
+            'cancel_activity': 1,
+            'cancel_density_score': 1,
+            'layering': 1,
+            'order_age': 1,
+            'order_laddering_score': 1,
+            'iceberg_score': 1,
+            'order_spoofing_score': 1,
+            'synthetic_fill_score': 1
+        },
+
+
         blending_method = 'min',
         adaptive = False
     )
@@ -51,7 +85,16 @@ def test_min_blending():
 
 def test_max_blending():
     blender = AlphaBlender(
-        weights = {'cancel_activity': 1, 'layering': 1, 'order_age': 1},
+        weights = {
+            'cancel_activity': 1,
+            'cancel_density_score': 1,
+            'layering': 1,
+            'order_age': 1,
+            'order_laddering_score': 1,
+            'iceberg_score': 1,
+            'order_spoofing_score': 1,
+            'synthetic_fill_score': 1
+        },
         blending_method = 'max',
         adaptive = False
     )
@@ -66,12 +109,30 @@ def test_max_blending():
 
 def test_adaptive_weights_update():
     blender = AlphaBlender(
-        weights = {'cancel_activity': 0.4, 'layering': 0.3, 'order_age': 0.3},
+        weights = {
+            'cancel_activity': 0.2,
+            'cancel_density_score': 0.1,
+            'layering': 0.15,
+            'order_age': 0.1,
+            'order_laddering_score': 0.1,
+            'iceberg_score': 0.1,
+            'order_spoofing_score': 0.15,
+            'synthetic_fill_score': 0.1
+        },
         blending_method = 'weighted average',
         adaptive = True
     )
 
-    signals = {'cancel_activity': 0.6, 'layering': 0.5, 'order_age': 0.4}
+    signals = {
+        'cancel_activity': 0.5,
+        'cancel_density_score': 0.3,
+        'layering': 0.4,
+        'order_age': 0.6,
+        'order_laddering_score': 0.2,
+        'iceberg_score': 0.1,
+        'order_spoofing_score': 0.25,
+        'synthetic_fill_score': 0.15
+    }
 
     #Simulate 3 trades with feedback
     for pnl in [100, -50, 200]:
@@ -86,12 +147,21 @@ def test_adaptive_weights_update():
 
 def test_reset():
     blender = AlphaBlender(
-        weights = {'cancel_activity': 0.4, 'layering': 0.3, 'order_age': 0.3},
+        weights = {
+            'cancel_activity': 0.2,
+            'cancel_density_score': 0.1,
+            'layering': 0.15,
+            'order_age': 0.1,
+            'order_laddering_score': 0.1,
+            'iceberg_score': 0.1,
+            'order_spoofing_score': 0.15,
+            'synthetic_fill_score': 0.1
+        },
         adaptive = True
 
     )
-    blender.update_signals(1234, {'cancel_activity': 0.9})
-    blender.update_trade_feedback({'cancel_activity': 0.9}, 50)
+    blender.update_signals(1234, {'cancel_activity': 0.9}, side='bid')
+    blender.update_trade_feedback({'cancel_activity': 0.9}, 50, side='bid')
     blender.reset()
 
     for side in ['ask', 'bid']:
@@ -136,7 +206,16 @@ def test_min_blending():
 
 def test_max_blending():
     blender = AlphaBlender(
-        weights={'cancel_activity': 1, 'layering': 1, 'order_age': 1},
+        weights = {
+            'cancel_activity': 1,
+            'cancel_density_score': 1,
+            'layering': 1,
+            'order_age': 1,
+            'order_laddering_score': 1,
+            'iceberg_score': 1,
+            'order_spoofing_score': 1,
+            'synthetic_fill_score': 1
+        },
         blending_method='max',
         adaptive=False
     )
