@@ -263,10 +263,19 @@ class ExecutionCoordinator:
          if order_id == self.sl_order_id:
               await self.exchange_client.cancel_order_by_id(self.tp_order_id)
               self._reset_position_state()
+
+              # Feedback to signal calibrator
+              regime = self.regime_classifier.get_current_regime()
+              self.confidence.update_signal_result(signal_id=f"{regime} alpha_blend: {order_id}", was_correct=False)
+
               return
          # -------Take Profit hit ------
          if order_id == self.tp_order_id:
               await self.exchange_client.cancel_order_by_id(self.sl_order_id)
+              
+              # Feedback to signal calibrator
+              regime = self.regime_classifier.get_current_regime()
+              self.confidence.update_signal_result(signal_id=f"{regime} : alpha_blend: {order_id}", was_correct="True")
               self._reset_position_state()
               return
          
