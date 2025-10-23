@@ -695,6 +695,16 @@ class SimpleCancelWindow(CancelWindow):
                             size=qty,
                             side=side
                         )
+
+                        self.order_age_tracker.fill_order(
+                            orderid=orderid,
+                            timestamp=ts,
+                            event_type=ladder_fill_type,
+                            price=price,
+                            size=qty,
+                            distance_from_best=abs(self.orderbook.get_best_price(side) - price),
+                            side=side
+                        )
                     except Exception:
                         pass
 
@@ -742,6 +752,16 @@ class SimpleCancelWindow(CancelWindow):
                             event_type=layer_fill_type,
                             price=price,
                             size=qty,
+                            side=side
+                        )
+
+                        self.order_age_tracker.fill_order(
+                            orderid=orderid,
+                            timestamp=ts,
+                            event_type=layer_fill_type,
+                            price=price,
+                            size=qty,
+                            distance_from_best=abs(self.orderbook.get_best_price(side) - price),
                             side=side
                         )
                     except Exception:

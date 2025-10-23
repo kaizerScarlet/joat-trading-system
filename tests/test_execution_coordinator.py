@@ -26,11 +26,22 @@ from alpha_scoring.order_age_distribution_scorer_protocol import OrderAgeDistrib
 from alpha_scoring.Order_layering_scorer_protocol import LayeringScoringProtocol
 from alpha_scoring.cancel_activity_scorer_protocol import CancelActivityScorerProtocol
 
+from cancel_window.order_spoofing_detection import OrderSpoofingDetection
+from cancel_window.synthetic_fill_detector import SyntheticFillDetection
+from cancel_window.order_laddering_detection import OrderLadderingDetection
+from cancel_window.order_iceberg_detection import OrderIcebergDetection
+from cancel_window.cancel_density_detection import CancelDensityDetection
+
 
 
 @pytest.fixture
 def coordinator():
     c : ExecutionCoordinatorProtocol = ExecutionCoordinator(
+            cancel_density_scorer = MagicMock(spec=CancelDensityDetection),
+            synthetic_fill_scorer = MagicMock(spec=SyntheticFillDetection),
+            iceberg_scorer = MagicMock(spec=OrderIcebergDetection),
+            laddering_scorer = MagicMock(spec=OrderLadderingDetection),
+            cancel_spoofing_scorer = MagicMock(spec=OrderSpoofingDetection),
             alpha_pipeline = AlphaSignalPipelineProtocol,
             slippage_model = SlippageModelProtocol,
             latency_model = LatencyModelProtocol,
@@ -49,7 +60,7 @@ def coordinator():
             queue_position_model = QueuePositionModelProtocol,
             risk_engine = DynamicRiskEngineProtocol,
             drawdown_manager = DailyDrawdownManagerProtocol,
-            regime_classifier = CognitiveMarketRegimeClassifierProtocol,
+            regime_classifier = MagicMock(spec=CognitiveMarketRegimeClassifierProtocol),
             sl_and_tp = AdaptiveSLTPProtocol,
     )
     # Mock dependencies
@@ -86,13 +97,17 @@ def test_now_ms_with_offset(coordinator):
     assert isinstance(t1, int)
 
 def test_decide_trade_side_buy(coordinator):
+    coordinator.iceberg_detector.get_iceberg_score = MagicMock(return_value=0.7)
     coordinator.alpha_pipeline.get_alpha_signal.return_value = {"bid": 0.6, "ask": 0.4}
     coordinator.config["min_confidence_to_trade"] = 0.55
-    from unittest.mock import MagicMock
 
-    coordinator.spoofing_detector.compute_score = MagicMock(return_value={"bid": 0.1, "ask": 0.1})
-    coordinator.layering_scorer.compute_score = MagicMock(return_value={"layering_score": 0.6})
+    coordinator.cancel_spoof_scorer.get_spoofing_score = MagicMock(return_value={"bid": 0.1, "ask": 0.1})
+    coordinator.layering_scorer.compute_score = MagicMock(return_value={"bid": 0.6, "ask": 0.4})
     coordinator.order_age_scorer.compute_score = MagicMock(return_value={"bid": 0.5, "ask": 0.5})
+    coordinator.iceberg_detector.get_iceberg_score = MagicMock(return_value=0.7)
+    coordinator.synthetic_fill_detector.get_anomaly_score = MagicMock(return_value={"bid": 0.7, "ask": 0.5})
+    coordinator.cancel_density_detector.get_density_score = MagicMock(return_value={"bid": 0.2, "ask": 0.2})
+    coordinator.order_ladder_tracker.get_laddering_score = MagicMock(return_value={"type": None})
     coordinator.regime_classifier.get_current_regime = MagicMock(return_value="TRENDING")
 
     assert coordinator._decide_trade_side() == "BUY"
@@ -100,17 +115,117 @@ def test_decide_trade_side_buy(coordinator):
 def test_decide_trade_side_sell(coordinator):
     coordinator.alpha_pipeline.get_alpha_signal.return_value = {"bid": 0.4, "ask": 0.6}
     coordinator.config["min_confidence_to_trade"] = 0.55
-    from unittest.mock import MagicMock
 
-    coordinator.spoofing_detector.compute_score = MagicMock(return_value={"bid": 0.1, "ask": 0.1})
-    coordinator.layering_scorer.compute_score = MagicMock(return_value={"layering_score": 0.6})
+    coordinator.cancel_spoof_scorer.get_spoofing_score = MagicMock(return_value={"bid": 0.1, "ask": 0.1})
+    coordinator.layering_scorer.compute_score = MagicMock(return_value={"bid": 0.4, "ask": 0.6})
     coordinator.order_age_scorer.compute_score = MagicMock(return_value={"bid": 0.5, "ask": 0.5})
+    coordinator.iceberg_detector.get_iceberg_score = MagicMock(return_value=0.7)  # ✅ This is the fix
+    coordinator.synthetic_fill_detector.get_anomaly_score = MagicMock(return_value={"bid": 0.5, "ask": 0.7})
+    coordinator.cancel_density_detector.get_density_score = MagicMock(return_value={"bid": 0.2, "ask": 0.2})
+    coordinator.order_ladder_tracker.get_laddering_score = MagicMock(return_value={"type": None})
     coordinator.regime_classifier.get_current_regime = MagicMock(return_value="TRENDING")
 
     assert coordinator._decide_trade_side() == "SELL"
 
+def test_trade_side_fades_bid_due_to_spoofing(coordinator):
+    coordinator.alpha_pipeline.get_alpha_signal.return_value = {"bid": 0.7, "ask": 0.4}
+    coordinator.config["min_confidence_to_trade"] = 0.55
+
+    coordinator.cancel_spoof_scorer.get_spoofing_score = MagicMock(return_value={"bid": 0.9, "ask": 0.1})
+    coordinator.layering_scorer.compute_score = MagicMock(return_value={"bid": 0.6, "ask": 0.4})
+    coordinator.order_age_scorer.compute_score = MagicMock(return_value={"bid": 0.5, "ask": 0.5})
+    coordinator.iceberg_detector.get_iceberg_score = MagicMock(return_value=0.5)
+    coordinator.synthetic_fill_detector.get_anomaly_score = MagicMock(return_value={"bid": 0.7, "ask": 0.5})
+    coordinator.cancel_density_detector.get_density_score = MagicMock(return_value={"bid": 0.2, "ask": 0.2})
+    coordinator.order_ladder_tracker.get_laddering_score = MagicMock(return_value={"type": None})
+    coordinator.regime_classifier.get_current_regime = MagicMock(return_value="MEAN_REVERTING")
+
+    assert coordinator._decide_trade_side() is None
+
+def test_trade_side_sell_due_to_iceberg_and_fill_conf(coordinator):
+    coordinator.alpha_pipeline.get_alpha_signal.return_value = {"bid": 0.4, "ask": 0.7}
+    coordinator.config["min_confidence_to_trade"] = 0.55
+
+    coordinator.cancel_spoof_scorer.get_spoofing_score = MagicMock(return_value={"bid": 0.1, "ask": 0.1})
+    coordinator.layering_scorer.compute_score = MagicMock(return_value={"bid": 0.4, "ask": 0.6})
+    coordinator.order_age_scorer.compute_score = MagicMock(return_value={"bid": 0.5, "ask": 0.5})
+    coordinator.iceberg_detector.get_iceberg_score = MagicMock(return_value=-0.7)  # ask bias
+    coordinator.synthetic_fill_detector.get_anomaly_score = MagicMock(return_value={"bid": 0.5, "ask": 0.7})
+    coordinator.cancel_density_detector.get_density_score = MagicMock(return_value={"bid": 0.2, "ask": 0.2})
+    coordinator.order_ladder_tracker.get_laddering_score = MagicMock(return_value={"type": None})
+    coordinator.regime_classifier.get_current_regime = MagicMock(return_value="TRENDING")
+
+    assert coordinator._decide_trade_side() == "SELL"
+
+def test_trade_side_buy_in_illiquid_regime(coordinator):
+    coordinator.alpha_pipeline.get_alpha_signal.return_value = {"bid": 0.65, "ask": 0.4}
+    coordinator.config["min_confidence_to_trade"] = 0.55
+
+    coordinator.cancel_spoof_scorer.get_spoofing_score = MagicMock(return_value={"bid": 0.2, "ask": 0.2})
+    coordinator.layering_scorer.compute_score = MagicMock(return_value={"bid": 0.5, "ask": 0.3})
+    coordinator.order_age_scorer.compute_score = MagicMock(return_value={"bid": 0.5, "ask": 0.5})
+    coordinator.iceberg_detector.get_iceberg_score = MagicMock(return_value=0.3)
+    coordinator.synthetic_fill_detector.get_anomaly_score = MagicMock(return_value={"bid": 0.6, "ask": 0.4})
+    coordinator.cancel_density_detector.get_density_score = MagicMock(return_value={"bid": 0.3, "ask": 0.3})
+    coordinator.order_ladder_tracker.get_laddering_score = MagicMock(return_value={"type": None})
+    coordinator.regime_classifier.get_current_regime = MagicMock(return_value="ILLIQUID")
+
+    assert coordinator._decide_trade_side() == "BUY"
+
+def test_trade_side_sell_in_volatile_regime(coordinator):
+    coordinator.alpha_pipeline.get_alpha_signal.return_value = {"bid": 0.5, "ask": 0.65}
+    coordinator.config["min_confidence_to_trade"] = 0.55
+
+    coordinator.cancel_spoof_scorer.get_spoofing_score = MagicMock(return_value={"bid": 0.3, "ask": 0.3})
+    coordinator.layering_scorer.compute_score = MagicMock(return_value={"bid": 0.2, "ask": 0.4})
+    coordinator.order_age_scorer.compute_score = MagicMock(return_value={"bid": 0.5, "ask": 0.5})
+    coordinator.iceberg_detector.get_iceberg_score = MagicMock(return_value=0.2)
+    coordinator.synthetic_fill_detector.get_anomaly_score = MagicMock(return_value={"bid": 0.4, "ask": 0.6})
+    coordinator.cancel_density_detector.get_density_score = MagicMock(return_value={"bid": 0.3, "ask": 0.3})
+    coordinator.order_ladder_tracker.get_laddering_score = MagicMock(return_value={"type": None})
+    coordinator.regime_classifier.get_current_regime = MagicMock(return_value="VOLATILE")
+
+    assert coordinator._decide_trade_side() == "SELL"
+
+def test_trade_side_buy_due_to_ladder_fill(coordinator):
+    coordinator.alpha_pipeline.get_alpha_signal.return_value = {"bid": 0.3, "ask": 0.3}
+    coordinator.config["min_confidence_to_trade"] = 0.55
+
+    coordinator.cancel_spoof_scorer.get_spoofing_score = MagicMock(return_value={"bid": 0.5, "ask": 0.5})
+    coordinator.layering_scorer.compute_score = MagicMock(return_value={"bid": 0.2, "ask": 0.2})
+    coordinator.order_age_scorer.compute_score = MagicMock(return_value={"bid": 0.0, "ask": 0.0})
+    coordinator.iceberg_detector.get_iceberg_score = MagicMock(return_value=0.0)
+    coordinator.synthetic_fill_detector.get_anomaly_score = MagicMock(return_value={"bid": 0.3, "ask": 0.3})
+    coordinator.cancel_density_detector.get_density_score = MagicMock(return_value={"bid": 0.5, "ask": 0.5})
+    coordinator.order_ladder_tracker.get_laddering_score = MagicMock(return_value={"type": "LADDER_FILL", "side": "bid", "filled": True})
+    coordinator.regime_classifier.get_current_regime = MagicMock(return_value="TRENDING")
+
+    assert coordinator._decide_trade_side() == "BUY"
+
+def test_generate_decision_context_basic(coordinator):
+    coordinator.alpha_pipeline.get_alpha_signal.return_value = {"bid": 0.6, "ask": 0.4}
+    coordinator.regime_classifier.get_current_regime.return_value = "TRENDING"
+    coordinator.regime_classifier.get_behavioral_overlay.return_value = "NORMAL"
+    coordinator.cancel_spoof_scorer.get_spoofing_score.return_value = {"bid": 0.1, "ask": 0.1}
+    coordinator.layering_scorer.compute_score.return_value = {"bid": 0.6, "ask": 0.4}
+    coordinator.iceberg_detector.get_iceberg_score.return_value = 0.7
+    coordinator.synthetic_fill_detector.get_anomaly_score.return_value = {"bid": 0.7, "ask": 0.5}
+    coordinator.cancel_density_detector.get_density_score.return_value = {"bid": 0.2, "ask": 0.2}
+    coordinator.order_ladder_tracker.get_laddering_score.return_value = {"type": None}
+    coordinator.order_age_scorer.compute_score.return_value = {"bid": 0.5, "ask": 0.5}
+
+    context = coordinator.generate_decision_context()
+
+    assert context["alpha_signal"]["selected_side"] == "bid"
+    assert context["regime"]["type"] == "TRENDING"
+    assert context["modulation_factors"]["iceberg_bias"] == "bid"
+    assert context["final_decision"] == "BUY"
+
+
 def test_decide_trade_side_none(coordinator):
     coordinator.alpha_pipeline.get_alpha_signal.return_value = {"bid": 0.4, "ask": 0.4}
+    coordinator.iceberg_detector.get_iceberg_score = MagicMock(return_value=0.0)
+
     coordinator.config["min_confidence_to_trade"] = 0.55
     assert coordinator._decide_trade_side() is None
 

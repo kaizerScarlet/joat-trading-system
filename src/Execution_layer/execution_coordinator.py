@@ -737,3 +737,86 @@ class ExecutionCoordinator:
          self.entry_price = 0.0
          self.sl_order_id = None
          self.tp_order_id = None
+    def generate_decision_context(self) -> Dict[str, Any]:
+          """
+          Generate a narratable decision context for trade side evaluation.
+          Useful for diagnostics, cockpit dashboards, and behavioral trace logging.
+          """
+          current_time = int(time.time() * 1000)
+          alpha = self.alpha_pipeline.get_alpha_signal()
+          bid_score = alpha.get("bid", 0.0)
+          ask_score = alpha.get("ask", 0.0)
+          selected_side = "bid" if bid_score > ask_score else "ask" if ask_score > bid_score else None
+
+          regime = self.regime_classifier.get_current_regime()
+          overlay = self.regime_classifier.get_behavioral_overlay()
+
+          spoof_pressure = self.cancel_spoof_scorer.get_spoofing_score()
+          layering_score = self.layering_scorer.compute_score(current_time)
+          iceberg_score = self.iceberg_detector.get_iceberg_score()
+          synthetic_fill_confidence = self.synthetic_fill_detector.get_anomaly_score()
+          cancel_density = self.cancel_density_detector.get_density_score()
+          laddering_signal = self.order_ladder_tracker.get_laddering_score()
+          order_age_bias = self.order_age_scorer.compute_score(side=None)
+
+          bid_cancel_spoof = spoof_pressure.get("bid", 0.0)
+          ask_cancel_spoof = spoof_pressure.get("ask", 0.0)
+          bid_layering_score = layering_score.get("bid", 0.0)
+          ask_layering_score = layering_score.get("ask", 0.0)
+          bid_density = cancel_density.get("bid", 0.0)
+          ask_density = cancel_density.get("ask", 0.0)
+          bid_fill_conf = synthetic_fill_confidence.get("bid", 0.0)
+          ask_fill_conf = synthetic_fill_confidence.get("ask", 0.0)
+          bid_age_score = order_age_bias.get("bid", 0.0)
+          ask_age_score = order_age_bias.get("ask", 0.0)
+
+          iceberg_bias = "bid" if iceberg_score > 0.6 else "ask" if iceberg_score < -0.6 else None
+
+          ladder_type = laddering_signal.get("type")
+          ladder_side = laddering_signal.get("side")
+          ladder_filled = laddering_signal.get("filled", False)
+          override_decision = ladder_type in ["LADDER_FILL", "SYNTHETIC_LADDER_FILL"]
+
+          trade_side = self._decide_trade_side()
+
+          return {
+               "timestamp_ms": current_time,
+               "alpha_signal": {
+                    "bid_score": bid_score,
+                    "ask_score": ask_score,
+                    "selected_side": selected_side
+               },
+               "regime": {
+                    "type": regime,
+                    "overlay": overlay
+               },
+               "behavioral_overlays": {
+                    "spoof_pressure": spoof_pressure,
+                    "layering_score": layering_score,
+                    "iceberg_score": iceberg_score,
+                    "synthetic_fill_confidence": synthetic_fill_confidence,
+                    "cancel_density": cancel_density,
+                    "order_age_bias": order_age_bias,
+                    "laddering_signal": laddering_signal
+               },
+               "modulation_factors": {
+                    "bid_cancel_spoof": bid_cancel_spoof,
+                    "ask_cancel_spoof": ask_cancel_spoof,
+                    "bid_layering_score": bid_layering_score,
+                    "ask_layering_score": ask_layering_score,
+                    "bid_density": bid_density,
+                    "ask_density": ask_density,
+                    "bid_fill_conf": bid_fill_conf,
+                    "ask_fill_conf": ask_fill_conf,
+                    "bid_age_score": bid_age_score,
+                    "ask_age_score": ask_age_score,
+                    "iceberg_bias": iceberg_bias
+               },
+               "laddering_override": {
+                    "type": ladder_type,
+                    "side": ladder_side,
+                    "filled": ladder_filled,
+                    "override_decision": override_decision
+               },
+               "final_decision": trade_side
+          }
