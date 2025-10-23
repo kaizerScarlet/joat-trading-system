@@ -72,12 +72,15 @@ def test_base_price_wide_spread_sell():
 
 # ------------------ Jitter and Slippage ------------------
 
+
 def test_jitter_respects_slippage_cap():
-    model : SmartRepricingModelProtocol = SmartRepricingModel(tick_size=0.01, max_jitter_ticks=100, slippage_bps=1.0)
-    ob = MockOrderBook(bid=99.0, ask=101.0)  # mid = 100.0 → max_slip = 1.0
+    random.seed(42)  # ✅ consistent jitter
+    model = SmartRepricingModel(tick_size=0.01, max_jitter_ticks=100, slippage_bps=1.0)
+    ob = MockOrderBook(bid=99.0, ask=101.0) # mid = 100.0 → max_slip = 1.0
     for _ in range(100):
         price = model.optimize_price("BUY", ob)
         assert abs(price - 101.0) <= 1.0  # jitter capped
+
 
 def test_tick_snapping():
     model : SmartRepricingModelProtocol = SmartRepricingModel(tick_size=0.05)

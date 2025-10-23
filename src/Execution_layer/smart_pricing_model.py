@@ -41,7 +41,11 @@ class SmartRepricingModel:
         adjusted_price = base_price + jitter if side.upper() == "BUY" else base_price - jitter
 
         # Final enforce before snapping (ensures absolute deviation <= max_slip)
-        adjusted_price = min(max(adjusted_price, mid - max_slip), mid + max_slip)
+        if side.upper() == "BUY":
+            adjusted_price = min(max(adjusted_price, best_ask - max_slip), best_ask + max_slip)
+        else:
+            adjusted_price = min(max(adjusted_price, best_bid - max_slip), best_bid + max_slip)
+
 
         # Snap to tick size
         adjusted_price = round(adjusted_price / self.tick_size) * self.tick_size
