@@ -1,4 +1,4 @@
-from typing import Protocol, Dict, runtime_checkable, Any
+from typing import Protocol, Dict, runtime_checkable, Any, List
 
 @runtime_checkable
 class OrderLadderingDetectionProtocol(Protocol):

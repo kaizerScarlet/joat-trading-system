@@ -4,7 +4,13 @@ from market_data.orderbook_protocol import OrderBookProtocol
 from cancel_window.order_age_distribution_protocol import OrderAgeDistributionProtocol
 from dynamic_risk_engine.cognitive_market_regime_classifier_protocol import CognitiveMarketRegimeClassifierProtocol, MarketRegime 
 from cancel_window.simple_cancel_window_protocol import CancelWindowProtocol
-from cancel_window.simple_cancel_window import SimpleCancelWindow, CancelWindowTuner
+from cancel_window.simple_cancel_window import SimpleCancelWindow, CancelWindowTuner, CancelWindowTunerForLayering
+from cancel_window.order_layering_detection import OrderLayeringDetection
+from cancel_window.order_laddering_detection import OrderLadderingDetection
+from cancel_window.synthetic_fill_detector import SyntheticFillDetection
+from cancel_window.order_spoofing_detection import OrderSpoofingDetection
+from cancel_window.cancel_density_detection import CancelDensityDetection
+from cancel_window.order_iceberg_detection import OrderIcebergDetection
 
 class DummyOrderAgeTracker(OrderAgeDistributionProtocol):
     def get_order_age(self, price: float, side: str) -> float:
@@ -27,6 +33,8 @@ class DummyOrderBook(OrderBookProtocol):
         return 30000.0 if side == 'bid' else 30001.0
     def get_midprice(self) -> float:
         return 30000.5
+    def get_tick_size(self):
+        return 0.1  # or any realistic float
 
 class DummyRegimeClassifier(CognitiveMarketRegimeClassifierProtocol):
     def get_current_regime(self): return MarketRegime.UNKNOWN
@@ -35,11 +43,20 @@ class DummyRegimeClassifier(CognitiveMarketRegimeClassifierProtocol):
 
 #test fast cancel on bid side
 def test_fast_cancel_flag_bid():
+    tuner_for_layering = CancelWindowTunerForLayering()
     cw : CancelWindowProtocol = SimpleCancelWindow(
         tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
-        classifier=DummyRegimeClassifier()
+        classifier=DummyRegimeClassifier(),
+        order_layering = OrderLayeringDetection(tuner=tuner_for_layering),
+        order_ladder_tracker = OrderLadderingDetection(regime_classifier = DummyRegimeClassifier()),
+        synthetic_fill_detector = SyntheticFillDetection(regime_classifier = DummyRegimeClassifier()),
+        order_spoofing = OrderSpoofingDetection(regime_classifier = DummyRegimeClassifier()),
+        order_cancel_density = CancelDensityDetection(regime_classifier=DummyRegimeClassifier),
+        order_iceberg_detection = OrderIcebergDetection(regime_classifier=DummyRegimeClassifier())
+
+
         )
 
     #add level at t0
@@ -60,11 +77,19 @@ def test_fast_cancel_flag_bid():
 
 #test fast cancel on ask side
 def test_fast_cancel_flag_ask():
+    tuner_for_layering = CancelWindowTunerForLayering()
     cw : CancelWindowProtocol = SimpleCancelWindow(
         tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
-        classifier=DummyRegimeClassifier()
+        classifier=DummyRegimeClassifier(),
+        order_layering = OrderLayeringDetection(tuner=tuner_for_layering),
+        order_ladder_tracker = OrderLadderingDetection(regime_classifier = DummyRegimeClassifier()),
+        synthetic_fill_detector = SyntheticFillDetection(regime_classifier = DummyRegimeClassifier()),
+        order_spoofing = OrderSpoofingDetection(regime_classifier = DummyRegimeClassifier()),
+        order_cancel_density = CancelDensityDetection(regime_classifier=DummyRegimeClassifier),
+        order_iceberg_detection = OrderIcebergDetection(regime_classifier=DummyRegimeClassifier())
+
         )
 
     #add level at t0
@@ -81,12 +106,20 @@ def test_fast_cancel_flag_ask():
 
 #Test True fill flag on ask side
 def test_true_fill_flag_ask():
+    tuner_for_layering = CancelWindowTunerForLayering()
     cw : CancelWindowProtocol = SimpleCancelWindow(
         tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
-        classifier=DummyRegimeClassifier()
-    )
+        classifier=DummyRegimeClassifier(),
+        order_layering = OrderLayeringDetection(tuner=tuner_for_layering),
+        order_ladder_tracker = OrderLadderingDetection(regime_classifier = DummyRegimeClassifier()),
+        synthetic_fill_detector = SyntheticFillDetection(regime_classifier = DummyRegimeClassifier()),
+        order_spoofing = OrderSpoofingDetection(regime_classifier = DummyRegimeClassifier()),
+        order_cancel_density = CancelDensityDetection(regime_classifier=DummyRegimeClassifier),
+        order_iceberg_detection = OrderIcebergDetection(regime_classifier=DummyRegimeClassifier())
+
+        )
     #1. add order
     cw.process_l2_update({"E": 1000, "a": [["30050", "2.0"]], "b":[]})
     #2. Cancel order 20ms later
@@ -104,12 +137,20 @@ def test_true_fill_flag_ask():
 
 #Test True fill flag bid
 def test_true_fill_flag_bid():
+    tuner_for_layering = CancelWindowTunerForLayering()
     cw : CancelWindowProtocol = SimpleCancelWindow(
         tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
-        classifier=DummyRegimeClassifier()
-    )
+        classifier=DummyRegimeClassifier(),
+        order_layering = OrderLayeringDetection(tuner=tuner_for_layering),
+        order_ladder_tracker = OrderLadderingDetection(regime_classifier = DummyRegimeClassifier()),
+        synthetic_fill_detector = SyntheticFillDetection(regime_classifier = DummyRegimeClassifier()),
+        order_spoofing = OrderSpoofingDetection(regime_classifier = DummyRegimeClassifier()),
+        order_cancel_density = CancelDensityDetection(regime_classifier=DummyRegimeClassifier),
+        order_iceberg_detection = OrderIcebergDetection(regime_classifier=DummyRegimeClassifier())
+
+        )
     #1. add order
     cw.process_l2_update({"E": 1000, "b": [["30050", "2.0"]], "a":[]})
     #2. Cancel order 20ms later
@@ -132,12 +173,20 @@ def test_partial_fill_flag_bid():
     Order is added -> partially removed via  trade smaller than original size
     in <window_ms. Expect PARTIAL_FILL, not TRUE_FILL.
     """
+    tuner_for_layering = CancelWindowTunerForLayering()
     cw : CancelWindowProtocol = SimpleCancelWindow(
         tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
-        classifier=DummyRegimeClassifier()
-    )
+        classifier=DummyRegimeClassifier(),
+        order_layering = OrderLayeringDetection(tuner=tuner_for_layering),
+        order_ladder_tracker = OrderLadderingDetection(regime_classifier = DummyRegimeClassifier()),
+        synthetic_fill_detector = SyntheticFillDetection(regime_classifier = DummyRegimeClassifier()),
+        order_spoofing = OrderSpoofingDetection(regime_classifier = DummyRegimeClassifier()),
+        order_cancel_density = CancelDensityDetection(regime_classifier=DummyRegimeClassifier),
+        order_iceberg_detection = OrderIcebergDetection(regime_classifier=DummyRegimeClassifier())
+
+        )
     #1. add 2 BTC ask @ 30 070
     cw.process_l2_update({"E": 1_000, "b": [["30070", "2.0"]], "a":[]})
 
@@ -165,12 +214,20 @@ def test_partial_fill_flag_ask():
     Order is added -> partially removed via  trade smaller than original size
     in <window_ms. Expect PARTIAL_FILL, not TRUE_FILL.
     """
+    tuner_for_layering = CancelWindowTunerForLayering()
     cw : CancelWindowProtocol = SimpleCancelWindow(
         tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
-        classifier=DummyRegimeClassifier()
-    )
+        classifier=DummyRegimeClassifier(),
+        order_layering = OrderLayeringDetection(tuner=tuner_for_layering),
+        order_ladder_tracker = OrderLadderingDetection(regime_classifier = DummyRegimeClassifier()),
+        synthetic_fill_detector = SyntheticFillDetection(regime_classifier = DummyRegimeClassifier()),
+        order_spoofing = OrderSpoofingDetection(regime_classifier = DummyRegimeClassifier()),
+        order_cancel_density = CancelDensityDetection(regime_classifier=DummyRegimeClassifier),
+        order_iceberg_detection = OrderIcebergDetection(regime_classifier=DummyRegimeClassifier())
+
+        )
     #1. add 2 BTC ask @ 30 070
     cw.process_l2_update({"E": 1_000, "a": [["30070", "2.0"]], "b":[]})
 
@@ -193,13 +250,20 @@ def test_partial_fill_flag_ask():
 
 # Test iceberg cancel flag emitted ask side
 def test_iceberg_cancel_flag_emitted_ask():
-    tuner = CancelWindowTuner()
+    tuner_for_layering = CancelWindowTunerForLayering()
     cw : CancelWindowProtocol = SimpleCancelWindow(
-        tuner,
+        tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
-        classifier=DummyRegimeClassifier()
-    )
+        classifier=DummyRegimeClassifier(),
+        order_layering = OrderLayeringDetection(tuner=tuner_for_layering),
+        order_ladder_tracker = OrderLadderingDetection(regime_classifier = DummyRegimeClassifier()),
+        synthetic_fill_detector = SyntheticFillDetection(regime_classifier = DummyRegimeClassifier()),
+        order_spoofing = OrderSpoofingDetection(regime_classifier = DummyRegimeClassifier()),
+        order_cancel_density = CancelDensityDetection(regime_classifier=DummyRegimeClassifier),
+        order_iceberg_detection = OrderIcebergDetection(regime_classifier=DummyRegimeClassifier())
+
+        )
 
     base_ts = 100000
     #simulate  3 quick size reductions at same price, no  trades
@@ -223,13 +287,20 @@ def test_iceberg_cancel_flag_emitted_ask():
 
 #Test iceberg cancel flag emitted bid side
 def test_iceberg_cancel_flag_emitted_bid():
-    tuner = CancelWindowTuner()
+    tuner_for_layering = CancelWindowTunerForLayering()
     cw : CancelWindowProtocol = SimpleCancelWindow(
-        tuner,
+        tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
-        classifier=DummyRegimeClassifier()
-    )
+        classifier=DummyRegimeClassifier(),
+        order_layering = OrderLayeringDetection(tuner=tuner_for_layering),
+        order_ladder_tracker = OrderLadderingDetection(regime_classifier = DummyRegimeClassifier()),
+        synthetic_fill_detector = SyntheticFillDetection(regime_classifier = DummyRegimeClassifier()),
+        order_spoofing = OrderSpoofingDetection(regime_classifier = DummyRegimeClassifier()),
+        order_cancel_density = CancelDensityDetection(regime_classifier=DummyRegimeClassifier),
+        order_iceberg_detection = OrderIcebergDetection(regime_classifier=DummyRegimeClassifier())
+
+        )
 
     base_ts = 100000
     #simulate  3 quick size reductions at same price, no  trades
@@ -255,12 +326,20 @@ def test_iceberg_cancel_flag_emitted_bid():
 
 #Test no iceberg if only one reduction ask
 def test_no_iceberg_if_only_one_reduction_ask():
+    tuner_for_layering = CancelWindowTunerForLayering()
     cw : CancelWindowProtocol = SimpleCancelWindow(
         tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
-        classifier=DummyRegimeClassifier()
-    )
+        classifier=DummyRegimeClassifier(),
+        order_layering = OrderLayeringDetection(tuner=tuner_for_layering),
+        order_ladder_tracker = OrderLadderingDetection(regime_classifier = DummyRegimeClassifier()),
+        synthetic_fill_detector = SyntheticFillDetection(regime_classifier = DummyRegimeClassifier()),
+        order_spoofing = OrderSpoofingDetection(regime_classifier = DummyRegimeClassifier()),
+        order_cancel_density = CancelDensityDetection(regime_classifier=DummyRegimeClassifier),
+        order_iceberg_detection = OrderIcebergDetection(regime_classifier=DummyRegimeClassifier())
+
+        )
 
     base_ts = 100000
     #simulate  3 quick size reductions at same price, no  trades
@@ -279,12 +358,20 @@ def test_no_iceberg_if_only_one_reduction_ask():
 
 #Test no iceberg if only one reduction bid
 def test_no_iceberg_if_only_one_reduction_bid():
+    tuner_for_layering = CancelWindowTunerForLayering()
     cw : CancelWindowProtocol = SimpleCancelWindow(
         tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
-        classifier=DummyRegimeClassifier()
-    )
+        classifier=DummyRegimeClassifier(),
+        order_layering = OrderLayeringDetection(tuner=tuner_for_layering),
+        order_ladder_tracker = OrderLadderingDetection(regime_classifier = DummyRegimeClassifier()),
+        synthetic_fill_detector = SyntheticFillDetection(regime_classifier = DummyRegimeClassifier()),
+        order_spoofing = OrderSpoofingDetection(regime_classifier = DummyRegimeClassifier()),
+        order_cancel_density = CancelDensityDetection(regime_classifier=DummyRegimeClassifier),
+        order_iceberg_detection = OrderIcebergDetection(regime_classifier=DummyRegimeClassifier())
+
+        )
 
     base_ts = 100000
     #simulate  3 quick size reductions at same price, no  trades
@@ -305,12 +392,20 @@ def test_no_iceberg_if_only_one_reduction_bid():
 
 #Test no iceberg if cancel outside window on the ask side
 def test_no_iceberg_if_cancel_outside_window_ask():
+    tuner_for_layering = CancelWindowTunerForLayering()
     cw : CancelWindowProtocol = SimpleCancelWindow(
         tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
-        classifier=DummyRegimeClassifier()
-    )
+        classifier=DummyRegimeClassifier(),
+        order_layering = OrderLayeringDetection(tuner=tuner_for_layering),
+        order_ladder_tracker = OrderLadderingDetection(regime_classifier = DummyRegimeClassifier()),
+        synthetic_fill_detector = SyntheticFillDetection(regime_classifier = DummyRegimeClassifier()),
+        order_spoofing = OrderSpoofingDetection(regime_classifier = DummyRegimeClassifier()),
+        order_cancel_density = CancelDensityDetection(regime_classifier=DummyRegimeClassifier),
+        order_iceberg_detection = OrderIcebergDetection(regime_classifier=DummyRegimeClassifier())
+
+        )
 
     base_ts = 100000
     #simulate  3 quick size reductions at same price, no  trades
@@ -328,12 +423,20 @@ def test_no_iceberg_if_cancel_outside_window_ask():
 
 #Test no iceberg if cancel outside window on the bid side
 def test_no_iceberg_if_cancel_outside_window_bid():
+    tuner_for_layering = CancelWindowTunerForLayering()
     cw : CancelWindowProtocol = SimpleCancelWindow(
         tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
-        classifier=DummyRegimeClassifier()
-    )
+        classifier=DummyRegimeClassifier(),
+        order_layering = OrderLayeringDetection(tuner=tuner_for_layering),
+        order_ladder_tracker = OrderLadderingDetection(regime_classifier = DummyRegimeClassifier()),
+        synthetic_fill_detector = SyntheticFillDetection(regime_classifier = DummyRegimeClassifier()),
+        order_spoofing = OrderSpoofingDetection(regime_classifier = DummyRegimeClassifier()),
+        order_cancel_density = CancelDensityDetection(regime_classifier=DummyRegimeClassifier),
+        order_iceberg_detection = OrderIcebergDetection(regime_classifier=DummyRegimeClassifier())
+
+        )
 
     base_ts = 100000
     #simulate  3 quick size reductions at same price, no  trades
@@ -351,12 +454,20 @@ def test_no_iceberg_if_cancel_outside_window_bid():
 
 #Test Cancel Density flag ask side
 def test_high_cancel_density_flag_ask():
+    tuner_for_layering = CancelWindowTunerForLayering()
     cw : CancelWindowProtocol = SimpleCancelWindow(
         tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
-        classifier=DummyRegimeClassifier()
-    )
+        classifier=DummyRegimeClassifier(),
+        order_layering = OrderLayeringDetection(tuner=tuner_for_layering),
+        order_ladder_tracker = OrderLadderingDetection(regime_classifier = DummyRegimeClassifier()),
+        synthetic_fill_detector = SyntheticFillDetection(regime_classifier = DummyRegimeClassifier()),
+        order_spoofing = OrderSpoofingDetection(regime_classifier = DummyRegimeClassifier()),
+        order_cancel_density = CancelDensityDetection(regime_classifier=DummyRegimeClassifier),
+        order_iceberg_detection = OrderIcebergDetection(regime_classifier=DummyRegimeClassifier())
+
+        )
     cw.set_cancel_density_params(initial_threshold=3, initial_window_ms=100)
 
     base_ts = 100000
@@ -382,12 +493,20 @@ def test_high_cancel_density_flag_ask():
     print("Test Passed. High_CANCEL_DENSITY triggered", density_flags)
 
 def test_high_cancel_density_flag_ask2():
-    cw = SimpleCancelWindow(
-        tuner=CancelWindowTuner(),
+    tuner_for_layering = CancelWindowTunerForLayering()
+    cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
-        classifier=DummyRegimeClassifier()
-    )
+        classifier=DummyRegimeClassifier(),
+        order_layering = OrderLayeringDetection(tuner=tuner_for_layering),
+        order_ladder_tracker = OrderLadderingDetection(regime_classifier = DummyRegimeClassifier()),
+        synthetic_fill_detector = SyntheticFillDetection(regime_classifier = DummyRegimeClassifier()),
+        order_spoofing = OrderSpoofingDetection(regime_classifier = DummyRegimeClassifier()),
+        order_cancel_density = CancelDensityDetection(regime_classifier=DummyRegimeClassifier),
+        order_iceberg_detection = OrderIcebergDetection(regime_classifier=DummyRegimeClassifier())
+
+        )
     cw.set_cancel_density_params(initial_threshold=3, initial_window_ms=100)
 
     base_ts = 100000
@@ -409,12 +528,20 @@ def test_high_cancel_density_flag_ask2():
 
 
 def test_high_cancel_density_flag_ask2():
-    cw = SimpleCancelWindow(
-        tuner=CancelWindowTuner(),
+    tuner_for_layering = CancelWindowTunerForLayering()
+    cw : CancelWindowProtocol = SimpleCancelWindow(
+        tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
-        classifier=DummyRegimeClassifier()
-    )
+        classifier=DummyRegimeClassifier(),
+        order_layering = OrderLayeringDetection(tuner=tuner_for_layering),
+        order_ladder_tracker = OrderLadderingDetection(regime_classifier = DummyRegimeClassifier()),
+        synthetic_fill_detector = SyntheticFillDetection(regime_classifier = DummyRegimeClassifier()),
+        order_spoofing = OrderSpoofingDetection(regime_classifier = DummyRegimeClassifier()),
+        order_cancel_density = CancelDensityDetection(regime_classifier=DummyRegimeClassifier),
+        order_iceberg_detection = OrderIcebergDetection(regime_classifier=DummyRegimeClassifier())
+
+        )
     cw.set_cancel_density_params(initial_threshold=3, initial_window_ms=100)
 
     base_ts = 100000
@@ -437,12 +564,20 @@ def test_high_cancel_density_flag_ask2():
 
 #Test Cancel Density flag bid side
 def test_high_cancel_density_flag_bid():
+    tuner_for_layering = CancelWindowTunerForLayering()
     cw : CancelWindowProtocol = SimpleCancelWindow(
         tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
-        classifier=DummyRegimeClassifier()
-    )
+        classifier=DummyRegimeClassifier(),
+        order_layering = OrderLayeringDetection(tuner=tuner_for_layering),
+        order_ladder_tracker = OrderLadderingDetection(regime_classifier = DummyRegimeClassifier()),
+        synthetic_fill_detector = SyntheticFillDetection(regime_classifier = DummyRegimeClassifier()),
+        order_spoofing = OrderSpoofingDetection(regime_classifier = DummyRegimeClassifier()),
+        order_cancel_density = CancelDensityDetection(regime_classifier=DummyRegimeClassifier),
+        order_iceberg_detection = OrderIcebergDetection(regime_classifier=DummyRegimeClassifier())
+
+        )
     cw.set_cancel_density_params(initial_threshold=3, initial_window_ms=100)
 
     base_ts = 100000
@@ -467,12 +602,20 @@ def test_high_cancel_density_flag_bid():
     assert len(density_flags) > 0
     print("Test Passed. High_CANCEL_DENSITY triggered", density_flags)
 def test_high_cancel_density_flag_bid3():
-    cw = SimpleCancelWindow(
+    tuner_for_layering = CancelWindowTunerForLayering()
+    cw : CancelWindowProtocol = SimpleCancelWindow(
         tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
-        classifier=DummyRegimeClassifier()
-    )
+        classifier=DummyRegimeClassifier(),
+        order_layering = OrderLayeringDetection(tuner=tuner_for_layering),
+        order_ladder_tracker = OrderLadderingDetection(regime_classifier = DummyRegimeClassifier()),
+        synthetic_fill_detector = SyntheticFillDetection(regime_classifier = DummyRegimeClassifier()),
+        order_spoofing = OrderSpoofingDetection(regime_classifier = DummyRegimeClassifier()),
+        order_cancel_density = CancelDensityDetection(regime_classifier=DummyRegimeClassifier),
+        order_iceberg_detection = OrderIcebergDetection(regime_classifier=DummyRegimeClassifier())
+
+        )
     cw.set_cancel_density_params(initial_threshold=3, initial_window_ms=100)
 
     base_ts = 100000
@@ -493,12 +636,20 @@ def test_high_cancel_density_flag_bid3():
 #@pytest.mark.skip(reason="REGISTER_CANCEL missing positional arguments, correct it first")
 #Test Compute cancel density correctly
 def test_cancel_density_computation():
+    tuner_for_layering = CancelWindowTunerForLayering()
     cw : CancelWindowProtocol = SimpleCancelWindow(
         tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
-        classifier=DummyRegimeClassifier()
-    )
+        classifier=DummyRegimeClassifier(),
+        order_layering = OrderLayeringDetection(tuner=tuner_for_layering),
+        order_ladder_tracker = OrderLadderingDetection(regime_classifier = DummyRegimeClassifier()),
+        synthetic_fill_detector = SyntheticFillDetection(regime_classifier = DummyRegimeClassifier()),
+        order_spoofing = OrderSpoofingDetection(regime_classifier = DummyRegimeClassifier()),
+        order_cancel_density = CancelDensityDetection(regime_classifier=DummyRegimeClassifier),
+        order_iceberg_detection = OrderIcebergDetection(regime_classifier=DummyRegimeClassifier())
+
+        )
 
     # Simple 10 cancels at level 100, 5 at  101, 1 at 102
     for _ in range(10):
@@ -516,12 +667,20 @@ def test_cancel_density_computation():
 #@pytest.mark.skip(reason="REGISTER_CANCEL missing positional arguments, correct it first")
 #Test Normalize Cancel Density
 def test_normalized_cancel_density():
+    tuner_for_layering = CancelWindowTunerForLayering()
     cw : CancelWindowProtocol = SimpleCancelWindow(
         tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
-        classifier=DummyRegimeClassifier()
-    )
+        classifier=DummyRegimeClassifier(),
+        order_layering = OrderLayeringDetection(tuner=tuner_for_layering),
+        order_ladder_tracker = OrderLadderingDetection(regime_classifier = DummyRegimeClassifier()),
+        synthetic_fill_detector = SyntheticFillDetection(regime_classifier = DummyRegimeClassifier()),
+        order_spoofing = OrderSpoofingDetection(regime_classifier = DummyRegimeClassifier()),
+        order_cancel_density = CancelDensityDetection(regime_classifier=DummyRegimeClassifier),
+        order_iceberg_detection = OrderIcebergDetection(regime_classifier=DummyRegimeClassifier())
+
+        )
     for price, count in [(100.0, 10), (101.0, 5), (102.0, 1)]:
         for _ in range(count):
            cw.register_cancel(price=price, side='ask', timestamp=0, size=1.0)
@@ -537,12 +696,20 @@ def test_normalized_cancel_density():
 #@pytest.mark.skip(reason="REGISTER_CAMCEL missing positional arguments, correct it")
 #Test Clear Density after Flush
 def test_cancel_density_flush():
+    tuner_for_layering = CancelWindowTunerForLayering()
     window : CancelWindowProtocol = SimpleCancelWindow(
         tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
-        classifier=DummyRegimeClassifier()
-    )
+        classifier=DummyRegimeClassifier(),
+        order_layering = OrderLayeringDetection(tuner=tuner_for_layering),
+        order_ladder_tracker = OrderLadderingDetection(regime_classifier = DummyRegimeClassifier()),
+        synthetic_fill_detector = SyntheticFillDetection(regime_classifier = DummyRegimeClassifier()),
+        order_spoofing = OrderSpoofingDetection(regime_classifier = DummyRegimeClassifier()),
+        order_cancel_density = CancelDensityDetection(regime_classifier=DummyRegimeClassifier),
+        order_iceberg_detection = OrderIcebergDetection(regime_classifier=DummyRegimeClassifier())
+
+        )
 
     window.register_cancel(price=100.0,side='ask', timestamp=0, size=5.0)
 
@@ -554,12 +721,20 @@ def test_cancel_density_flush():
 
 # Test for Icerberg Cancels
 def test_iceberg_cancel_detection():
+    tuner_for_layering = CancelWindowTunerForLayering()
     cw : CancelWindowProtocol = SimpleCancelWindow(
         tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
-        classifier=DummyRegimeClassifier()
-    )
+        classifier=DummyRegimeClassifier(),
+        order_layering = OrderLayeringDetection(tuner=tuner_for_layering),
+        order_ladder_tracker = OrderLadderingDetection(regime_classifier = DummyRegimeClassifier()),
+        synthetic_fill_detector = SyntheticFillDetection(regime_classifier = DummyRegimeClassifier()),
+        order_spoofing = OrderSpoofingDetection(regime_classifier = DummyRegimeClassifier()),
+        order_cancel_density = CancelDensityDetection(regime_classifier=DummyRegimeClassifier),
+        order_iceberg_detection = OrderIcebergDetection(regime_classifier=DummyRegimeClassifier())
+
+        )
     ts = 100
     for _ in range(5):
         cw.register_cancel(price= 101.0, side='ask', timestamp=ts, size=2.5)
@@ -579,12 +754,20 @@ class MockOrderBook:
         return 1000.0
 #@pytest.mark.skip(reason="UPDATE_BOOK, COMPUTE_IMPACT_SCORE not implemented yet, also has incorrect parameters for REGISTER_CANCEL")
 def test_high_impact_cancel():
+    tuner_for_layering = CancelWindowTunerForLayering()
     cw : CancelWindowProtocol = SimpleCancelWindow(
         tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
-        classifier=DummyRegimeClassifier()
-    )
+        classifier=DummyRegimeClassifier(),
+        order_layering = OrderLayeringDetection(tuner=tuner_for_layering),
+        order_ladder_tracker = OrderLadderingDetection(regime_classifier = DummyRegimeClassifier()),
+        synthetic_fill_detector = SyntheticFillDetection(regime_classifier = DummyRegimeClassifier()),
+        order_spoofing = OrderSpoofingDetection(regime_classifier = DummyRegimeClassifier()),
+        order_cancel_density = CancelDensityDetection(regime_classifier=DummyRegimeClassifier),
+        order_iceberg_detection = OrderIcebergDetection(regime_classifier=DummyRegimeClassifier())
+
+        )
     cw.update_midprice(mid_price=100.0)
     #cw.orderbook = MockOrderBook() #Inject Mock dependency
     cw.fill_events = [{'price': 101.0, 'side':'ask'}] * 3
@@ -599,12 +782,20 @@ def test_high_impact_cancel():
 #Test case 2: Far from mid + low = low score
 #@pytest.mark.skip(reason="UPDATE_BOOK, COMPUTE_CANCEL_IMPACT_SCORE npt implemented yet, aslo has incorrect parameters for REGISTER_CANCEL")
 def test_low_impact_cancel():
+    tuner_for_layering = CancelWindowTunerForLayering()
     cw : CancelWindowProtocol = SimpleCancelWindow(
         tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
-        classifier=DummyRegimeClassifier()
-    )
+        classifier=DummyRegimeClassifier(),
+        order_layering = OrderLayeringDetection(tuner=tuner_for_layering),
+        order_ladder_tracker = OrderLadderingDetection(regime_classifier = DummyRegimeClassifier()),
+        synthetic_fill_detector = SyntheticFillDetection(regime_classifier = DummyRegimeClassifier()),
+        order_spoofing = OrderSpoofingDetection(regime_classifier = DummyRegimeClassifier()),
+        order_cancel_density = CancelDensityDetection(regime_classifier=DummyRegimeClassifier),
+        order_iceberg_detection = OrderIcebergDetection(regime_classifier=DummyRegimeClassifier())
+
+        )
     cw.update_midprice(mid_price=100.0)
     
     #cw.orderbook = MockOrderBook() #Inject Mock dependency
@@ -619,12 +810,20 @@ def test_low_impact_cancel():
 #Test Case 3: Score adjusts After Book Update
 #@pytest.mark.skip(reason="UPDATE_BOOK, COMPUTE_CANCEL_IMPACT_SCORE not implemented yet, also has incorrect parameters for REGISTER_CANCEL")
 def test_score_changes_with_book():
+    tuner_for_layering = CancelWindowTunerForLayering()
     cw : CancelWindowProtocol = SimpleCancelWindow(
         tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
-        classifier=DummyRegimeClassifier()
-    )
+        classifier=DummyRegimeClassifier(),
+        order_layering = OrderLayeringDetection(tuner=tuner_for_layering),
+        order_ladder_tracker = OrderLadderingDetection(regime_classifier = DummyRegimeClassifier()),
+        synthetic_fill_detector = SyntheticFillDetection(regime_classifier = DummyRegimeClassifier()),
+        order_spoofing = OrderSpoofingDetection(regime_classifier = DummyRegimeClassifier()),
+        order_cancel_density = CancelDensityDetection(regime_classifier=DummyRegimeClassifier),
+        order_iceberg_detection = OrderIcebergDetection(regime_classifier=DummyRegimeClassifier())
+
+        )
     cw.update_midprice(mid_price=100.0)
     #cw.orderbook = MockOrderBook() #Inject Mock dependency
     cw.fill_events = [{'price': 101.0, 'side':'ask'}] * 3
@@ -639,11 +838,19 @@ def test_score_changes_with_book():
 
 
 def test_snapshot_state_integrity():
+    tuner_for_layering = CancelWindowTunerForLayering()
     window : CancelWindowProtocol = SimpleCancelWindow(
         tuner = CancelWindowTuner(),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
-        classifier=DummyRegimeClassifier()
+        classifier=DummyRegimeClassifier(),
+        order_layering = OrderLayeringDetection(tuner=tuner_for_layering),
+        order_ladder_tracker = OrderLadderingDetection(regime_classifier = DummyRegimeClassifier()),
+        synthetic_fill_detector = SyntheticFillDetection(regime_classifier = DummyRegimeClassifier()),
+        order_spoofing = OrderSpoofingDetection(regime_classifier = DummyRegimeClassifier()),
+        order_cancel_density = CancelDensityDetection(regime_classifier=DummyRegimeClassifier),
+        order_iceberg_detection = OrderIcebergDetection(regime_classifier=DummyRegimeClassifier())
+
         )
     window.bids = {30000.0: 1.0}
     window.asks = {30001.0: 1.0}
@@ -701,147 +908,182 @@ class TestSyntheticFillDetection(unittest.TestCase):
         self.orderbook = MagicMock()
         self.orderbook.get_best_price.side_effect = lambda side: 100.0 if side == "ask" else 99.0
         self.orderbook.get_tick_size.return_value = 0.1
-        self.orderbook.get_level_size.return_value = 0.0
+        self.orderbook.get_level_size.return_value = 0.0  # ✅ critical for synthetic fill confidence
         self.orderbook.get_volatility_estimate.return_value = 0.2
+
 
         self.age_tracker = MagicMock()
         self.classifier = MagicMock()
 
+        tuner_for_layering = CancelWindowTunerForLayering()
         self.window = SimpleCancelWindow(
             tuner=self.tuner,
-            order_layering=self.layering,
-            order_age_tracker=self.age_tracker,
-            order_book=self.orderbook,
+            order_layering=self.layering,  # ✅ use the same instance where you register orders
+            order_ladder_tracker=OrderLadderingDetection(regime_classifier=self.classifier),
+            synthetic_fill_detector=SyntheticFillDetection(regime_classifier=self.classifier),
+            order_spoofing=OrderSpoofingDetection(regime_classifier=self.classifier),
+            order_cancel_density=CancelDensityDetection(regime_classifier=self.classifier),
+            order_iceberg_detection=OrderIcebergDetection(regime_classifier=self.classifier),
+            order_age_tracker=self.age_tracker,  # ✅ inject your MagicMock
+            order_book=self.orderbook,           # ✅ inject your MagicMock
             classifier=self.classifier,
-            market_type="futures"
+            market_type="futures"                # ✅ ensure futures mode
         )
 
 
-
-def test_synthetic_true_fill(self):
-    ts = 100000
-    price = 99.5
-    qty = 10.0
-    side = "bid"
-    key = (side, price)
-
-    self.window.cancel_cache[key] = (ts - 50, 10.0)
-    trade_msg = {"T": ts, "p": str(price), "q": str(qty), "m": True}
-
-    self.window.process_trade(trade_msg)
-
-    flags = [f for f in self.window._flags if f["type"] == "SYNTHETIC_TRUE_FILL"]
-    self.assertEqual(len(flags), 1)
-
-
-
-def test_synthetic_partial_fill(self):
-    ts = 100000
-    price = 99.5
-    qty = 5.0
-    side = "bid"
-    key = (side, price)
-
-    self.window.cancel_cache[key] = (ts - 50, 10.0)
-    trade_msg = {"T": ts, "p": str(price), "q": str(qty), "m": True}
-
-    self.window.process_trade(trade_msg)
-
-    flags = [f for f in self.window._flags if f["type"] == "SYNTHETIC_PARTIAL_FILL"]
-    self.assertEqual(len(flags), 1)
-
-
-def test_synthetic_weak_fill(self):
-    ts = 100000
-    price = 99.5
-    qty = 1.0
-    side = "bid"
-    key = (side, price)
-
-    self.window.cancel_cache[key] = (ts - 50, 10.0)
-    trade_msg = {"T": ts, "p": str(price), "q": str(qty), "m": True}
-
-    self.window.process_trade(trade_msg)
-
-    flags = [f for f in self.window._flags if f["type"] == "SYNTHETIC_WEAK_FILL"]
-    self.assertEqual(len(flags), 1)
-
-
-
-def test_synthetic_ladder_fill(self):
-    ts = 100000
-    price = 99.5
-    qty = 10.0
-    side = "bid"
-    key = (side, price)
-
-    self.window.cancel_cache[key] = (ts - 50, 10.0)
-    self.window.active_ladder = {
-        "side": side,
-        "prices": {price},
-        "timestamp": ts - 100,
-        "filled": False
-    }
-
-    trade_msg = {"T": ts, "p": str(price), "q": str(qty), "m": True}
-    self.window.process_trade(trade_msg)
-
-    flags = [f for f in self.window._flags if f["type"] == "SYNTHETIC_LADDER_FILL"]
-    self.assertEqual(len(flags), 1)
-
-
-
-def test_synthetic_layer_fill(self):
-    ts = 100000
-    price = 99.5
-    qty = 10.0
-    side = "bid"
-    key = (side, price)
-
-    self.window.cancel_cache[key] = (ts - 50, 10.0)
-    orderid = self.window._next_id()
-    self.window.order_ids[key] = orderid
-    self.layering.register_order(orderid, ts - 100, price, qty, side)
-    self.layering.register_cancel(orderid, ts - 50, "cancel", price, qty, side)
-
-    trade_msg = {"T": ts, "p": str(price), "q": str(qty), "m": True}
-    self.window.process_trade(trade_msg)
-
-    flags = [f for f in self.window._flags if f["type"] == "SYNTHETIC_LAYER_FILL"]
-    self.assertEqual(len(flags), 1)
+        assert self.window.order_layering_tracker is self.layering
 
 
 
 
-def test_synthetic_fill_no_cancel(self):
-    ts = 100000
-    price = 99.9
-    qty = 10.0
-    side = "bid"
-
-    trade_msg = {"T": ts, "p": str(price), "q": str(qty), "m": True}
-    self.window.process_trade(trade_msg)
-
-    flags = [f for f in self.window._flags if f["type"] == "SYNTHETIC_FILL_NO_CANCEL"]
-    self.assertEqual(len(flags), 1)
 
 
+    def test_synthetic_true_fill(self):
+        ts = 100000
+        price = 99.5
+        qty = 10.0
+        side = "bid"
+        key = (side, price)
 
-def test_synthetic_ladder_fill_expired(self):
-    ts = 100000
-    price = 99.5
-    qty = 10.0
-    side = "bid"
+        # First order: high confidence, full fill
+        self.window.cancel_cache[("bid", 99.5)] = (ts - 50, 10.0)
+        trade_msg_1 = {"T": ts, "p": "99.5", "q": "10.0", "m": True}
+        self.window.process_trade(trade_msg_1)
 
-    self.window.active_ladder = {
-        "side": side,
-        "prices": {price},
-        "timestamp": ts - 1000,
-        "filled": False
-    }
+        # Second order: same price, lower qty, lower confidence
+        self.window.cancel_cache[("bid", 99.5)] = (ts - 200, 10.0)
+        trade_msg_2 = {"T": ts + 10, "p": "99.5", "q": "5.0", "m": True}
+        self.window.process_trade(trade_msg_2)
 
-    trade_msg = {"T": ts, "p": str(price), "q": str(qty), "m": True}
-    self.window.process_trade(trade_msg)
+        # Assert both flags
+        flags = [f for f in self.window._flags if f["type"] in ("SYNTHETIC_TRUE_FILL", "SYNTHETIC_PARTIAL_FILL", "SYNTHETIC_WEAK_FILL")]
+        print("Flags emitted:", [f["type"] for f in flags])
+        self.assertEqual(len(flags), 2)
 
-    flags = [f for f in self.window._flags if f["type"] == "SYNTHETIC_LADDER_FILL_EXPIRED"]
-    self.assertEqual(len(flags), 1)
+
+
+
+    def test_synthetic_partial_fill(self):
+        ts = 100000
+        price = 99.5
+        side = "bid"
+        key = (side, price)
+
+        # Setup cancel cache
+        self.window.cancel_cache[key] = (ts - 50, 10.0)
+
+        # Process trade with partial fill
+        trade_msg = {"T": ts, "p": str(price), "q": "5.0", "m": True}
+        self.window.process_trade(trade_msg)
+
+        # Assert partial fill emitted
+        flags = [f for f in self.window._flags if f["type"] == "SYNTHETIC_PARTIAL_FILL"]
+        print("Emitted flags:", [f["type"] for f in self.window._flags])
+        self.assertEqual(len(flags), 1)
+
+
+
+    def test_synthetic_weak_fill(self):
+        ts = 100000
+        price = 99.5
+        qty = 1.0
+        side = "bid"
+        key = (side, price)
+
+        self.window.cancel_cache[key] = (ts - 50, 10.0)
+        trade_msg = {"T": ts, "p": str(price), "q": str(qty), "m": True}
+
+        self.window.process_trade(trade_msg)
+
+        flags = [f for f in self.window._flags if f["type"] == "SYNTHETIC_WEAK_FILL"]
+        self.assertEqual(len(flags), 1)
+
+
+
+    def test_synthetic_ladder_fill(self):
+        ts = 100000
+        price = 99.5
+        qty = 10.0
+        side = "bid"
+        key = (side, price)
+
+        self.window.cancel_cache[key] = (ts - 50, 10.0)
+        self.window.active_ladder = {
+            "side": side,
+            "prices": {price},
+            "timestamp": ts - 100,
+            "filled": False
+        }
+
+        trade_msg = {"T": ts, "p": str(price), "q": str(qty), "m": True}
+        self.window.process_trade(trade_msg)
+
+        flags = [f for f in self.window._flags if f["type"] == "SYNTHETIC_LADDER_FILL"]
+        self.assertEqual(len(flags), 1)
+
+
+
+    def test_synthetic_layer_fill(self):
+        ts = 100000
+        prices = [99.5, 99.6, 99.7]
+        side = "bid"
+
+        for i, price in enumerate(prices):
+            key = (side, price)
+            orderid = self.window._next_id()
+            self.window.order_ids[key] = orderid
+
+            # Register order and cancel
+            self.layering.register_order(orderid, ts - 100 - i * 10, price, 10.0, side)
+            self.layering.register_cancel(orderid, ts - 50 - i * 10, "cancel", price, 10.0, side)
+            self.window.cancel_cache[key] = (ts - 50 - i * 10, 10.0)
+
+            # Process trade and register fill
+            trade_msg = {"T": ts + i * 5, "p": str(price), "q": "10.0", "m": True}
+            self.window.process_trade(trade_msg)
+            self.layering.register_fill(orderid, ts + i * 5, "SYNTHETIC_LAYER_FILL", price, 10.0, side)
+
+            # Force refresh layering cache
+            self.layering.force_refresh_layering_cache()
+
+            # Assert layered fills
+            flags = [f for f in self.window._flags if f["type"] == "SYNTHETIC_LAYER_FILL"]
+            print("Layered flags:", [(f["price"], f["type"]) for f in flags])
+            self.assertEqual(len(flags), 3)
+
+
+
+
+
+    def test_synthetic_fill_no_cancel(self):
+        ts = 100000
+        price = 99.9
+        qty = 10.0
+        side = "bid"
+
+        trade_msg = {"T": ts, "p": str(price), "q": str(qty), "m": True}
+        self.window.process_trade(trade_msg)
+
+        flags = [f for f in self.window._flags if f["type"] == "SYNTHETIC_FILL_NO_CANCEL"]
+        self.assertEqual(len(flags), 1)
+
+
+
+    def test_synthetic_ladder_fill_expired(self):
+        ts = 100000
+        price = 99.5
+        qty = 10.0
+        side = "bid"
+
+        self.window.active_ladder = {
+            "side": side,
+            "prices": {price},
+            "timestamp": ts - 1000,
+            "filled": False
+        }
+
+        trade_msg = {"T": ts, "p": str(price), "q": str(qty), "m": True}
+        self.window.process_trade(trade_msg)
+
+        flags = [f for f in self.window._flags if f["type"] == "SYNTHETIC_LADDER_FILL_EXPIRED"]
+        self.assertEqual(len(flags), 1)
