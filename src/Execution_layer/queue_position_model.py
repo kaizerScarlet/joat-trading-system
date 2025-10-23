@@ -1,4 +1,4 @@
-from market_data.orderbook_protocol import OrderBookProtocol
+from market_data.orderbook import OrderBook
 
 
 class QueuePositionModel:
@@ -10,7 +10,7 @@ class QueuePositionModel:
          #fallback if book doesnt provide activity
          self.base_trade_rate = base_trade_rate
 
-    def estimate(self, side: str, our_qty: float, tob_qty: float, orderbook = OrderBookProtocol) -> tuple[float, float]:
+    def estimate(self, side: str, our_qty: float, tob_qty: float, orderbook = OrderBook) -> tuple[float, float]:
         """
         Estimates our queue position and fill probability.
         :param side: "BUY" or "SELL"

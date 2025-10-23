@@ -1,5 +1,5 @@
 import random
-from market_data.orderbook_protocol import OrderBookProtocol
+from market_data.orderbook import OrderBook
 
 class SmartRepricingModel:
     def __init__(self, tick_size: float = 0.01, max_jitter_ticks: int = 2, slippage_bps: float = 5.0):
@@ -7,7 +7,7 @@ class SmartRepricingModel:
         self.max_jitter_ticks = max_jitter_ticks
         self.slippage_bps = slippage_bps # Convert bps to fraction
 
-    def optimize_price(self, side: str, orderbook:OrderBookProtocol , fill_prob_target: float = 0.6) -> float:
+    def optimize_price(self, side: str, orderbook:OrderBook, fill_prob_target: float = 0.6) -> float:
         """
         Computes an optimized limit price based on spread, fill probability, jitter, and slippage cap.
         Returns a tick-aligned price.

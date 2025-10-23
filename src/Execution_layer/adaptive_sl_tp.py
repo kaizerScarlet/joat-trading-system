@@ -3,8 +3,8 @@
 from typing import Tuple, Optional
 import numpy as np
 import time
-from alpha_scoring.Alphablender_protocol import AlphaBlenderProtocol
-from market_data.orderbook_protocol import OrderBookProtocol
+from alpha_scoring.AlphaBlender import AlphaBlender
+from market_data.orderbook import OrderBook
 
 
 class AdaptiveSLTP:
@@ -29,8 +29,8 @@ class AdaptiveSLTP:
 
     def __init__(
         self,
-        orderbook: OrderBookProtocol,
-        alpha_score: AlphaBlenderProtocol,
+        orderbook: OrderBook,
+        alpha_score: AlphaBlender,
         atr_window: int = 14,
         base_atr_multiplier: float = 1.5,
         vol_multiplier: float = 2.0,

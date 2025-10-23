@@ -2,8 +2,8 @@ import time
 from datetime import datetime
 from typing import Dict, Optional, Tuple, Any
 import logging
-from alpha_scoring.alpha_pipeline_protocol import AlphaSignalPipelineProtocol
-from cancel_window.simple_cancel_window_protocol import CancelWindowProtocol
+from alpha_scoring.alpha_pipeline import AlphaSignalPipeline
+from cancel_window.simple_cancel_window import SimpleCancelWindow
 
 from cancel_window.order_spoofing_detection import OrderSpoofingDetection
 from cancel_window.synthetic_fill_detector import SyntheticFillDetection
@@ -11,25 +11,25 @@ from cancel_window.order_laddering_detection import OrderLadderingDetection
 from cancel_window.order_iceberg_detection import OrderIcebergDetection
 from cancel_window.cancel_density_detection import CancelDensityDetection
 
-from dynamic_risk_engine.dynamic_risk_engine_protocol import DynamicRiskEngineProtocol
-from dynamic_risk_engine.throttle_cooldown_manager_protocol import ThrottleCooldownManagerProtocol
-from dynamic_risk_engine.performance_tracker_protocol import PerformanceTrackerProtocol
-from Execution_layer.binance_adapter_protocol import BinanceExecutionAdapterProtocol
+from dynamic_risk_engine.dynamic_risk_engine import DynamicRiskEngine
+from dynamic_risk_engine.throttle_cooldown_manager import ThrottleCooldownManager
+from dynamic_risk_engine.performance_tracker import PerformanceTracker
+from Execution_layer.binance_adapter import BinanceExecutionAdapter
 from Execution_layer.mock_adapter import MockExchangeAdapter #For testing and dry runs
-from dynamic_risk_engine.signal_confidence_calibrator_protocol import SignalConfidenceCalibratorProtocol
-from dynamic_risk_engine.dynamic_position_sizer_protocol import DynamicPositionSizerProtocol
-from market_data.orderbook_protocol import OrderBookProtocol
-from dynamic_risk_engine.daily_drawdown_manager_protocol import DailyDrawdownManagerProtocol
-from dynamic_risk_engine.cognitive_market_regime_classifier_protocol import CognitiveMarketRegimeClassifierProtocol, MarketRegime
-from Execution_layer.adaptive_sl_tp_protocol import AdaptiveSLTPProtocol
-from Execution_layer.stealth_router_protocol import StealthRouterProtocol
-from Execution_layer.fee_schedule_protocol import FeeScheduleProtocol
-from Execution_layer.slippage_model_protocol import SlippageModelProtocol
-from Execution_layer.latency_model_protocol import LatencyModelProtocol
-from Execution_layer.queue_position_model_protocol import QueuePositionModelProtocol
-from alpha_scoring.order_age_distribution_scorer_protocol import OrderAgeDistributionScorerProtocol
-from alpha_scoring.Order_layering_scorer_protocol import LayeringScoringProtocol
-from alpha_scoring.cancel_activity_scorer_protocol import CancelActivityScorerProtocol
+from dynamic_risk_engine.signal_confidence_calibrator import SignalConfidenceCalibrator
+from dynamic_risk_engine.dynamic_position_sizer import DynamicPositionSizer
+from market_data.orderbook import OrderBook
+from dynamic_risk_engine.daily_drawdown_manager import DailyDrawdownManager
+from dynamic_risk_engine.cognitive_market_regime_classifier import CognitiveMarketRegimeClassifier, MarketRegime
+from Execution_layer.adaptive_sl_tp import AdaptiveSLTP
+from Execution_layer.stealth_router import StealthRouter
+from Execution_layer.fee_schedule import FeeSchedule
+from Execution_layer.slippage_model import SlippageModel
+from Execution_layer.latency_model import LatencyModel
+from Execution_layer.queue_position_model import QueuePositionModel
+from alpha_scoring.order_age_scorer import OrderAgeDistributionScorer
+from alpha_scoring.Order_layering_scorer import LayeringScoring
+from alpha_scoring.cancel_activity_scorer import CancelActivityScorer
 import asyncio
 
 
@@ -58,31 +58,31 @@ class ExecutionCoordinator:
     """
     def __init__(
             self,
-            alpha_pipeline: AlphaSignalPipelineProtocol,
-            slippage_model: SlippageModelProtocol,
-            latency_model: LatencyModelProtocol,
-            fee_schedule: FeeScheduleProtocol,
-            throttle_manager: ThrottleCooldownManagerProtocol,
-            exchange_client: BinanceExecutionAdapterProtocol,
-            stealth_router: StealthRouterProtocol,
-            performance_tracker: PerformanceTrackerProtocol,
-            signal_confidence: SignalConfidenceCalibratorProtocol,
-            dynamic_position_sizer: DynamicPositionSizerProtocol,
-            cancel_window: CancelWindowProtocol,
-            order_book: OrderBookProtocol,
+            alpha_pipeline: AlphaSignalPipeline,
+            slippage_model: SlippageModel,
+            latency_model: LatencyModel,
+            fee_schedule: FeeSchedule,
+            throttle_manager: ThrottleCooldownManager,
+            exchange_client: BinanceExecutionAdapter,
+            stealth_router: StealthRouter,
+            performance_tracker: PerformanceTracker,
+            signal_confidence: SignalConfidenceCalibrator,
+            dynamic_position_sizer: DynamicPositionSizer,
+            cancel_window: SimpleCancelWindow,
+            order_book: OrderBook,
             cancel_density_scorer: CancelDensityDetection,
             synthetic_fill_scorer: SyntheticFillDetection,
             iceberg_scorer: OrderIcebergDetection,
             laddering_scorer: OrderLadderingDetection,
             cancel_spoofing_scorer: OrderSpoofingDetection,
-            cancel_activity_scorer: CancelActivityScorerProtocol,
-            layering_scorer: LayeringScoringProtocol,
-            order_age_scorer: OrderAgeDistributionScorerProtocol,
-            queue_position_model: QueuePositionModelProtocol,
-            risk_engine: DynamicRiskEngineProtocol,
-            drawdown_manager: DailyDrawdownManagerProtocol,
-            regime_classifier: CognitiveMarketRegimeClassifierProtocol,
-            sl_and_tp: AdaptiveSLTPProtocol,
+            cancel_activity_scorer: CancelActivityScorer,
+            layering_scorer: LayeringScoring,
+            order_age_scorer: OrderAgeDistributionScorer,
+            queue_position_model: QueuePositionModel,
+            risk_engine: DynamicRiskEngine,
+            drawdown_manager: DailyDrawdownManager,
+            regime_classifier: CognitiveMarketRegimeClassifier,
+            sl_and_tp: AdaptiveSLTP,
             config: Optional[Dict] = None
     ):
         """

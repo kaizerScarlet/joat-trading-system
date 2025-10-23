@@ -1,8 +1,9 @@
 import time
 from typing import Dict
+from cancel_window.order_iceberg_detection import OrderIcebergDetection
 
 class IcebergScorer:
-    def __init__(self, detector, base_score: float = 1.0, decay_half_life: int = 10_000):
+    def __init__(self, detector: OrderIcebergDetection, base_score: float = 1.0, decay_half_life: int = 10_000):
         self.detector = detector
         self.base_score = base_score
         self.decay_half_life = decay_half_life

@@ -12,6 +12,7 @@ class CancelActivityScorerProtocol(Protocol):
         distance_from_best: float
     ) -> None:
         """Registers cancel-related events for scoring (spoof, fill, wipe, repost, etc)."""
+        ...
 
     def compute_score(
         self,
@@ -19,11 +20,14 @@ class CancelActivityScorerProtocol(Protocol):
         side: str
     ) -> Dict[str, float]:
         """Returns normalized cancel aggression scores per side based on recent activity."""
+        ...
 
     def reset(self) -> None:
         """Clears internal state and resets EMA smoothing."""
+        ...
 
 
     def get_debug_view(self) -> Dict[str, Dict]:
         """Returns internal state for debugging purposes."""
+        ...
         

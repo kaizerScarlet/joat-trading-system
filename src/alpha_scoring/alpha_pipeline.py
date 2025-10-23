@@ -1,12 +1,12 @@
-from alpha_scoring.cancel_activity_scorer_protocol import CancelActivityScorerProtocol
+from alpha_scoring.cancel_activity_scorer import CancelActivityScorer
 from alpha_scoring.cancel_density_scorer import CancelDensityScorer
 from alpha_scoring.order_iceberg_scorer import IcebergScorer
-from alpha_scoring.order_age_distribution_scorer_protocol import OrderAgeDistributionScorerProtocol
-from alpha_scoring.Order_layering_scorer_protocol import LayeringScoringProtocol
+from alpha_scoring.order_age_scorer import OrderAgeDistributionScorer
+from alpha_scoring.Order_layering_scorer import LayeringScoring
 from alpha_scoring.order_spoofing_scorer import SpoofingScorer
 from alpha_scoring.synthetic_fill_scorer import SyntheticFillScorer
-from alpha_scoring.Alphablender_protocol import AlphaBlenderProtocol
-from alpha_scoring.order_laddering_scorer_protocol import OrderLadderingScoringProtocol
+from alpha_scoring.AlphaBlender import AlphaBlender
+from alpha_scoring.order_laddering_scorer import LadderingScorer
 
 from typing import Dict, Any
 
@@ -19,15 +19,15 @@ class AlphaSignalPipeline:
     """
 
     def __init__(self,
-                  cancel_scorer : CancelActivityScorerProtocol,
+                  cancel_scorer : CancelActivityScorer,
                   cancel_density_scorer: CancelDensityScorer,
-                  order_ladder_scorer: OrderLadderingScoringProtocol,
-                  age_scorer: OrderAgeDistributionScorerProtocol,
+                  order_ladder_scorer: LadderingScorer,
+                  age_scorer: OrderAgeDistributionScorer,
                   iceberg_scorer: IcebergScorer,
-                  layering_scorer: LayeringScoringProtocol,
+                  layering_scorer: LayeringScoring,
                   order_spoofing_scorer: SpoofingScorer,
                   synthetic_fill_scorer: SyntheticFillScorer,
-                  blender: AlphaBlenderProtocol, 
+                  blender: AlphaBlender, 
                   ):
         self.cancel_scorer = cancel_scorer
         self.cancel_density_scorer = cancel_density_scorer

@@ -37,7 +37,7 @@ class OrderIcebergDetection:
         return icebergs
 
 
-    def get_iceberg_score(self, side: str = None) -> float:
+    def get_iceberg_score(self, side: str | None = None) -> float:
         icebergs = self.detect_icebergs()
         if side:
             icebergs = [i for i in icebergs if i['side'] == side]

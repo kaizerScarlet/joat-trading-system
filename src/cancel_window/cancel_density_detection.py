@@ -1,11 +1,11 @@
 from collections import defaultdict
 from typing import List, Dict, Any
-from dynamic_risk_engine.cognitive_market_regime_classifier import CognitiveMarketRegimeClassifier, MarketRegime
+from dynamic_risk_engine.cognitive_market_regime_classifier_protocol import CognitiveMarketRegimeClassifierProtocol, MarketRegime
 import time
 
 class CancelDensityDetection:
     """Detects abnormal cancel concentration (CANCEL_DENSITY_SPIKE, LAYER_WIPE)."""
-    def __init__(self,regime_classifier: CognitiveMarketRegimeClassifier, window_ms: int = 1000, threshold: int = 5):
+    def __init__(self,regime_classifier: CognitiveMarketRegimeClassifierProtocol, window_ms: int = 1000, threshold: int = 5):
         self.regime_classifier = regime_classifier
         self.window_ms = window_ms
         self.threshold = threshold
@@ -22,12 +22,12 @@ class CancelDensityDetection:
         
         self._prune(timestamp)
 
-    def _prune(self, current_time: int = None) -> None:
+    def _prune(self, current_time: int | None = None) -> None:
         current_time = current_time or int(time.time() * 1000)
         cutoff = current_time - self.window_ms
         self.events = [e for e in self.events if e['timestamp'] >= cutoff]
 
-    def detect_spikes(self, current_time: int = None) -> List[Dict[str, Any]]:
+    def detect_spikes(self, current_time: int | None = None) -> List[Dict[str, Any]]:
         current_time = current_time or int(time.time() * 1000)
         cutoff = current_time - self.window_ms
         by_side = defaultdict(list)
@@ -41,7 +41,7 @@ class CancelDensityDetection:
                 spikes.append({'side': side, 'count': len(prices), 'unique_prices': len(set(prices))})
         return spikes
 
-    def get_density_score(self, side: str = None, current_time: int = None) -> float:
+    def get_density_score(self, side: str | None = None, current_time: int = None) -> float:
         spikes = self.detect_spikes(current_time=current_time)
         if side:
             spikes = [s for s in spikes if s['side'] == side]

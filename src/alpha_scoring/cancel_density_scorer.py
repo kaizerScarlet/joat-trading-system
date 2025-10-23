@@ -1,8 +1,9 @@
 import time
 from typing import Dict
+from cancel_window.cancel_denisty_detection_protocol import CancelDensityDetectionProtocol
 
 class CancelDensityScorer:
-    def __init__(self, detector, base_score=1.0, decay_half_life=5000):
+    def __init__(self, detector: CancelDensityDetectionProtocol, base_score=1.0, decay_half_life=5000):
         self.detector = detector
         self.base_score = base_score
         self.decay_half_life = decay_half_life
