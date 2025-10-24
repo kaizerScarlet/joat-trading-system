@@ -1,16 +1,16 @@
-from dynamic_risk_engine.signal_confidence_calibrator import SignalConfidenceCalibrator
-from dynamic_risk_engine.performance_tracker import PerformanceTracker
-from market_data.orderbook import OrderBook
-from dynamic_risk_engine.daily_drawdown_manager import DailyDrawdownManager
-from Execution_layer.binance_adapter import BinanceExecutionAdapter
+from dynamic_risk_engine.signal_confidence_calibrator_protocol import SignalConfidenceCalibratorProtocol
+from dynamic_risk_engine.performance_tracker_protocol import PerformanceTrackerProtocol
+from market_data.orderbook_protocol import OrderBookProtocol
+from dynamic_risk_engine.daily_drawdown_manager_protocol import DailyDrawdownManagerProtocol
+from Execution_layer.binance_adapter_protocol import BinanceExecutionAdapterProtocol
 
 class DynamicPositionSizer:
-    def __init__(self, binance_adapter: BinanceExecutionAdapter, 
-                 confidence: SignalConfidenceCalibrator,
-                 performance_tracker: PerformanceTracker,
-                 orderbook: OrderBook,
-                 binance_Execution_adapter: BinanceExecutionAdapter,
-                 drawdown: DailyDrawdownManager,
+    def __init__(self, binance_adapter: BinanceExecutionAdapterProtocol, 
+                 confidence: SignalConfidenceCalibratorProtocol,
+                 performance_tracker: PerformanceTrackerProtocol,
+                 orderbook: OrderBookProtocol,
+                 binance_Execution_adapter: BinanceExecutionAdapterProtocol,
+                 drawdown: DailyDrawdownManagerProtocol,
                  ):
         """
         Initialize the dynamic position sizer.

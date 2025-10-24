@@ -1,6 +1,6 @@
 from collections  import defaultdict
 from typing import List, Dict, Any
-from dynamic_risk_engine.cognitive_market_regime_classifier import MarketRegime, CognitiveMarketRegimeClassifier
+from dynamic_risk_engine.cognitive_market_regime_classifier_protocol    import MarketRegime, CognitiveMarketRegimeClassifierProtocol
 import time
 
 class OrderLadderingDetection:
@@ -12,7 +12,7 @@ class OrderLadderingDetection:
 
     """
 
-    def __init__(self,regime_classifier: CognitiveMarketRegimeClassifier, retention_ms: int = 300_000, step_window_ms: int = 500):
+    def __init__(self,regime_classifier: CognitiveMarketRegimeClassifierProtocol   , retention_ms: int = 300_000, step_window_ms: int = 500):
         self.regime_classifier = regime_classifier
         self.retention_ms = retention_ms
         self.step_window_ms = step_window_ms

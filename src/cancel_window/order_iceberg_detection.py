@@ -1,10 +1,10 @@
 from typing import List, Dict, Any
-from dynamic_risk_engine.cognitive_market_regime_classifier import CognitiveMarketRegimeClassifier, MarketRegime
+from dynamic_risk_engine.cognitive_market_regime_classifier_protocol import CognitiveMarketRegimeClassifierProtocol, MarketRegime
 import time
 
 class OrderIcebergDetection:
     """Detects iceberg cancels: multiple partial reductions before full cancel."""
-    def __init__(self,regime_classifier: CognitiveMarketRegimeClassifier, retention_ms: int = 300_000):
+    def __init__(self,regime_classifier: CognitiveMarketRegimeClassifierProtocol   , retention_ms: int = 300_000):
         self.regime_classifier = regime_classifier
         self.retention_ms = retention_ms
         self.events: List[Dict[str, Any]] = []

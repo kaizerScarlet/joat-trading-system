@@ -1,5 +1,5 @@
 from collections import defaultdict
-from dynamic_risk_engine.cognitive_market_regime_classifier import CognitiveMarketRegimeClassifier, MarketRegime
+from dynamic_risk_engine.cognitive_market_regime_classifier_protocol     import CognitiveMarketRegimeClassifierProtocol   , MarketRegime
 from typing import List, Dict, Any
 import time
 
@@ -9,7 +9,7 @@ class OrderSpoofingDetection:
     Inputs: events like CANCEL_SPOOF, PING_CANCEL, REPOSTING_BEHAVIOUR, BURST_CANCEL.
     Output: clusters summarizing spoof-like bursts per side.
     """
-    def __init__(self, regime_classifier:CognitiveMarketRegimeClassifier,  retention_ms: int = 300_000, burst_window_ms: int = 250):
+    def __init__(self, regime_classifier:CognitiveMarketRegimeClassifierProtocol,  retention_ms: int = 300_000, burst_window_ms: int = 250):
         self.regime_classifier = regime_classifier
         self.retention_ms = retention_ms
         self.burst_window_ms = burst_window_ms

@@ -6,15 +6,15 @@ import time
 import math 
 import uuid
 
-from dynamic_risk_engine.cognitive_market_regime_classifier import CognitiveMarketRegimeClassifier, MarketRegime
-from market_data.orderbook import OrderBook
-from cancel_window.order_age_distribution import OrderAgeDistribution
-from cancel_window.order_layering_detection import OrderLayeringDetection
-from cancel_window.order_laddering_detection import OrderLadderingDetection
-from cancel_window.synthetic_fill_detector import SyntheticFillDetection
-from cancel_window.order_spoofing_detection import OrderSpoofingDetection
-from cancel_window.cancel_density_detection import CancelDensityDetection
-from cancel_window.order_iceberg_detection import OrderIcebergDetection
+from dynamic_risk_engine.cognitive_market_regime_classifier_protocol import CognitiveMarketRegimeClassifierProtocol, MarketRegime
+from market_data.orderbook_protocol import OrderBookProtocol
+from cancel_window.order_age_distribution_protocol import OrderAgeDistributionProtocol
+from cancel_window.order_layering_detection_protocol import OrderLayeringDetectionProtocol
+from cancel_window.order_laddering_detection_protocol import OrderLadderingDetectionProtocol
+from cancel_window.synthetic_fill_detector_protocol import SyntheticFillDetectorProtocol
+from cancel_window.order_spoofing_detection_protocol import OrderSpoofingDetectionProtocol
+from cancel_window.cancel_denisty_detection_protocol import CancelDensityDetectionProtocol
+from cancel_window.order_iceberg_detection_protocol import OrderIcebergDetectionProtocol
 
 
 
@@ -156,14 +156,14 @@ class SimpleCancelWindow(CancelWindow):
         15. PING_CANCEL -> Orders placed for very short time (ping for liquidity)
     """
     # -----------------------------------------------------------------------------------------------#
-    def __init__(self, tuner: CancelWindowTuner, order_layering:OrderLayeringDetection,
-                  order_ladder_tracker: OrderLadderingDetection,
-                  synthetic_fill_detector: SyntheticFillDetection,
-                  order_spoofing: OrderSpoofingDetection,
-                  order_cancel_density: CancelDensityDetection,
-                  order_iceberg_detection: OrderIcebergDetection,
-                  order_age_tracker: OrderAgeDistribution, 
-                  order_book: OrderBook, classifier: CognitiveMarketRegimeClassifier, market_type: str = "spot"):
+    def __init__(self, tuner: CancelWindowTuner, order_layering:OrderLayeringDetectionProtocol,
+                  order_ladder_tracker: OrderLadderingDetectionProtocol,
+                  synthetic_fill_detector: SyntheticFillDetectorProtocol,
+                  order_spoofing: OrderSpoofingDetectionProtocol,
+                  order_cancel_density: CancelDensityDetectionProtocol,
+                  order_iceberg_detection: OrderIcebergDetectionProtocol,
+                  order_age_tracker: OrderAgeDistributionProtocol, 
+                  order_book: OrderBookProtocol, classifier: CognitiveMarketRegimeClassifierProtocol, market_type: str = "spot"):
         
         self.adaptive = True
         self.window_ms = None
