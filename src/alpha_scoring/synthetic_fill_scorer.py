@@ -1,10 +1,10 @@
 import time
 from typing import Dict
-from cancel_window.synthetic_fill_detector import SyntheticFillDetection
+from cancel_window.synthetic_fill_detector_protocol import SyntheticFillDetectorProtocol
 
 class SyntheticFillScorer:
  
-    def __init__(self, detector: SyntheticFillDetection, base_score = 1.0, decay_half_life = 5000):
+    def __init__(self, detector: SyntheticFillDetectorProtocol, base_score = 1.0, decay_half_life = 5000):
         self.detector = detector
         self.base_score = base_score
         self.decay_half_life = decay_half_life

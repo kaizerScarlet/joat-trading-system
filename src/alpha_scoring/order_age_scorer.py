@@ -1,11 +1,11 @@
 from typing import Optional, Dict
-from cancel_window.order_age_distribution import OrderAgeDistribution
+from cancel_window.order_age_distribution_protocol import OrderAgeDistributionProtocol
 import time
 
 class OrderAgeDistributionScorer:
     def __init__(self,
-                 tracker: OrderAgeDistribution,
-                 distribution_tracker: Optional[OrderAgeDistribution] = None,
+                 tracker: OrderAgeDistributionProtocol,
+                 distribution_tracker: Optional[OrderAgeDistributionProtocol] = None,
                  base_score: float = 1.0,
                  short_lived_threshold_ms: int = 200,
                  burst_ratio_threshold: float = 0.7,

@@ -1,8 +1,11 @@
 from typing import Dict
 import time
+from cancel_window.order_spoofing_detection_protocol import OrderSpoofingDetectionProtocol
+
+
 
 class SpoofingScorer:
-    def __init__(self, spoof_detector, base_score: float = 1.0, decay_half_life: int = 5000):
+    def __init__(self, spoof_detector: OrderSpoofingDetectionProtocol, base_score: float = 1.0, decay_half_life: int = 5000):
         self.detector = spoof_detector
         self.base_score = base_score
         self.decay_half_life = decay_half_life

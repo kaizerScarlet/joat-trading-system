@@ -1,4 +1,4 @@
-from cancel_window.order_laddering_detection import OrderLadderingDetection
+from cancel_window.order_laddering_detection_protocol import OrderLadderingDetectionProtocol
 from typing import Dict
 import time
 
@@ -6,7 +6,7 @@ class LadderingScorer:
     """
     Scores detected laddering sequences based on intensity, direction, and speed.
     """
-    def __init__(self, detector: OrderLadderingDetection, base_score: float = 1.0, decay_half_life: int = 8000):
+    def __init__(self, detector: OrderLadderingDetectionProtocol, base_score: float = 1.0, decay_half_life: int = 8000):
         self.detector = detector
         self.base_score = base_score
         self.decay_half_life = decay_half_life

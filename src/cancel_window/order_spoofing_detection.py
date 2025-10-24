@@ -41,7 +41,7 @@ class OrderSpoofingDetection:
             if len(burst) >= 3: clusters.append(self._summarize_cluster(side, burst))
         return clusters
 
-    def _summarize_cluster(self, side, cluster):
+    def _summarize_cluster(self, side: str, cluster: list[Dict[str, any]]) -> Dict[str, Any]:
         avg_price = sum(e['price'] for e in cluster) / len(cluster)
         return {
             'side': side,

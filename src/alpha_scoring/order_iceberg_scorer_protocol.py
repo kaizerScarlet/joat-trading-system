@@ -2,7 +2,7 @@ from typing import Protocol, Dict, runtime_checkable
 from cancel_window.order_iceberg_detection_protocol import OrderIcebergDetectionProtocol
 
 @runtime_checkable
-class IcebergScorer(Protocol):
+class IcebergScorerProtocol(Protocol):
      detector: OrderIcebergDetectionProtocol
      base_score: float
      decay_half_life: int

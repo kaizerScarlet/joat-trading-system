@@ -10,7 +10,7 @@ class SyntheticFillDetection:
         self.events: List[Dict[str, Any]] = []
 
 
-    def register_event(self, orderid: str, timestamp: int, event_type: str, price, size: float, side: str):
+    def register_event(self, orderid: str, timestamp: int, event_type: str, price, size: float, side: str) -> None:
         self.events.append({
             'orderid': orderid,
             'timestamp': timestamp,
@@ -23,7 +23,7 @@ class SyntheticFillDetection:
         self._prune()
 
 
-    def _prune(self):
+    def _prune(self) -> None:
         cutoff = int(time.time() * 1000) - self.retention_ms
         self.events = [e for e in self.events if e['timestamp'] >= cutoff]
 

@@ -1,7 +1,14 @@
-from typing import Protocol, Dict, runtime_checkable
+from typing import Protocol, Dict, List, runtime_checkable
+from cancel_window.simple_cancel_window_protocol import CancelWindowProtocol
 
 @runtime_checkable
 class CancelActivityScorerProtocol(Protocol):
+    window_ms_tuner: CancelWindowProtocol
+    reference_size: float
+    tick_penalty: float
+    window_ms: int
+    order_events_by_side: Dict[str, List[Dict]]
+
     def register_events(
         self,
         timestamp: int,
