@@ -6,10 +6,10 @@ import time
 from typing import List, Tuple
 from collections import deque
 import asyncio
-from dynamic_risk_engine.cognitive_market_regime_classifier import CognitiveMarketRegimeClassifier, MarketRegime 
-from dynamic_risk_engine.signal_confidence_calibrator import SignalConfidenceCalibrator
-from cancel_window.simple_cancel_window import SimpleCancelWindow
-from market_data.orderbook import OrderBook
+from dynamic_risk_engine.cognitive_market_regime_classifier_protocol import CognitiveMarketRegimeClassifierProtocol, MarketRegime 
+from dynamic_risk_engine.signal_confidence_calibrator_protocol import SignalConfidenceCalibratorProtocol
+from cancel_window.simple_cancel_window_protocol import CancelWindowProtocol
+from market_data.orderbook_protocol import OrderBookProtocol
 
 class ThrottleCooldownManager:
     """
@@ -25,19 +25,19 @@ class ThrottleCooldownManager:
     """
     def __init__(
             self,
-            regime_classifier: CognitiveMarketRegimeClassifier,
-            confidence: SignalConfidenceCalibrator,
-            cancel_window: SimpleCancelWindow,
-            orderbook: OrderBook,
-            max_losses=3, 
-            cooldown_seconds=60,
-            max_trades_per_minute=3,
+            regime_classifier: CognitiveMarketRegimeClassifierProtocol,
+            confidence: SignalConfidenceCalibratorProtocol,
+            cancel_window: CancelWindowProtocol,
+            orderbook: OrderBookProtocol,
+            max_losses: int =3, 
+            cooldown_seconds: int =60,
+            max_trades_per_minute: int = 3,
 
-            max_orders_per_10s = 100,
-            max_orders_per_day = 200000,
-            max_weight_per_minute = 6000,
-            min_conversion_rate = 0.98, #98%  of orders must convert
-            min_fill_weight = 0.98, #98%  of volume must fill
+            max_orders_per_10s: int = 100,
+            max_orders_per_day : int = 200000,
+            max_weight_per_minute : int= 6000,
+            min_conversion_rate: float = 0.98, #98%  of orders must convert
+            min_fill_weight : float = 0.98, #98%  of volume must fill
 
         
             
@@ -60,19 +60,19 @@ class ThrottleCooldownManager:
         self.max_losses = max_losses
         self.cooldown_seconds = cooldown_seconds
         self.max_trades_per_minute = max_trades_per_minute
-        self.loss_streak = 0  # Tracks consecutive losses
-        self.cooldown_until = 0  # Timestamp until which trading is paused
+        self.loss_streak : int = 0  # Tracks consecutive losses
+        self.cooldown_until : int = 0  # Timestamp until which trading is paused
 
         #Event Tracking for limits
-        self.order_timestamps = deque()
-        self.cancel_timestamps = deque()
-        self.trade_timestamps = deque()
-        self.minute_weights = deque()
+        self.order_timestamps : deque = deque()
+        self.cancel_timestamps : deque = deque()
+        self.trade_timestamps : deque = deque()
+        self.minute_weights : deque = deque()
 
 
         #Volume metrics
-        self.volume_traded = 0.0
-        self.order_volume_total = 0.0
+        self.volume_traded : float = 0.0
+        self.order_volume_total : float = 0.0
 
         #Limit Thresholds
         self.max_orders_per_10s = max_orders_per_10s
@@ -83,8 +83,8 @@ class ThrottleCooldownManager:
 
 
         #Counters and Resets
-        self.daily_order_count = 0
-        self.last_reset = time.time()
+        self.daily_order_count : int = 0
+        self.last_reset : time = time.time()
 
         self.confidence = confidence
         self.cancel_window = cancel_window
