@@ -1,12 +1,12 @@
-from dynamic_risk_engine.performance_tracker import PerformanceTracker
-from dynamic_risk_engine.daily_drawdown_manager import DailyDrawdownManager
-from dynamic_risk_engine.signal_confidence_calibrator import SignalConfidenceCalibrator
-from dynamic_risk_engine.dynamic_position_sizer import DynamicPositionSizer
-from dynamic_risk_engine.throttle_cooldown_manager import ThrottleCooldownManager
-from Execution_layer.binance_adapter import BinanceExecutionAdapter
-from market_data.orderbook import OrderBook
-from dynamic_risk_engine.cognitive_market_regime_classifier import  CognitiveMarketRegimeClassifier, MarketRegime
-from cancel_window.simple_cancel_window import SimpleCancelWindow
+from dynamic_risk_engine.performance_tracker_protocol import PerformanceTrackerProtocol
+from dynamic_risk_engine.daily_drawdown_manager_protocol import DailyDrawdownManagerProtocol
+from dynamic_risk_engine.signal_confidence_calibrator_protocol import SignalConfidenceCalibratorProtocol
+from dynamic_risk_engine.dynamic_position_sizer_protocol import DynamicPositionSizerProtocol
+from dynamic_risk_engine.throttle_cooldown_manager_protocol import ThrottleCooldownManagerProtocol
+from Execution_layer.binance_adapter_protocol import BinanceExecutionAdapterProtocol
+from market_data.orderbook_protocol import OrderBookProtocol
+from dynamic_risk_engine.cognitive_market_regime_classifier_protocol import  CognitiveMarketRegimeClassifierProtocol, MarketRegime
+from cancel_window.simple_cancel_window_protocol import CancelWindowProtocol
 from datetime import datetime 
 
 
@@ -17,15 +17,15 @@ class DynamicRiskEngine:
     Governs whether trades can proceed based on how large they should be
     """
 
-    def __init__(self,daily_drawdown_limit: DailyDrawdownManager,
-                  performance_tracker: PerformanceTracker,
-                  signal_confidence: SignalConfidenceCalibrator,
-                  dynamic_position_sizer: DynamicPositionSizer,
-                  throttle_cooldown_manager: ThrottleCooldownManager,
-                  binance_adapter: BinanceExecutionAdapter,
-                  orderbook: OrderBook,
-                  cancel_window: SimpleCancelWindow,
-                  market_regime_classifier: CognitiveMarketRegimeClassifier
+    def __init__(self,daily_drawdown_limit: DailyDrawdownManagerProtocol,
+                  performance_tracker: PerformanceTrackerProtocol,
+                  signal_confidence: SignalConfidenceCalibratorProtocol,
+                  dynamic_position_sizer: DynamicPositionSizerProtocol,
+                  throttle_cooldown_manager: ThrottleCooldownManagerProtocol,
+                  binance_adapter: BinanceExecutionAdapterProtocol,
+                  orderbook: OrderBookProtocol,
+                  cancel_window: CancelWindowProtocol,
+                  market_regime_classifier: CognitiveMarketRegimeClassifierProtocol
                   ):
 
         """
