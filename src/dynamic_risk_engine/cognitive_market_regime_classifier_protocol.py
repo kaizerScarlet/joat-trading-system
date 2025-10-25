@@ -1,10 +1,12 @@
-from typing import Protocol, runtime_checkable, Dict, Any
+from typing import TYPE_CHECKING, Protocol, runtime_checkable, Dict, Any
 from collections import deque
 from datetime import datetime
 from enum import Enum
 from market_data.orderbook_protocol import OrderBookProtocol
 from dynamic_risk_engine.signal_confidence_calibrator_protocol import SignalConfidenceCalibratorProtocol
-from cancel_window.simple_cancel_window_protocol import CancelWindowProtocol
+
+if TYPE_CHECKING:
+    from cancel_window.simple_cancel_window_protocol import CancelWindowProtocol
 
 class MarketRegime(Enum):
     TRENDING = "trending"
@@ -16,11 +18,11 @@ class MarketRegime(Enum):
 @runtime_checkable
 class CognitiveMarketRegimeClassifierProtocol(Protocol):
     orderbook: OrderBookProtocol
-    signal_calibrator: SignalConfidenceCalibratorProtocol
-    cancel_window: CancelWindowProtocol
+    signal_calibrator: SignalConfidenceCalibratorProtocol 
+    cancel_window: "CancelWindowProtocol"  # <— quoted forward reference
     regime_history: deque[int]
     last_regime: MarketRegime
-    last_regime: datetime
+    last_regime_change: datetime
 
     def classify_environment(self) -> MarketRegime:
         """Classifies current market regime"""

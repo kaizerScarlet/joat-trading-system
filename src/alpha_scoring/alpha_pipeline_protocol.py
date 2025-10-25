@@ -20,8 +20,7 @@ class AlphaSignalPipelineProtocol(Protocol):
     order_spoofing_scorer: OrderSpoofingScorerProtocol
     synthetic_fill_scorer: SyntheticFillScorerProtocol
     iceberg_scorer: IcebergScorerProtocol
-    blender: AlphaBlenderProtocol
-
+    
     def update_market(self, timestamp: int, market_snapshot: Dict[str, Any]) -> None:
         """Feeds market snapshot into scorers and updates signal values per side."""
         ...

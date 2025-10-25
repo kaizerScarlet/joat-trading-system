@@ -1,13 +1,14 @@
 from typing import Protocol, Tuple
-from market_data.orderbook import OrderBook
+from market_data.orderbook_protocol import OrderBookProtocol
 
 class QueuePositionModelProtocol(Protocol):
+    base_trade_rate: float
     def estimate(
         self,
         side: str,
         our_qty: float,
         tob_qty: float,
-        orderbook: OrderBook
+        orderbook: OrderBookProtocol
     ) -> Tuple[float, float]:
         """
         Estimates our queue position and fill probability.

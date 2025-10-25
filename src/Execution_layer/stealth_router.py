@@ -3,15 +3,15 @@ import random
 from typing import Optional
 import time
 import logging
-from market_data.orderbook import OrderBook
-from Execution_layer.fee_schedule import FeeSchedule
-from Execution_layer.slippage_model import SlippageModel
-from Execution_layer.queue_position_model import QueuePositionModel 
-from Execution_layer.binance_adapter import BinanceExecutionAdapter
-from Execution_layer.smart_pricing_model import SmartRepricingModel
-from dynamic_risk_engine.cognitive_market_regime_classifier import CognitiveMarketRegimeClassifier, MarketRegime
-from dynamic_risk_engine.signal_confidence_calibrator import SignalConfidenceCalibrator
-from cancel_window.simple_cancel_window import SimpleCancelWindow
+from market_data.orderbook_protocol import OrderBookProtocol
+from Execution_layer.fee_schedule_protocol import FeeScheduleProtocol
+from Execution_layer.slippage_model_protocol import SlippageModelProtocol
+from Execution_layer.queue_position_model_protocol import QueuePositionModelProtocol 
+from Execution_layer.binance_adapter_protocol import BinanceExecutionAdapterProtocol
+from Execution_layer.smart_pricing_model_protocol import SmartRepricingModelProtocol
+from dynamic_risk_engine.cognitive_market_regime_classifier_protocol import CognitiveMarketRegimeClassifierProtocol, MarketRegime
+from dynamic_risk_engine.signal_confidence_calibrator_protocol import SignalConfidenceCalibratorProtocol
+from cancel_window.simple_cancel_window_protocol import CancelWindowProtocol
 
 
 
@@ -24,13 +24,13 @@ class StealthRouter:
     Now Supports hybrid mode: start passive, monitor queue, reprice or cross if fill prob drops
     """
 
-    def __init__(self, exchange_client: BinanceExecutionAdapter,
-                 orderbook: OrderBook,
-                regime_classifier : CognitiveMarketRegimeClassifier,
-                slippage_model : SlippageModel,
-                repricing_model : SmartRepricingModel, #New: repricing model (optional
+    def __init__(self, exchange_client: BinanceExecutionAdapterProtocol,
+                 orderbook: OrderBookProtocol,
+                regime_classifier : CognitiveMarketRegimeClassifierProtocol,
+                slippage_model : SlippageModelProtocol,
+                repricing_model : SmartRepricingModelProtocol, #New: repricing model (optional
              
-                queue_model = QueuePositionModel,#New: queue model injected for hybrid monitoring
+                queue_model = QueuePositionModelProtocol,#New: queue model injected for hybrid monitoring
                 symbol: str = "BTCUSDT",
                 min_slice_usd: float = 50,
                 max_slice_usd: float = 500,
@@ -86,8 +86,8 @@ class StealthRouter:
 
 
     async def execute_parent_order(self, side:str, total_qty: float,
-                                   orderbook: OrderBook, #New : OrderBook (Optional)
-                                   slippage_model: SlippageModel, #New: SlippageModel (Optional)
+                                   orderbook: OrderBookProtocol, #New : OrderBook (Optional)
+                                   slippage_model: SlippageModelProtocol, #New: SlippageModel (Optional)
                                    order_type: str, limit_price: Optional[float]=None,
                                    fee_schedule = None, #New: FeeSchedule (Optional)
                                    mode: str = "normal",    #New: normal | hybrid
@@ -298,7 +298,7 @@ class StealthRouter:
         return placed_order_ids
     
 
-    async def _monitor_slice(self, slice_info, side, qty, orderbook: OrderBook , horizon_sec: int, threshold: float):
+    async def _monitor_slice(self, slice_info, side, qty, orderbook: OrderBookProtocol , horizon_sec: int, threshold: float):
         """
         Monitor a passive slice; cancel/replace or cross if fill prob drops below threshold.
         """

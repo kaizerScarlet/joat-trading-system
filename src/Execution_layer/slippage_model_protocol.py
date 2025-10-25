@@ -2,6 +2,7 @@ from typing import Protocol, runtime_checkable
 
 @runtime_checkable
 class SlippageModelProtocol(Protocol):
+    impact_coeff: float
     def expected_market_slip(
         self,
         side: str,

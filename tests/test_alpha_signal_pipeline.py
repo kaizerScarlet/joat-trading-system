@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import MagicMock
 from alpha_scoring.alpha_pipeline import AlphaSignalPipeline
+from alpha_scoring.alpha_pipeline_protocol import AlphaSignalPipelineProtocol
 
 class TestAlphaSignalPipeline(unittest.TestCase):
     def setUp(self):
@@ -14,7 +15,7 @@ class TestAlphaSignalPipeline(unittest.TestCase):
         self.synthetic_fill_scorer = MagicMock()
         self.blender = MagicMock()
 
-        self.pipeline = AlphaSignalPipeline(
+        self.pipeline: AlphaSignalPipelineProtocol = AlphaSignalPipeline(
             cancel_scorer=self.cancel_scorer,
             cancel_density_scorer=self.cancel_density_scorer,
             layering_scorer=self.layering_scorer,

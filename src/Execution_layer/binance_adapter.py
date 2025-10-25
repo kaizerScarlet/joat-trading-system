@@ -36,12 +36,12 @@ class BinanceExecutionAdapter:
             session: Optional[aiohttp.ClientSession] = None,
             **kwargs
     ):
-        self.api_key = api_key
-        self.api_secret = api_secret
-        self.base_url = base_url.rstrip("/")
-        self.session = session #May be none at init
-        self._closed = False
-        self._lock =asyncio.Lock() #serialize signed request creation if needed
+        self.api_key : str = api_key
+        self.api_secret : str = api_secret
+        self.base_url : str = base_url.rstrip("/")
+        self.session : Optional[aiohttp.ClientSession] = session #May be none at init
+        self._closed : bool = False
+        self._lock : asyncio =asyncio.Lock() #serialize signed request creation if needed
 
 
         #Optional integration objects

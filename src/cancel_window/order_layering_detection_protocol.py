@@ -1,9 +1,11 @@
-from typing import Protocol, Dict, List, Any, runtime_checkable
-from cancel_window.simple_cancel_window import CancelWindowTunerForLayering
+from typing import TYPE_CHECKING, Protocol, Dict, List, Any, runtime_checkable
+
+if TYPE_CHECKING:
+    from cancel_window.simple_cancel_window import CancelWindowTunerForLayering
 
 @runtime_checkable
 class OrderLayeringDetectionProtocol(Protocol):
-    tuner: CancelWindowTunerForLayering
+    tuner: "CancelWindowTunerForLayering"  #<- qouted as forward reference
     price_tick: float
     cluster_depth: int
     min_orders: int

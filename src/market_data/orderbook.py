@@ -177,7 +177,7 @@ class OrderBook:
             return sum(size for price, size in self.asks.items() if (price - mid) <= threshold)
 
     # -------------------- Microstructure metrics ---------------------------------
-    def get_order_imbalance(self) -> float:
+    def get_order_imbalance(self, side: str) -> float:
         """
         Order book imbalance = bid_vol / (bid_vol + ask_vol).
         Range [0, 1], > 0.5 means more bid-side liquidity.
@@ -185,7 +185,12 @@ class OrderBook:
         bid_vol = self.get_estimated_volume("bid")
         ask_vol = self.get_estimated_volume("ask")
         denom = bid_vol + ask_vol
-        return bid_vol / denom if denom > 0 else 0.5
+        if denom == 0:
+            return 0.5 # Balanced fallback
+        if side == "ask":
+            return ask_vol /denom
+        elif side == "bid":
+            return bid_vol / denom
 
     def get_volatility_estimate(self) -> float:
         """
@@ -252,4 +257,91 @@ class OrderBook:
         except Exception as e:
             print(Fore.MAGENTA + f"[ERROR] Failed to fetch tick size for {symbol}: {e}")
         return None  # Signal failure
+    
+
+    def get_midpoint_staleness(self) -> float:
+        """
+        Measures how long the midpoint has remained unchanged.
+        Returns a normalized staleness score [0.0–1.0].
+        """
+        if not self.price_history or not self.last_update_ts:
+            return 0.0
+        unchanged = sum(
+            1 for i in range(1, len(self.price_history))
+            if self.price_history[i] == self.price_history[i-1]
+        )
+        return unchanged / len(self.price_history)
+    
+
+
+    def get_quote_flicker_rate(self) -> float:
+        """
+        Estimates how frequently best bid/ask levels change.
+        High flicker rate signals instability or algo churn.
+        """
+        flickers = 0
+        prev_bid, prev_ask = None, None
+        for i in range(1, len(self.price_history)):
+            bid = max(self.bids.keys(), default=0.0)
+            ask = min(self.asks.keys(), default=0.0)
+            if bid != prev_bid or ask != prev_ask:
+                flickers += 1
+            prev_bid, prev_ask = bid, ask
+        return flickers / max(1, len(self.price_history))
+    
+
+
+    def get_depth_retreat_score(self) -> float:
+        """
+        Measures how much liquidity retreats as price approaches.
+        High score = passive defense or spoof unwind.
+        """
+        mid = self.get_midprice()
+        if mid <= 0:
+            return 0.0
+        near_bid = sum(size for price, size in self.bids.items() if mid - price < 5)
+        far_bid = sum(size for price, size in self.bids.items() if mid - price >= 5)
+        near_ask = sum(size for price, size in self.asks.items() if price - mid < 5)
+        far_ask = sum(size for price, size in self.asks.items() if price - mid >= 5)
+        retreat_ratio = (far_bid + far_ask) / max(1e-6, near_bid + near_ask)
+        return min(retreat_ratio, 1.0)
+    
+
+    def get_slip_response_score(self) -> float:
+        """
+        Measures how quickly orders retreat after fills.
+        High score = fear, spoof unwind, or reactive defense.
+        """
+        # Placeholder: simulate slip detection using volatility spike
+        vol = self.get_volatility_estimate()
+        return min(1.0, vol * 20)
+
+    def get_bid_aggression(self) -> float:
+        """
+        Measures how aggressively bids are placed near mid.
+        High score = breakout pressure or spoof layering.
+        """
+        mid = self.get_midprice()
+        if mid <= 0:
+            return 0.0
+        near_bids = sum(size for price, size in self.bids.items() if mid - price < 3)
+        total_bids = sum(self.bids.values())
+        return near_bids / max(1e-6, total_bids)
+    
+    def get_ask_defense(self) -> float:
+        """
+        Measures how defensively asks are layered near mid.
+        High score = resistance or spoof layering.
+        """
+        mid = self.get_midprice()
+        if mid <= 0:
+            return 0.0
+        near_asks = sum(size for price, size in self.asks.items() if price - mid < 3)
+        total_asks = sum(self.asks.values())
+        return near_asks / max(1e-6, total_asks)
+
+
+
+
+
 

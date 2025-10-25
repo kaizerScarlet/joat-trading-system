@@ -20,13 +20,31 @@ from cancel_window.order_iceberg_detection_protocol import OrderIcebergDetection
 
 # ====== adaptive_density_tuner.py
 class AdaptiveDensityWindow:
-    def __init__(self, initial_window_ms: int = 100, decay: float = 0.1):
+    def __init__(self, classifier:CognitiveMarketRegimeClassifierProtocol, initial_window_ms: int = 100, decay: float = 0.1):
         self.current_window = initial_window_ms
-        self.decay = decay 
+        self.decay = decay
+        self.classifier = classifier 
 
     def update(self, ts: float, recent_cancel_rate: float):
         #assume cancel rate is in cancels per second
         ideal_window = max(25, min(500, 1000) / (recent_cancel_rate + 1e-6))
+
+        if self.classifier:
+            overlay = self.classifier.get_behavioral_overlay()
+            regime = self.classifier.get_current_regime()
+            if overlay in {"LIQUIDITY_VACUUM", "LIQUIDITY_MIRAGE"}:
+                ideal_window *= 0.7
+            elif overlay in {"QUOTE_FLICKER", "DEPTH_FADE"}:
+                ideal_window *= 0.75
+            elif overlay == "MIDPOINT_STALE":
+                ideal_window *= 1.25
+            elif overlay == "PASSIVE_FADE":
+                ideal_window *= 1.3
+            elif regime.name == "VOLATILE":
+                ideal_window *= 0.85
+            elif regime.name == "MEAN_REVERTING":
+                ideal_window *= 1.2
+
         self.current_window = (1 - self.decay) * self.current_window + self.decay * ideal_window
 
     def get_current_window(self) -> int:
@@ -41,14 +59,31 @@ class AdaptiveDensityWindow:
     
 # ======Adaptive Threshold ============
 class AdaptiveThreshold:
-    def __init__(self, initial_threshold: int = 3, decay: float = 0.1):
+    def __init__(self, classifier: CognitiveMarketRegimeClassifierProtocol, initial_threshold: int = 3, decay: float = 0.1):
         self.threshold = initial_threshold
-        self.decay = decay 
+        self.decay = decay
+        self.classifier = classifier 
 
     def update(self, volume: float, volatility: float):
         #Simple heuristic: increase threshold when volume or volatility is high
         factor = 1 + 0.5 * math.tanh(volume * volatility)
         adjusted = max(2, min(10, factor * self.threshold))
+        if self.classifier:
+            overlay = self.classifier.get_behavioral_overlay()
+            stability = self.classifier.get_regime_stability()
+            if stability < 0.5:
+                adjusted += 1.2
+            elif stability > 0.8:
+                adjusted *= 0.85
+            elif overlay == "AGGRESSIVE_SWEEP":
+                adjusted *= 0.85
+            elif overlay == "PASSIVE_FADE":
+                adjusted *= 1.15
+            elif overlay == "QUOTE_FLICKER":
+                adjusted *= 0.9
+            elif overlay == "MIDPOINT_STALE":
+                adjusted *= 1.1
+
         self.threshold = (1 - self.decay) * self.threshold + self.decay *adjusted
 
     def get_threshold(self) -> int:
@@ -64,13 +99,34 @@ class AdaptiveThreshold:
 
 # ========== adaptive_fill_threshold ============
 class FillThresholdTuner:
-    def __init__(self, initial_ratio: float = 0.9, decay: float = 0.05):
+    def __init__(self, classifier:CognitiveMarketRegimeClassifierProtocol, initial_ratio: float = 0.9, decay: float = 0.05):
         self.ratio = initial_ratio 
-        self.decay = decay 
+        self.decay = decay
+        self.classifier = classifier 
 
     def update(self, avg_trade_size: float, volatility: float):
         #Reduce threshold slightly in high volatility to allow more fills
         adjustment = max(0.7, min(0.98, self.ratio - 0.1 * math.tanh(volatility)))
+        if self.classifier:
+            _, _, fill_weight, _ = self.classifier.get_scoring_weights()
+            overlay = self.classifier.get_behavioral_overlay()
+            regime = self.classifier.get_current_regime()
+            regime_multiplier = {
+                "TRENDING": 1.1,
+                "VOLATILE": 0.85,
+                "MEAN_REVERTING": 1.0
+            }.get(regime.name, 1.0)
+            adjustment *= fill_weight * regime_multiplier
+
+            if overlay == "REVERSION_TRAP":
+                adjustment *= 0.9
+            elif overlay == "PASSIVE_FADE":
+                adjustment *= 1.1
+            elif overlay == "CROSS_SIDE_TENSION":
+                adjustment *= 1.1
+            elif overlay == "QUOTE_FLICKER":
+                adjustment *= 0.9
+
         self.ratio = (1 - self.decay) * self.ratio + self.decay * adjustment 
 
     def get_ratio(self) -> float :
@@ -84,13 +140,21 @@ class FillThresholdTuner:
 
 
 class CancelWindowTunerForLayering:
-    def __init__(self, ema_alpha: float = 0.2, min_ms: int = 100, max_ms: int = 350):
+    def __init__(self,classifier: CognitiveMarketRegimeClassifierProtocol, ema_alpha: float = 0.2, min_ms: int = 100, max_ms: int = 350):
         self.ema_latency = None
         self.ema_alpha = ema_alpha
         self.min_ms = min_ms
         self.max_ms = max_ms 
+        self.classifier = classifier
 
     def update(self, latency_ms: float):
+        if self.classifier:
+            spoof_score = self.classifier.get_debug_view()['spoof_score']
+            overlay = self.classifier.get_behavioral_overlay()
+            if overlay in {"CHOPPY_NOISE", "LIQUIDITY_MIRAGE", "REVERSION_TRAP", "QUOTE_FLICKER", "DEPTH_FADE", "MIDPOINT_STALE"} or spoof_score > 0.4:
+                latency_ms *= 0.8
+
+
         if self.ema_latency is None:
             self.ema_latency = latency_ms
         else:
@@ -114,13 +178,29 @@ class CancelWindowTunerForLayering:
 
 # ===== CancelWindowTuner (inline) ========
 class CancelWindowTuner:
-    def __init__(self, ema_alpha: float = 0.2, min_ms: int = 50, max_ms: int = 75):
+    def __init__(self,classifier: CognitiveMarketRegimeClassifierProtocol, ema_alpha: float = 0.2, min_ms: int = 50, max_ms: int = 75):
         self.ema_latency = None
         self.ema_alpha = ema_alpha
         self.min_ms = min_ms
         self.max_ms = max_ms 
+        self.classifier = classifier
 
     def update(self, latency_ms: float):
+        if self.classifier:
+            overlay = self.classifier.get_behavioral_overlay()
+            spoof_score = self.classifier.get_debug_view()['spoof_score']
+            volatility = self.classifier.get_debug_view()['volatility']
+            if spoof_score > 0.6 or volatility > 0.03 or overlay in {"LIQUIDITY_VACUUM", "AGGRESSIVE_SWEEP", "QUOTE_FLICKER", "DEPTH_FADE"}:
+                latency_ms *= 0.85
+            elif overlay == "MIDPOINT_STALE":
+                latency_ms *= 1.2
+            elif overlay == "CROSS_SIDE_TENSION":
+                latency_ms *= 0.9
+            elif self.classifier.get_regime_stability() > 0.8:
+                latency_ms *= 1.1
+            elif overlay == "PASSIVE_FADE":
+                latency_ms *= 1.15
+
         if self.ema_latency is None:
             self.ema_latency = latency_ms
         else:
