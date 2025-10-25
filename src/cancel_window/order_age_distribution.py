@@ -18,9 +18,14 @@ Output:
 """
 
 from typing import List, Dict, Any
+from dynamic_risk_engine.cognitive_market_regime_classifier_protocol import CognitiveMarketRegimeClassifierProtocol, MarketRegime
+from collections import defaultdict
+from numpy import mean, std, quantile
+import time
 
 class OrderAgeDistribution:
-    def __init__(self):
+    def __init__(self, regime_classifier: CognitiveMarketRegimeClassifierProtocol):
+        self.regime_classifier = regime_classifier
         self.active_orders: Dict[str, Dict] = {}  # Maps order_id to timestamp_created
         self.cancelled_orders: List[Dict]    = []  # List of cancelled orders with their ages
         self.filled_orders: List[Dict]  = []  # List of filled orders with their ages
@@ -125,6 +130,10 @@ class OrderAgeDistribution:
             *Highly responsive algo tactics (e.g pinging for fills)
 
         """
+        overlay = self.regime_classifier.get_behavioral_overlay()
+        if overlay in ["LIQUIDITY_VACUUM", "AGGRESSIVE_SWEEP_UP", "AGGRESSIVE_SWEEP_DOWN"]:
+            age_threshold_ms = int(age_threshold_ms * 0.8)
+
         current_time = max([
             *(o['timestamp'] for o in self.cancelled_orders),
             *(o['timestamp'] for o in self.filled_orders) 
@@ -166,6 +175,7 @@ class OrderAgeDistribution:
         """
         from collections import defaultdict
 
+        overlay = self.regime_classifier.get_behavioral_overlay()
         current_time = max([
             *(o['timestamp'] for o in self.cancelled_orders),
             *(o['timestamp'] for o in self.filled_orders)
@@ -193,6 +203,8 @@ class OrderAgeDistribution:
                     j += 1
                 if burst_count >= 3:
                     bursts[side] += 1
+                    if overlay.endswith(side.upper()):
+                        bursts[side] += 1 # directional boost
                     i = j #Skip ahead after a burst
                 else:
                     i += 1
@@ -252,7 +264,33 @@ class OrderAgeDistribution:
         cancelled_mean = stats.get("cancelled_mean", 0)
         avg_age_ms = (filled_mean + cancelled_mean) / 2.0
         normalized = (avg_age_ms - 10_000) / 20_000  # center around 10s, scale to ±1
-        return max(-1.0, min(1.0, normalized))
+
+        regime = self.regime_classifier.get_current_regime()
+        overlay = self.regime_classifier.get_behavioral_overlay()
+
+        regime_weights = {
+            MarketRegime.TRENDING: 0.9,
+            MarketRegime.MEAN_REVERTING: 1.1,
+            MarketRegime.VOLATILE: 0.8,
+            MarketRegime.ILLIQUID: 1.2,
+            MarketRegime.UNKNOWN: 1.0
+        }
+
+        overlay_boost = {
+            "LIQUIDITY_VACUUM": 0.8,
+            "MOMENTUM_EXHAUSTION": 1.2,
+            "CHOPPY_NOISE": 0.9,
+            "NORMAL": 1.0,
+            "AGGRESSIVE_SWEEP_UP": 0.9,
+            "AGGRESSIVE_SWEEP_DOWN": 0.9,
+            "REVERSION_TRAP_UP": 1.1,
+            "REVERSION_TRAP_DOWN": 1.1,
+            "PASSIVE_FADE": 1.3,
+            "CROSS_SIDE_TENSION": 1.0
+        }
+
+        adjusted = normalized * regime_weights.get(regime, 1.0) * overlay_boost.get(overlay, 1.0)
+        return max(-1.0, min(1.0, adjusted))
 
 
     def get_age_distribution(self, bucket_ms: int = 500) -> Dict[int, int]:
@@ -325,6 +363,13 @@ class OrderAgeDistribution:
 
         self._prune(current_time)
 
+        overlay = self.regime_classifier.get_behavioral_overlay()
+        regime = self.regime_classifier.get_current_regime()
+        if "_" in overlay:
+            overlay_type, overlay_direction = overlay.split("_", 1)
+        else:
+            overlay_type, overlay_direction = overlay, "NEUTRAL"
+
         return {
             "active_order_count": len(self.active_orders),
             "cancelled_order_count": len(self.cancelled_orders),
@@ -334,5 +379,10 @@ class OrderAgeDistribution:
             "age_bias": self.get_order_age_bias(),
             "burst_flags": self.detect_bursts(),
             "short_lived_ratio": self.get_recent_short_lived_ratio(),
-            "age_distribution": self.get_age_distribution(bucket_ms=500)
+            "age_distribution": self.get_age_distribution(bucket_ms=500),
+            "regime": self.regime_classifier.get_current_regime().value,
+            "overlay": self.regime_classifier.get_behavioral_overlay(),
+            "overlay_type": overlay_type,
+            "overlay_direction": overlay_direction
+
         }

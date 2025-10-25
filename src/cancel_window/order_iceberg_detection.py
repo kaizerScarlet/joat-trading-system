@@ -10,8 +10,9 @@ class OrderIcebergDetection:
         self.events: List[Dict[str, Any]] = []
 
     def register_event(self, orderid: str, timestamp: int, event_type: str, price: float, size: float, side: str):
+        overlay = self.regime_classifier.get_behavioral_overlay()
         self.events.append({'orderid': orderid, 'timestamp': timestamp, 'event_type': event_type,
-                            'price': price, 'size': size, 'side': side})
+                            'price': price, 'size': size, 'side': side, 'overlay': overlay})
         self._prune()
 
     def _prune(self):
@@ -20,9 +21,14 @@ class OrderIcebergDetection:
 
     def detect_icebergs(self) -> List[Dict[str, Any]]:
         icebergs = []
+
+        overlay = self.regime_classifier.get_behavioral_overlay()
+        regime = self.regime_classifier.get_current_regime()
+
         by_order = {}
         for e in self.events:
             by_order.setdefault(e['orderid'], []).append(e)
+
         for oid, evts in by_order.items():
             evts.sort(key=lambda x: x['timestamp'])
             reductions = [e for e in evts if e['event_type'] == 'REDUCTION']
@@ -32,8 +38,15 @@ class OrderIcebergDetection:
                     'side': evts[-1]['side'],
                     'reductions': len(reductions),
                     'total_size': sum(e['size'] for e in reductions),
-                    'duration': evts[-1]['timestamp'] - evts[0]['timestamp']
+                    'duration': evts[-1]['timestamp'] - evts[0]['timestamp'],
+                    'overlay': overlay,
+                    'regime': regime.value
                 })
+
+                #Optional symbolic trace
+                if overlay.startswith("LIQUIDITY_MIRAGE") or overlay.startswith("AGGRESSIVE_SWEEP"):
+                    print(f"[Iceberg Detected] {oid} under {overlay} in {regime.value} regime → spoof setup likely")
+                
         return icebergs
 
 
@@ -60,12 +73,24 @@ class OrderIcebergDetection:
 
         # Overlay-based amplification
         overlay_boost = {
-            "LIQUIDITY_VACUUM": 1.4,
-            "MOMENTUM_EXHAUSTION": 1.2,
+            "LIQUIDITY_VACUUM": 1.5,
+            "MOMENTUM_EXHAUSTION": 1.1,
             "CHOPPY_NOISE": 0.8,
-            "NORMAL": 1.0
+            "NORMAL": 1.0,
+            "LIQUIDITY_MIRAGE_UP": 1.4,
+            "LIQUIDITY_MIRAGE_DOWN": 1.4,
+            "AGGRESSIVE_SWEEP_UP": 1.2,
+            "AGGRESSIVE_SWEEP_DOWN": 1.2,
+            "REVERSION_TRAP_UP": 1.2,
+            "REVERSION_TRAP_DOWN": 1.2,
+            "PASSIVE_FADE": 1.1,
+            "CROSS_SIDE_TENSION": 1.1
         }
         overlay_factor = overlay_boost.get(overlay, 1.0)
+
+        #Optional: amplify if overlay direction matches iceberg side
+        if side and overlay.endswith(side.upper()):
+            overlay_factor *= 1.1 #Extra boost for directional alignment
 
         # Raw score: reduction count per iceberg
         raw_score = sum(i['reductions'] for i in icebergs) / 10.0
@@ -73,3 +98,29 @@ class OrderIcebergDetection:
         # Final score with behavioral modulation
         score = raw_score * regime_weight * overlay_factor
         return min(1.0, score)
+
+
+    def get_debug_view(self) -> Dict[str, Any]:
+        regime = self.regime_classifier.get_current_regime()
+        overlay = self.regime_classifier.get_behavioral_overlay()
+        if "_" in overlay:
+            overlay_type, overlay_direction = overlay.split("_", 1)
+        else:
+            overlay_type, overlay_direction = overlay, "NEUTRAL"
+
+        icebergs = self.detect_icebergs()
+        iceberg_score_bid = self.get_iceberg_score("bid")
+        iceberg_score_ask = self.get_iceberg_score("ask")
+        raw_score = sum(i['reductions'] for i in icebergs) / 10.0
+
+        return {
+            "regime": regime.value,
+            "overlay": overlay,
+            "overlay_direction": overlay_direction,
+            "iceberg_count": len(icebergs),
+            "iceberg_score_bid": iceberg_score_bid,
+            "iceberg_score_ask": iceberg_score_ask,
+            "raw_score": raw_score,
+            "recent_icebergs": icebergs[-5:]
+        }
+

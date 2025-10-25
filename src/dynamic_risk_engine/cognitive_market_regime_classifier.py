@@ -223,26 +223,26 @@ class CognitiveMarketRegimeClassifier:
             return "LIQUIDITY_VACUUM"
         if update_rate > 2.0 and volatility > 0.02:
             if imbalance_bid > 0.6:
-                return "AGGRESSIVE_SWEEP"
+                return "AGGRESSIVE_SWEEP_UP"
             if imbalance_ask > 0.6:
-                return "AGGRESSIVE_SWEEP"
+                return "AGGRESSIVE_SWEEP_DOWN"
         if self.orderbook.get_slip_response_score() > 0.5:
             return "REACTIVE_SLIP"
         
         # === Mid-Tier Overlays ====
         if spoof_score > 0.5:
             if imbalance_bid > 0.6:
-                return "LIQUIDITY_MIRAGE"
+                return "LIQUIDITY_MIRAGE_UP"
             elif imbalance_ask > 0.6:
-                return "LIQUIDITY_MIRAGE"
+                return "LIQUIDITY_MIRAGE_DOWN"
             
         if confidence < 0.3 and volatility > 0.02:
             return "MOMENTUM_EXHAUSTION"
         if confidence < 0.4 and volatility < 0.01:
             if imbalance_bid > 0.6:
-                return "REVERSION_TRAP"
+                return "REVERSION_TRAP_UP"
             elif imbalance_ask > 0.6:
-                return "REVERSION_TRAP"
+                return "REVERSION_TRAP_DOWN"
             
         if liquidity < 150 and update_rate < 0.5 and confidence < 0.5:
             return "PASSIVE_FADE"

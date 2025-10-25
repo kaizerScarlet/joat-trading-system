@@ -38,7 +38,10 @@ class CancelDensityDetection:
         for side, evs in by_side.items():
             prices = [e['price'] for e in evs]
             if len(prices) >= self.threshold:
-                spikes.append({'side': side, 'count': len(prices), 'unique_prices': len(set(prices))})
+                spikes.append({'side': side, 'count': len(prices), 'unique_prices': len(set(prices)),
+                               'overlay': self.regime_classifier.get_behavioral_overlay(),
+                               'regime': self.regime_classifier.get_current_regime().value
+                               })
         return spikes
 
     def get_density_score(self, side: str | None = None, current_time: int = None) -> float:
@@ -66,9 +69,17 @@ class CancelDensityDetection:
         overlay_boost = {
             "LAYER_WIPE": 1.4,
             "CANCEL_DENSITY_SPIKE": 1.3,
+            "LIQUIDITY_VACUUM": 1.3,
+            "AGGRESSIVE_SWEEP_UP": 1.2,
+            "AGGRESSIVE_SWEEP_DOWN": 1.2,
+            "REVERSION_TRAP_UP": 1.1,
+            "REVERSION_TRAP_DOWN": 1.1,
+            "PASSIVE_FADE": 1.2,
+            "CROSS_SIDE_TENSION": 1.1,
             "CHOPPY_NOISE": 0.8,
             "NORMAL": 1.0
         }
+
         overlay_factor = overlay_boost.get(overlay, 1.0)
 
         # Raw score: cancel count per side
