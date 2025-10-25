@@ -28,12 +28,14 @@ Detection Signals:
 from collections import defaultdict
 from typing import List, Dict, Any 
 import time
+from dynamic_risk_engine.cognitive_market_regime_classifier_protocol import CognitiveMarketRegimeClassifierProtocol, MarketRegime
 from cancel_window.simple_cancel_window import CancelWindowTunerForLayering
 from cancel_window.simple_cancel_window import AdaptiveDensityWindow
 from cancel_window.simple_cancel_window import AdaptiveThreshold
 
 class OrderLayeringDetection:
     def __init__(self,
+                 regime_classifier: CognitiveMarketRegimeClassifierProtocol,
                   tuner: CancelWindowTunerForLayering, 
                  price_tick: float = 0.1,
                   cluster_depth: int = 3,
@@ -48,6 +50,7 @@ class OrderLayeringDetection:
         :param cluster_depth: Number of levels to consider for layering detection
         :param min_orders: Minimum number of orders at each level to qualify as layering
         """
+        self.regime_classifier = regime_classifier
         self.tuner = tuner
         self.price_tick = price_tick
         self.cluster_depth = cluster_depth
@@ -130,6 +133,8 @@ class OrderLayeringDetection:
         :return: List of detected layering clusters with spoofing characteristics
         """
         self._prune()
+        overlay = self.regime_classifier.get_behavioral_overlay()
+        regime = self.regime_classifier.get_current_regime()
         
 
         suspicious_clusters = []
@@ -200,6 +205,8 @@ class OrderLayeringDetection:
                         'durations': [o.get('cancel_time', current_time) - o['timestamp'] for o in cluster if o['status'] == 'canceled'],
                         'aggression_score': sum(o['size'] for o in cluster) / len(cluster),
                         'orders': cluster,
+                        'overlay': overlay,
+                        'regime': regime.value
 
                     })
                     
@@ -276,6 +283,41 @@ class OrderLayeringDetection:
         clusters = self.detect_layering()
         if not clusters:
             return 0.0
+        
+         # Regime and overlay context
+        overlay = self.regime_classifier.get_behavioral_overlay()
+        regime = self.regime_classifier.get_current_regime()
+
+        regime_weights = {
+            MarketRegime.TRENDING: 1.2,
+            MarketRegime.MEAN_REVERTING: 0.9,
+            MarketRegime.VOLATILE: 1.5,
+            MarketRegime.ILLIQUID: 1.3,
+            MarketRegime.UNKNOWN: 1.0
+        }
+
+        overlay_boost = {
+            "LAYER_WIPE": 1.4,
+            "CANCEL_DENSITY_SPIKE": 1.3,
+            "LIQUIDITY_VACUUM": 1.3,
+            "AGGRESSIVE_SWEEP_UP": 1.2,
+            "AGGRESSIVE_SWEEP_DOWN": 1.2,
+            "REVERSION_TRAP_UP": 1.1,
+            "REVERSION_TRAP_DOWN": 1.1,
+            "PASSIVE_FADE": 1.2,
+            "CROSS_SIDE_TENSION": 1.1,
+            "CHOPPY_NOISE": 0.8,
+            "NORMAL": 1.0
+        }
+
+
+        overlay_factor = overlay_boost.get(overlay, 1.0)
+
+        # Optional directional boost
+        if "_" in overlay:
+            _, overlay_direction = overlay.split("_", 1)
+            if any(c["side"] == overlay_direction.lower() for c in clusters):
+                overlay_factor *= 1.1
 
         # Weight by aggression and recency
         current_time = int(time.time() * 1000)
@@ -288,7 +330,8 @@ class OrderLayeringDetection:
             scores.append(recency_weight * aggression * label_weight)
 
         raw_score = sum(scores) / len(scores)
-        return min(1.0, raw_score / 100.0)  # Normalize to 0..1
+        adjusted = raw_score * regime_weights.get(regime, 1.0) * overlay_factor
+        return min(1.0, adjusted / 100.0)  # Normalize to 0..1
 
 
 
@@ -306,7 +349,18 @@ class OrderLayeringDetection:
         clusters = self.detect_layering()
         current_time = int(time.time() * 1000)
 
+        overlay = self.regime_classifier.get_behavioral_overlay()
+        regime = self.regime_classifier.get_current_regime()
+        if "_" in overlay:
+            overlay_type, overlay_direction = overlay.split("_", 1)
+        else:
+            overlay_type, overlay_direction = overlay, "NEUTRAL"
+
         return {
+            "regime": regime.value,
+            "overlay": overlay,
+            "overlay_type": overlay_type,
+            "overlay_direction": overlay_direction,
             "active_order_count": sum(1 for o in self.orders_log if o['status'] == 'active'),
             "canceled_order_count": len(self.cancel_log),
             "filled_order_count": len(self.fills_log),

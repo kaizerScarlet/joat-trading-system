@@ -82,13 +82,18 @@ class OrderLadderingDetection:
     def _summarize_sequence(self, side, seq):
         direction = "up" if seq[-1]['price'] > seq[0]['price'] else "down"
         avg_size = sum(e['size'] for e in seq) / len(seq)
+        overlay = self.regime_classifier.get_behavioral_overlay()
+        regime = self.regime_classifier.get_current_regime()
+
         return {
             "side": side,
             "count": len(seq),
             "duration_ms": seq[-1]['timestamp'] - seq[0]['timestamp'],
             "direction": direction,
             "avg_size": avg_size,
-            "types": list({e['event_type'] for e in seq})
+            "types": list({e['event_type'] for e in seq}),
+            "overlay": overlay,
+            "regime": regime.value
         }
     
     def get_laddering_score(self, side: str = None) -> float:
@@ -116,6 +121,12 @@ class OrderLadderingDetection:
         overlay_boost = {
             "LIQUIDITY_VACUUM": 1.4,
             "MOMENTUM_EXHAUSTION": 1.2,
+            "AGGRESSIVE_SWEEP_UP": 1.3,
+            "AGGRESSIVE_SWEEP_DOWN": 1.3,
+            "REVERSION_TRAP_UP": 1.1,
+            "REVERSION_TRAP_DOWN": 1.1,
+            "PASSIVE_FADE": 1.2,
+            "CROSS_SIDE_TENSION": 1.1,
             "CHOPPY_NOISE": 0.8,
             "NORMAL": 1.0
         }
@@ -127,3 +138,26 @@ class OrderLadderingDetection:
         # Final score with behavioral modulation
         score = raw_score * regime_weight * overlay_factor
         return min(1.0, score)
+    
+    def get_debug_view(self) -> Dict[str, Any]:
+        overlay = self.regime_classifier.get_behavioral_overlay()
+        regime = self.regime_classifier.get_current_regime()
+        if "_" in overlay:
+            overlay_type, overlay_direction = overlay.split("_", 1)
+        else:
+            overlay_type, overlay_direction = overlay, "NEUTRAL"
+
+        sequences = self.detect_laddering_sequeces()
+        score_bid = self.get_laddering_score("bid")
+        score_ask = self.get_laddering_score("ask")
+
+        return {
+            "regime": regime.value,
+            "overlay": overlay,
+            "overlay_type": overlay_type,
+            "overlay_direction": overlay_direction,
+            "ladder_sequence_count": len(sequences),
+            "laddering_score_bid": score_bid,
+            "laddering_score_ask": score_ask,
+            "recent_sequences": sequences[-5:]
+        }

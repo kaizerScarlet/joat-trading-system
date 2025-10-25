@@ -81,6 +81,9 @@ class CancelDensityDetection:
         }
 
         overlay_factor = overlay_boost.get(overlay, 1.0)
+        #Optional directional boost
+        if side and overlay.endswith(side.upper()):
+            overlay_factor *= 1.1
 
         # Raw score: cancel count per side
         raw_score = sum(s['count'] for s in spikes) / 50.0
@@ -88,3 +91,28 @@ class CancelDensityDetection:
         # Final score with behavioral modulation
         score = raw_score * regime_weight * overlay_factor
         return min(1.0, score)
+    
+    def get_debug_view(self) -> Dict[str, Any]:
+        current_time = int(time.time() * 1000)
+        overlay = self.regime_classifier.get_behavioral_overlay()
+        regime = self.regime_classifier.get_current_regime()
+        if "_" in overlay:
+            overlay_type, overlay_direction = overlay.split("_", 1)
+        else:
+            overlay_type, overlay_direction = overlay, "NEUTRAL"
+
+        spikes = self.detect_spikes(current_time=current_time)
+        score_bid = self.get_density_score("bid", current_time=current_time)
+        score_ask = self.get_density_score("ask", current_time=current_time)
+
+        return {
+            "regime": regime.value,
+            "overlay": overlay,
+            "overlay_type": overlay_type,
+            "overlay_direction": overlay_direction,
+            "spike_count": len(spikes),
+            "density_score_bid": score_bid,
+            "density_score_ask": score_ask,
+            "recent_spikes": spikes[-5:]
+        }
+
