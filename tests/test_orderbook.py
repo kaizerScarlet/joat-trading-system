@@ -89,15 +89,15 @@ def test_liquidity_empty_book(orderbook):
 
 def test_order_imbalance(orderbook):
     orderbook.update({"bid": [["100.0", "3.0"]], "ask": [["101.0", "1.0"]]})
-    imbalance = orderbook.get_order_imbalance()
+    imbalance = orderbook.get_order_imbalance("bid")
     assert 0.74 < imbalance < 0.76
 
 def test_order_imbalance_balanced(orderbook):
     orderbook.update({"bid": [["100.0", "1.0"]], "ask": [["101.0", "1.0"]]})
-    assert orderbook.get_order_imbalance() == 0.5
+    assert orderbook.get_order_imbalance("bid") == 0.5
 
 def test_order_imbalance_empty(orderbook):
-    assert orderbook.get_order_imbalance() == 0.5
+    assert orderbook.get_order_imbalance("bid") == 0.5
 
 def test_volatility_estimate(orderbook):
     for i in range(10):

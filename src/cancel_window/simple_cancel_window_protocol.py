@@ -105,7 +105,7 @@ class CancelWindowTunerProtocol(Protocol):
 
 @runtime_checkable
 class CancelWindowProtocol(Protocol):
-    tuner: CancelWindowTunerProtocol | None
+    tuner: CancelWindowTunerProtocol
     order_layering: OrderLayeringDetectionProtocol
     order_ladder_tracker: OrderLadderingDetectionProtocol
     synthetic_fill_detector: SyntheticFillDetectorProtocol
@@ -118,7 +118,7 @@ class CancelWindowProtocol(Protocol):
 
 
     adaptive: bool
-    window_ms: int | None
+    window_ms: int 
 
     _flags: List[Dict[str, Any]]
     bids: Dict[float, float]

@@ -1,9 +1,10 @@
 import pytest 
+from unittest.mock import MagicMock
 from cancel_window.order_age_distribution import OrderAgeDistribution
 from cancel_window.order_age_distribution_protocol import OrderAgeDistributionProtocol
 
 def test_order_age_distribution():
-    tracker : OrderAgeDistributionProtocol = OrderAgeDistribution()
+    tracker : OrderAgeDistributionProtocol = OrderAgeDistribution(regime_classifier = MagicMock())
 
     # Register some active orders
     tracker.register_event(orderid="order_1", timestamp=150, price=1000, size=5, side='a')
@@ -37,7 +38,7 @@ import pytest
 from cancel_window.order_age_distribution import OrderAgeDistribution
 
 def test_detect_bursts_flags_short_lived_activity():
-    tracker : OrderAgeDistributionProtocol = OrderAgeDistribution()
+    tracker : OrderAgeDistributionProtocol = OrderAgeDistribution(regime_classifier = MagicMock())
     now = 1000
 
     # Register and cancel short-lived orders
@@ -51,7 +52,7 @@ def test_detect_bursts_flags_short_lived_activity():
     assert burst_flags['burst_detected_ask'] is False
 
 def test_detects_single_short_lived_burst():
-    tracker: OrderAgeDistributionProtocol = OrderAgeDistribution()
+    tracker: OrderAgeDistributionProtocol = OrderAgeDistribution(regime_classifier = MagicMock())
     now = 1000
 
     # 4 short-lived orders spaced within 400ms → 1 burst
@@ -66,7 +67,7 @@ def test_detects_single_short_lived_burst():
     assert bursts.get('bid', 0) == 0
 
 def test_detects_two_separate_short_lived_bursts():
-    tracker: OrderAgeDistributionProtocol = OrderAgeDistribution()
+    tracker: OrderAgeDistributionProtocol = OrderAgeDistribution(regime_classifier = MagicMock())
     now = 1000
 
     # Burst 1
@@ -89,7 +90,7 @@ def test_detects_two_separate_short_lived_bursts():
 
 
 def test_get_order_age_bias_returns_normalized_score():
-    tracker : OrderAgeDistributionProtocol = OrderAgeDistribution()
+    tracker : OrderAgeDistributionProtocol = OrderAgeDistribution(regime_classifier = MagicMock())
     now = 1000
 
     # Aggressive short-lived cancels
@@ -102,7 +103,7 @@ def test_get_order_age_bias_returns_normalized_score():
     assert bias < 0.0  # Indicates aggressive behavior
 
 def test_get_age_distribution_returns_histogram():
-    tracker : OrderAgeDistributionProtocol = OrderAgeDistribution()
+    tracker : OrderAgeDistributionProtocol = OrderAgeDistribution(regime_classifier = MagicMock())
     now = 1000
 
     # Mixed age orders
@@ -117,7 +118,7 @@ def test_get_age_distribution_returns_histogram():
     assert histogram[2] == 1  # Second order aged 1000ms
 
 def test_get_recent_short_lived_ratio_computes_correctly():
-    tracker : OrderAgeDistributionProtocol = OrderAgeDistribution()
+    tracker : OrderAgeDistributionProtocol = OrderAgeDistribution(regime_classifier = MagicMock())
     now = 1000
 
     # Short-lived
@@ -133,7 +134,7 @@ def test_get_recent_short_lived_ratio_computes_correctly():
 
 
 def test_get_debug_view_snapshot():
-    tracker: OrderAgeDistributionProtocol = OrderAgeDistribution()
+    tracker: OrderAgeDistributionProtocol = OrderAgeDistribution(regime_classifier = MagicMock())
     now = 1000
 
     # Register and cancel a few orders
@@ -152,7 +153,7 @@ def test_get_debug_view_snapshot():
 
 
 def test_side_specific_statistics():
-    tracker: OrderAgeDistributionProtocol = OrderAgeDistribution()
+    tracker: OrderAgeDistributionProtocol = OrderAgeDistribution(regime_classifier = MagicMock())
     now = 1000
 
     tracker.register_event(orderid="ask1", timestamp=now, price=100.0, size=5.0, side='ask')

@@ -182,8 +182,8 @@ class OrderBook:
         Order book imbalance = bid_vol / (bid_vol + ask_vol).
         Range [0, 1], > 0.5 means more bid-side liquidity.
         """
-        bid_vol = self.get_estimated_volume("bid")
-        ask_vol = self.get_estimated_volume("ask")
+        bid_vol = self.get_estimated_volume(side="bid")
+        ask_vol = self.get_estimated_volume(side="ask")
         denom = bid_vol + ask_vol
         if denom == 0:
             return 0.5 # Balanced fallback

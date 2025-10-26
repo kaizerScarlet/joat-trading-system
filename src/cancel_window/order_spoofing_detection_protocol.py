@@ -25,6 +25,6 @@ class OrderSpoofingDetectionProtocol(Protocol):
         """Detects clusters of spoofing behavior based on registered events."""
         ...
 
-    def get_spoofing_score(self, side: str | None = None) -> float:
+    def get_spoofing_score(self, side: str = None) -> float:
         """Calculates a spoofing score based on detected clusters and market regime."""
         ...

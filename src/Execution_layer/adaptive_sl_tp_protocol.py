@@ -56,3 +56,9 @@ class AdaptiveSLTPProtocol(Protocol):
     def debug_state(self) -> Dict[str, Any]:
         """Returns a snapshot of internal state for diagnostics and logging."""
         ...
+
+    def get_regime_overlay_modulation(self) -> Tuple[float, float]:
+        """
+        Returns (sl_modulation, tp_modulation) based on regime and overlay context.
+        """
+        ...

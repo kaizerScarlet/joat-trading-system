@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from datetime import datetime, timedelta
 from dynamic_risk_engine.daily_drawdown_manager_protocol import DailyDrawdownManagerProtocol
 from dynamic_risk_engine.daily_drawdown_manager import DailyDrawdownManager
@@ -10,7 +10,8 @@ from Execution_layer.binance_adapter_protocol import BinanceExecutionAdapterProt
 async def test_record_pnl_and_no_halt():
     manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(
         binance_adapter = BinanceExecutionAdapterProtocol,
-        daily_drawdown_limit=0.25
+        daily_drawdown_limit=0.25,
+        regime_classifier = MagicMock()
         )
     #Mock the adapters get account method
     manager.account_balance.get_account = AsyncMock(return_value=1000.0)
@@ -31,7 +32,8 @@ async def test_record_pnl_and_no_halt():
 async def test_trading_halted_when_limit_exceeded(capfd):
     manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(
         binance_adapter = BinanceExecutionAdapterProtocol,
-        daily_drawdown_limit=0.25
+        daily_drawdown_limit=0.25,
+        regime_classifier = MagicMock()
         )
 
     #Mock the adapters get account balance
@@ -54,7 +56,8 @@ async def test_trading_halted_when_limit_exceeded(capfd):
 async def test_trades_return_zero_drawdown():
     manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(
         binance_adapter = BinanceExecutionAdapterProtocol,
-        daily_drawdown_limit=0.25
+        daily_drawdown_limit=0.25,
+        regime_classifier = MagicMock()
         )
     #Mock the adapters get account balance
     manager.account_balance.get_account = AsyncMock(return_value=1000.0)
@@ -70,7 +73,8 @@ async def test_trades_return_zero_drawdown():
 async def test_reset_daily_drawdown():
     manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(
         binance_adapter = BinanceExecutionAdapterProtocol,
-        daily_drawdown_limit=0.25
+        daily_drawdown_limit=0.25,
+        regime_classifier = MagicMock()
         )
     #Mock the adapters get account balance
     manager.account_balance.get_account = AsyncMock(return_value=1000.0)
@@ -90,7 +94,9 @@ async def test_reset_daily_drawdown():
 async def test_multiple_days_handling():
     manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(
         binance_adapter = BinanceExecutionAdapterProtocol,
-        daily_drawdown_limit=0.25)
+        daily_drawdown_limit=0.25,
+        regime_classifier = MagicMock(),
+        )
     #Mock the adapters get account balance
     manager.account_balance.get_account = AsyncMock(return_value=1000.0)
     await manager.initialize()  #This sets drawdown limit
@@ -122,7 +128,8 @@ async def test_multiple_days_handling():
 async def test_drawdown_curve_accuracy():
     manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(
         binance_adapter = BinanceExecutionAdapterProtocol,
-        daily_drawdown_limit=0.25
+        daily_drawdown_limit=0.25,
+        regime_classifier = MagicMock()
         )
     #Mock the adapters get account balance
     manager.account_balance.get_account = AsyncMock(return_value=1000.0)
@@ -141,7 +148,8 @@ async def test_drawdown_curve_accuracy():
 async def test_empty_day_drawdown():
     manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(
         binance_adapter = BinanceExecutionAdapterProtocol,
-        daily_drawdown_limit=0.25
+        daily_drawdown_limit=0.25,
+        regime_classifier = MagicMock()
         )
     manager.account_balance.get_account = AsyncMock(return_value=1000.0)
     await manager.initialize()
@@ -155,7 +163,8 @@ async def test_empty_day_drawdown():
 async def test_reset_clears_state():
     manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(
         binance_adapter = BinanceExecutionAdapterProtocol,
-        daily_drawdown_limit=0.25
+        daily_drawdown_limit=0.25,
+        regime_classifier = MagicMock()
         )
     manager.account_balance.get_account = AsyncMock(return_value=1000.0)
     await manager.initialize()
@@ -174,7 +183,8 @@ async def test_reset_clears_state():
 async def test_status_snapshot():
     manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(
         binance_adapter = BinanceExecutionAdapterProtocol,
-        daily_drawdown_limit=0.25
+        daily_drawdown_limit=0.25,
+        regime_classifier = MagicMock()
         )
     manager.account_balance.get_account = AsyncMock(return_value=1000.0)
     await manager.initialize()
@@ -194,7 +204,9 @@ async def test_status_snapshot():
 async def test_drawdown_equals_limit_triggers_halt():
     manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(
         binance_adapter = BinanceExecutionAdapterProtocol,
-        daily_drawdown_limit=0.25)
+        daily_drawdown_limit=0.25,
+        regime_classifier = MagicMock()
+        )
     manager.account_balance.get_account = AsyncMock(return_value=1000.0)
     await manager.initialize()
 

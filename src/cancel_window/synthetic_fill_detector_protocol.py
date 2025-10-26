@@ -19,7 +19,7 @@ class SyntheticFillDetectorProtocol(Protocol):
         """Detect Anomalies"""
         ...
 
-    def get_anomaly_score(self, side: str | None = None) -> float:
+    def get_anomaly_score(self, side: str = None) -> float:
         """Get anomaly score"""
         ...
 

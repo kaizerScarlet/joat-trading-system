@@ -22,12 +22,12 @@ class CancelDensityDetection:
         
         self._prune(timestamp)
 
-    def _prune(self, current_time: int | None = None) -> None:
+    def _prune(self, current_time: int ) -> None:
         current_time = current_time or int(time.time() * 1000)
         cutoff = current_time - self.window_ms
         self.events = [e for e in self.events if e['timestamp'] >= cutoff]
 
-    def detect_spikes(self, current_time: int | None = None) -> List[Dict[str, Any]]:
+    def detect_spikes(self, current_time: int = None) -> List[Dict[str, Any]]:
         current_time = current_time or int(time.time() * 1000)
         cutoff = current_time - self.window_ms
         by_side = defaultdict(list)
@@ -44,7 +44,7 @@ class CancelDensityDetection:
                                })
         return spikes
 
-    def get_density_score(self, side: str | None = None, current_time: int = None) -> float:
+    def get_density_score(self, side: str  = None, current_time: int = None) -> float:
         spikes = self.detect_spikes(current_time=current_time)
         if side:
             spikes = [s for s in spikes if s['side'] == side]

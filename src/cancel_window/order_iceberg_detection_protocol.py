@@ -19,6 +19,6 @@ class OrderIcebergDetectionProtocol(Protocol):
         """Detects and returns a list of identified iceberg orders."""
         ...
 
-    def get_iceberg_score(self, side: str | None = None) -> float:
+    def get_iceberg_score(self, side: str = None) -> float:
         """Computes and returns the iceberg order score """
         ...

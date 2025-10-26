@@ -1,17 +1,19 @@
 import pytest
 import time
+from unittest.mock import MagicMock
 from cancel_window.order_layering_detection_protocol import OrderLayeringDetectionProtocol
 from cancel_window.order_layering_detection import OrderLayeringDetection
 from cancel_window.simple_cancel_window import CancelWindowTunerForLayering
 
 def test_minimal_layering_detected():
-    tuner = CancelWindowTunerForLayering()
+    tuner = CancelWindowTunerForLayering(classifier = MagicMock())
     detector : OrderLayeringDetectionProtocol = OrderLayeringDetection(
         tuner = tuner,
         price_tick=0.1,
         cluster_depth=2,
         min_orders = 2,
-        min_size_per_order=0.0
+        min_size_per_order=0.0,
+        regime_classifier = MagicMock()
     )
     now = int(time.time() * 1000)
     detector.tuner.max_ms = 1000 # ✅ override default max
@@ -26,13 +28,14 @@ def test_minimal_layering_detected():
     assert clusters[0]['cluster_size'] == 3
 
 def test_layering_with_cancels_and_fills():
-    tuner = CancelWindowTunerForLayering()
+    tuner = CancelWindowTunerForLayering(classifier = MagicMock())
     detector : OrderLayeringDetectionProtocol = OrderLayeringDetection(
         tuner,
         price_tick=0.1,
         cluster_depth=2,
         min_orders = 2,
-        min_size_per_order=0.0
+        min_size_per_order=0.0,
+        regime_classifier = MagicMock()
         )
     now = int(time.time() * 1000)
     detector.tuner.update(1000)  # ✅ override default window
@@ -48,13 +51,14 @@ def test_layering_with_cancels_and_fills():
     assert clusters[0]['cluster_size'] == 3
 
 def test_no_layering_due_to_price_gap():
-    tuner = CancelWindowTunerForLayering()
+    tuner = CancelWindowTunerForLayering(classifier = MagicMock())
     detector : OrderLayeringDetectionProtocol = OrderLayeringDetection(  
         tuner,
         price_tick=0.1,
         cluster_depth=2,
         min_orders = 2,
-        min_size_per_order=0.0
+        min_size_per_order=0.0,
+        regime_classifier = MagicMock()
         )
     now = int(time.time() * 1000)
     detector.register_order('o1', now, 100.0, 5, 'ask')
@@ -65,14 +69,16 @@ def test_no_layering_due_to_price_gap():
     assert len(clusters) == 0
 
 def test_no_layering_due_to_time_gap():
-    tuner = CancelWindowTunerForLayering()
+    tuner = CancelWindowTunerForLayering(classifier = MagicMock())
     detector : OrderLayeringDetectionProtocol = OrderLayeringDetection(
         tuner,
           price_tick=0.1,
         cluster_depth=2,
         min_orders = 2,
         min_size_per_order=0.0,
-        retention_ms=100)
+        retention_ms=100,
+        regime_classifier = MagicMock()
+        )
     now = int(time.time() * 1000)
     detector.register_order('o1', now, 100.0, 5, 'ask')
     detector.register_order('o2', now + 200, 100.1, 5, 'ask')
@@ -83,10 +89,11 @@ def test_no_layering_due_to_time_gap():
 
 def test_layering_filtered_by_size():
     now =int(time.time() * 1000)
-    tuner =CancelWindowTunerForLayering()
+    tuner =CancelWindowTunerForLayering(classifier = MagicMock())
     detector : OrderLayeringDetectionProtocol = OrderLayeringDetection(
     tuner,
-    min_size_per_order=5.0
+    min_size_per_order=5.0,
+    regime_classifier = MagicMock()
     )
     detector.register_order('o1', now, 100.0, 1.0, 'ask')
     detector.register_order('o2', now + 10, 100.1, 1.0, 'ask')
@@ -96,9 +103,10 @@ def test_layering_filtered_by_size():
     assert len(clusters) == 0
 
 def test_layering_detected_on_bid_side():
-    tuner = CancelWindowTunerForLayering()
+    tuner = CancelWindowTunerForLayering(classifier = MagicMock())
     detector : OrderLayeringDetectionProtocol = OrderLayeringDetection(
         tuner,
+        regime_classifier = MagicMock(),
     )
     now = int(time.time() * 1000)
     detector.register_order('o1', now, 99.9, 5, 'bid')
@@ -112,9 +120,10 @@ def test_layering_detected_on_bid_side():
     assert clusters[0]['label'] == 'LAYER_CANCEL_ONLY'
 
 def test_overlapping_clusters_are_not_double_counted():
-    tuner = CancelWindowTunerForLayering()
+    tuner = CancelWindowTunerForLayering(classifier = MagicMock())
     detector : OrderLayeringDetectionProtocol = OrderLayeringDetection(
         tuner,
+        regime_classifier = MagicMock()
     )
     now = int(time.time() * 1000)
     detector.register_order('o1', now, 100.0, 5, 'ask')
@@ -127,9 +136,10 @@ def test_overlapping_clusters_are_not_double_counted():
     assert len(clusters) == 1  # Should not double-count overlapping orders
 
 def test_reset_clears_all_logs():
-    tuner = CancelWindowTunerForLayering()
+    tuner = CancelWindowTunerForLayering(classifier = MagicMock())
     detector : OrderLayeringDetectionProtocol = OrderLayeringDetection(
         tuner,
+        regime_classifier = MagicMock()
     )
     now = int(time.time() * 1000)
     detector.register_order('o1', now, 100.0, 5, 'ask')
@@ -142,9 +152,10 @@ def test_reset_clears_all_logs():
 
 
 def test_layering_all_filled_cluster_labeled_correctly():
-    tuner = CancelWindowTunerForLayering()
+    tuner = CancelWindowTunerForLayering(classifier = MagicMock())
     detector: OrderLayeringDetectionProtocol = OrderLayeringDetection(
-        tuner
+        tuner,
+        regime_classifier = MagicMock()
     )
     now = int(time.time() * 1000)
     detector.register_order('o1', now, 100.0, 5, 'ask')
@@ -157,13 +168,14 @@ def test_layering_all_filled_cluster_labeled_correctly():
     assert clusters[0]['label'] == 'LAYER_TRUE_FILL'
 
 def test_layering_score_reflects_aggression_and_recency():
-    tuner = CancelWindowTunerForLayering()
+    tuner = CancelWindowTunerForLayering(classifier = MagicMock())
     detector: OrderLayeringDetectionProtocol = OrderLayeringDetection(
         tuner,
         price_tick=0.1,
         cluster_depth=2,
         min_orders=3,
-        min_size_per_order=0.0
+        min_size_per_order=0.0,
+        regime_classifier = MagicMock()
     )
     now = int(time.time() * 1000)
     detector.tuner.update(1000)
@@ -180,9 +192,10 @@ def test_layering_score_reflects_aggression_and_recency():
     assert 0.0 < score <= 1.0
 
 def test_debug_view_snapshot():
-    tuner = CancelWindowTunerForLayering()
+    tuner = CancelWindowTunerForLayering(classifier = MagicMock())
     detector: OrderLayeringDetectionProtocol = OrderLayeringDetection(
         tuner,
+        regime_classifier = MagicMock()
     )
     now = int(time.time() * 1000)
 
@@ -199,9 +212,10 @@ def test_debug_view_snapshot():
     assert 'tuner_window_ms' in debug
 
 def test_partial_fill_labeling():
-    tuner = CancelWindowTunerForLayering()
+    tuner = CancelWindowTunerForLayering(classifier = MagicMock())
     detector: OrderLayeringDetectionProtocol = OrderLayeringDetection(
-        tuner
+        tuner,
+        regime_classifier = MagicMock()
     )
     now = int(time.time() * 1000)
 
@@ -215,9 +229,10 @@ def test_partial_fill_labeling():
 
 
 def test_aggression_score_computation():
-    tuner = CancelWindowTunerForLayering()
+    tuner = CancelWindowTunerForLayering(classifier = MagicMock())
     detector: OrderLayeringDetectionProtocol = OrderLayeringDetection(
-        tuner
+        tuner,
+        regime_classifier = MagicMock()
     )
     now = int(time.time() * 1000)
 

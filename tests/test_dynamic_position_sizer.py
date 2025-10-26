@@ -36,7 +36,8 @@ async def test_default_initialization():
         performance_tracker=mock_tracker,
         orderbook=mock_orderbook,
         binance_Execution_adapter=mock_adapter,
-        drawdown=mock_drawdown
+        drawdown=mock_drawdown,
+        regime_classifier = MagicMock()
     )
 
     await sizer.initialize()
@@ -74,7 +75,8 @@ async def test_position_size_basic_calculation():
         performance_tracker=mock_tracker,
         orderbook=mock_orderbook,
         binance_Execution_adapter=mock_adapter,
-        drawdown=mock_drawdown
+        drawdown=mock_drawdown,
+        regime_classifier = MagicMock()
     )
 
     await sizer.initialize()
@@ -116,7 +118,8 @@ def create_mock_sizer(balance=100000, confidence=1.0, win_rate=0.5, rrr=2.0, vol
         performance_tracker=mock_tracker,
         orderbook=mock_orderbook,
         binance_Execution_adapter=mock_adapter,
-        drawdown=mock_drawdown
+        drawdown=mock_drawdown,
+        regime_classifier = MagicMock(),
     )
     return sizer
 
