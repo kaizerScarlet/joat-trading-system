@@ -1,4 +1,4 @@
-from typing import Dict, Any, List, Tuple, Optional
+from typing import TYPE_CHECKING, Dict, Any, List, Tuple, Optional
 from .interface import CancelWindow #samefolder
 from collections import defaultdict
 from datetime import datetime
@@ -16,6 +16,8 @@ from cancel_window.order_spoofing_detection_protocol import OrderSpoofingDetecti
 from cancel_window.cancel_denisty_detection_protocol import CancelDensityDetectionProtocol
 from cancel_window.order_iceberg_detection_protocol import OrderIcebergDetectionProtocol
 
+if TYPE_CHECKING:
+    from cancel_window.simple_cancel_window_protocol import AdaptiveDensityWindowProtocol, AdaptiveThresholdProtocol, FillThresholdTunerProtocol, CancelWindowTunerForLayeringProtocol, CancelWindowTunerProtocol
 
 
 # ====== adaptive_density_tuner.py
@@ -25,7 +27,7 @@ class AdaptiveDensityWindow:
         self.decay = decay
         self.classifier = classifier 
 
-    def update(self, ts: float, recent_cancel_rate: float):
+    def update(self, ts: float, recent_cancel_rate: float) -> None:
         #assume cancel rate is in cancels per second
         ideal_window = max(25, min(500, 1000) / (recent_cancel_rate + 1e-6))
 
@@ -64,7 +66,7 @@ class AdaptiveThreshold:
         self.decay = decay
         self.classifier = classifier 
 
-    def update(self, volume: float, volatility: float):
+    def update(self, volume: float, volatility: float) -> None:
         #Simple heuristic: increase threshold when volume or volatility is high
         factor = 1 + 0.5 * math.tanh(volume * volatility)
         adjusted = max(2, min(10, factor * self.threshold))
@@ -147,7 +149,7 @@ class CancelWindowTunerForLayering:
         self.max_ms = max_ms 
         self.classifier = classifier
 
-    def update(self, latency_ms: float):
+    def update(self, latency_ms: float) -> None:
         if self.classifier:
             spoof_score = self.classifier.get_debug_view()['spoof_score']
             overlay = self.classifier.get_behavioral_overlay()
@@ -185,7 +187,7 @@ class CancelWindowTuner:
         self.max_ms = max_ms 
         self.classifier = classifier
 
-    def update(self, latency_ms: float):
+    def update(self, latency_ms: float) -> None:
         if self.classifier:
             overlay = self.classifier.get_behavioral_overlay()
             spoof_score = self.classifier.get_debug_view()['spoof_score']
@@ -236,13 +238,16 @@ class SimpleCancelWindow(CancelWindow):
         15. PING_CANCEL -> Orders placed for very short time (ping for liquidity)
     """
     # -----------------------------------------------------------------------------------------------#
-    def __init__(self, tuner: CancelWindowTuner, order_layering:OrderLayeringDetectionProtocol,
+    def __init__(self, tuner: "CancelWindowTunerProtocol", order_layering:OrderLayeringDetectionProtocol,
                   order_ladder_tracker: OrderLadderingDetectionProtocol,
                   synthetic_fill_detector: SyntheticFillDetectorProtocol,
                   order_spoofing: OrderSpoofingDetectionProtocol,
                   order_cancel_density: CancelDensityDetectionProtocol,
                   order_iceberg_detection: OrderIcebergDetectionProtocol,
-                  order_age_tracker: OrderAgeDistributionProtocol, 
+                  order_age_tracker: OrderAgeDistributionProtocol,
+                  cancel_density_threshold_bid : "AdaptiveThresholdProtocol", 
+                  cancel_density_threshold_ask : "AdaptiveThresholdProtocol",
+                  cancel_density_window_ms : "AdaptiveDensityWindowProtocol",
                   order_book: OrderBookProtocol, classifier: CognitiveMarketRegimeClassifierProtocol, market_type: str = "spot"):
         
         self.adaptive = True
@@ -284,10 +289,10 @@ class SimpleCancelWindow(CancelWindow):
         self.reduction_timestamps: Dict[Tuple[str, float], List[int]] = {}
 
         #Dynamic cancel Density Thresholds per side
-        self.cancel_density_threshold_bid = AdaptiveThreshold(initial_threshold=3) #Example: 3 cancels in the last 100ms
-        self.cancel_density_threshold_ask = AdaptiveThreshold(initial_threshold=3)
+        self.cancel_density_threshold_bid = cancel_density_threshold_bid #Example: 3 cancels in the last 100ms
+        self.cancel_density_threshold_ask = cancel_density_threshold_ask
 
-        self.cancel_density_window_ms = AdaptiveDensityWindow(initial_window_ms=75) #Timewindow to evaluate density 
+        self.cancel_density_window_ms = cancel_density_window_ms #Timewindow to evaluate density 
 
         #----------------------------NOT YET SEEN WHAT IT DOES-----------------------#
         self.cancel_events = []
@@ -1000,11 +1005,11 @@ class SimpleCancelWindow(CancelWindow):
         
         return cancel_density
     
-    def set_cancel_density_params(self, initial_threshold: int = 3, initial_window_ms: int = 75) -> None:
-        self.cancel_density_threshold_bid = AdaptiveThreshold(initial_threshold=initial_threshold) #Example: 3 cancels in the last 100ms
-        self.cancel_density_threshold_ask = AdaptiveThreshold(initial_threshold=initial_threshold)
+    def set_cancel_density_params(self, cancel_density_window_ms:"AdaptiveDensityWindowProtocol", cancel_density_threshold_bid: "AdaptiveThresholdProtocol", cancel_density_threshold_ask : "AdaptiveThresholdProtocol") -> None:
+        self.cancel_density_threshold_bid = cancel_density_threshold_bid #Example: 3 cancels in the last 100ms
+        self.cancel_density_threshold_ask = cancel_density_threshold_ask
 
-        self.cancel_density_window_ms = AdaptiveDensityWindow(initial_window_ms=initial_window_ms) #Timewindow to evaluate density 
+        self.cancel_density_window_ms = cancel_density_window_ms#Timewindow to evaluate density 
 
 
 

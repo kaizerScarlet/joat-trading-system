@@ -8,15 +8,104 @@ from cancel_window.synthetic_fill_detector_protocol import SyntheticFillDetector
 from cancel_window.order_spoofing_detection_protocol import OrderSpoofingDetectionProtocol
 from cancel_window.cancel_denisty_detection_protocol import CancelDensityDetectionProtocol
 from cancel_window.order_iceberg_detection_protocol import OrderIcebergDetectionProtocol
-from cancel_window.cancel_window_tuner import CancelWindowTuner
-from cancel_window.simple_cancel_window import AdaptiveDensityWindow , AdaptiveThreshold
 
+@runtime_checkable
+class AdaptiveDensityWindowProtocol(Protocol):
+    classifier: CognitiveMarketRegimeClassifierProtocol
+    current_window: int
+    decay: float
+
+    def update(self, ts: float, recent_cancel_rate: float) -> None:
+        """Update window"""
+        ...
+
+    def get_current_window(self) -> int:
+        """Get current window"""
+        ...
+    def get_debug_view(self) -> Dict[str, Any]:
+        """Get Debug view for introspection"""
+        ...
+
+@runtime_checkable
+class AdaptiveThresholdProtocol(Protocol):
+    classifier: CognitiveMarketRegimeClassifierProtocol
+    threshold: int
+    decay: float
+
+    def update(self, volume: float, volatility: float) -> None:
+        """Threshold update"""
+        ...
+
+    def get_threshold(self) -> int:
+        """Get Threshold"""
+        ...
+    def get_debug_view(self) -> Dict[str, Any]:
+        """Get Debug View for introspection"""
+        ...
+
+@runtime_checkable
+class FillThresholdTunerProtocol(Protocol):
+    classifier: CognitiveMarketRegimeClassifierProtocol
+    ratio: float
+    decay: float
+
+    def update(self, avg_trade_size: float, volatility: float):
+        """Update Fill Threshold Tuner"""
+        ...
+
+    def get_ratio(self) -> float:
+        """Get Ratio"""
+        ...
+
+    def get_debug_view(self) -> Dict[str, Any]:
+        """Get Debug View"""
+        ...
+
+
+@runtime_checkable
+class CancelWindowTunerForLayeringProtocol(Protocol):
+    classifier: CognitiveMarketRegimeClassifierProtocol
+    ema_latency: None
+    ema_alpha: float
+    min_ms: int
+    max_ms: int
+
+    def update(self, latency_ms: float) -> None:
+        """Update layering tuner"""
+        ...
+
+    def current_window_ms(self) -> int:
+        """Get Current Window MS"""
+        ...
+    
+    def get_debug_view(self) -> Dict[str, Any]:
+        """Get Debug View for introspection"""
+        ...
+
+@runtime_checkable
+class CancelWindowTunerProtocol(Protocol):
+    classifier: CognitiveMarketRegimeClassifierProtocol
+    ema_latency: None
+    ema_alpha: float
+    min_ms: int
+    max_ms: int
+
+    def update(self, latency_ms: float) -> None:
+        """Update Cancel Window Tuner"""
+        ...
+
+    def current_window_ms(self) -> int :
+        """Get Current Window MS"""
+        ...
+
+
+    
 
 
 
 @runtime_checkable
 class CancelWindowProtocol(Protocol):
-    tuner: CancelWindowTuner | None
+    tuner: CancelWindowTunerProtocol | None
     order_layering: OrderLayeringDetectionProtocol
     order_ladder_tracker: OrderLadderingDetectionProtocol
     synthetic_fill_detector: SyntheticFillDetectorProtocol
@@ -47,9 +136,9 @@ class CancelWindowProtocol(Protocol):
 
     reduction_timestamps: Dict[Tuple[str, float], List[int]]
 
-    cancel_density_threshold_bid: AdaptiveThreshold
-    cancel_density_threshold_ask: AdaptiveThreshold
-    cancel_density_window_ms: AdaptiveDensityWindow
+    cancel_density_threshold_bid: AdaptiveThresholdProtocol
+    cancel_density_threshold_ask: AdaptiveThresholdProtocol
+    cancel_density_window_ms: AdaptiveDensityWindowProtocol
 
 
     cancel_events: list

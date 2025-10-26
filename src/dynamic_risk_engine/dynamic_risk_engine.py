@@ -90,20 +90,10 @@ class DynamicRiskEngine:
         :return: Calculated position size in units
         """
 
-        confidence = self.signal_confidence_calibrator.get_current_confidence()
-
-
         base_size = await self.dynamic_position_sizer.calculate_position_size(
             stop_loss_distance=stop_loss_distance
         )
 
-        #Regime-aware throttle
-        if self.current_regime == MarketRegime.VOLATILE:
-            return base_size * 0.7
-        elif self.current_regime == MarketRegime.ILLIQUID:
-            return base_size * 0.5
-        elif self.current_regime == MarketRegime.TRENDING and confidence > 0.7:
-            return base_size * 1.1
         return base_size
     
 

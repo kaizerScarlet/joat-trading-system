@@ -5,6 +5,7 @@ import numpy as np
 import time
 from alpha_scoring.Alphablender_protocol import AlphaBlenderProtocol
 from market_data.orderbook_protocol import OrderBookProtocol
+from dynamic_risk_engine.cognitive_market_regime_classifier_protocol import CognitiveMarketRegimeClassifierProtocol, MarketRegime
 
 
 class AdaptiveSLTP:
@@ -31,6 +32,7 @@ class AdaptiveSLTP:
         self,
         orderbook: OrderBookProtocol,
         alpha_score: AlphaBlenderProtocol,
+        regime_classifier: CognitiveMarketRegimeClassifierProtocol,
         atr_window: int = 14,
         base_atr_multiplier: float = 1.5,
         vol_multiplier: float = 2.0,
@@ -51,6 +53,7 @@ class AdaptiveSLTP:
         """
         self.alpha_score = alpha_score or alpha_weights
         self.ob = orderbook
+        self.regime_classifier = regime_classifier
         self.atr_window = atr_window
         self.base_atr_multiplier = base_atr_multiplier
         self.vol_multiplier = vol_multiplier
@@ -77,6 +80,40 @@ class AdaptiveSLTP:
 
         # store original initial risk distance for break-even checks
         self.original_risk: Optional[float] = None
+
+    def get_regime_overlay_modulation(self) -> Tuple[float, float]:
+        """
+        Returns (sl_modulation, tp_modulation) based on regime and overlay context.
+        """
+        regime = self.regime_classifier.get_current_regime()
+        overlay = self.regime_classifier.get_behavioral_overlay()
+
+        regime_sl = {
+            "TRENDING": 1.0,
+            "MEAN_REVERTING": 0.8,
+            "VOLATILE": 1.3,
+            "ILLIQUID": 1.2,
+            "UNKNOWN": 1.0
+        }
+
+        overlay_tp = {
+            "LIQUIDITY_VACUUM": 1.2,
+            "AGGRESSIVE_SWEEP_UP": 1.3,
+            "AGGRESSIVE_SWEEP_DOWN": 1.3,
+            "REVERSION_TRAP_UP": 0.9,
+            "REVERSION_TRAP_DOWN": 0.9,
+            "PASSIVE_FADE": 1.1,
+            "CROSS_SIDE_TENSION": 1.0,
+            "LAYER_WIPE": 1.2,
+            "CANCEL_DENSITY_SPIKE": 1.1,
+            "MOMENTUM_EXHAUSTION": 0.8,
+            "CHOPPY_NOISE": 0.7,
+            "NORMAL": 1.0
+        }
+
+        sl_mod = regime_sl.get(regime, 1.0)
+        tp_mod = overlay_tp.get(overlay, 1.0)
+        return sl_mod, tp_mod
 
     # --------------------------
     # Market data helpers
@@ -117,6 +154,7 @@ class AdaptiveSLTP:
         score = alpha.get(self.side, 0.0)
 
         return score
+    
     
 
     # --------------------------
@@ -223,6 +261,9 @@ class AdaptiveSLTP:
         # enforce min gap and max gap (max relative to base_distance)
         max_allowed = base_distance * self.max_gap_multiplier
         gap = max(self.min_gap_ticks, min(gap, max_allowed))
+
+        sl_mod, _ = self.get_regime_overlay_modulation()
+        gap *= sl_mod
         return float(gap)
 
     # --------------------------
@@ -301,13 +342,15 @@ class AdaptiveSLTP:
             baseline = max(sl_dist, max(1e-8, abs(self.entry_price - self.stop_loss)))
 
             if self.side == "bid":
-                new_tp = round(current_price + (baseline * self.tp_extension_factor), 8)
+                _, tp_mod = self.get_regime_overlay_modulation()
+                new_tp = round(current_price + (baseline * self.tp_extension_factor * tp_mod), 8)
                 if self.take_profit is None:
                     self.take_profit = new_tp
                 else:
                     self.take_profit = round(max(self.take_profit, new_tp), 8)
             else:
-                new_tp = round(current_price - (baseline * self.tp_extension_factor), 8)
+                _, tp_mod = self.get_regime_overlay_modulation()
+                new_tp = round(current_price - (baseline * self.tp_extension_factor * tp_mod), 8)
                 if self.take_profit is None:
                     self.take_profit = new_tp
                 else:
@@ -367,6 +410,10 @@ class AdaptiveSLTP:
             "midprice": float(self.ob.get_midprice()),
             "profit_ratio": round(profit_ratio, 4),
             "trailing_gap": self.get_trailing_gap(),
-            "sl_tightening_events": self.sl_tightening_events[-5:]  # last 5 events
+            "sl_tightening_events": self.sl_tightening_events[-5:],  # last 5 events
+            "regime_overlay_modulation": {
+                "sl_modulation": self.get_regime_overlay_modulation()[0],
+                "tp_modulation": self.get_regime_overlay_modulation()[1]
+            }
 
         }

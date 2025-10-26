@@ -3,7 +3,7 @@ import pytest
 from market_data.orderbook_protocol import OrderBookProtocol
 from cancel_window.order_age_distribution_protocol import OrderAgeDistributionProtocol
 from dynamic_risk_engine.cognitive_market_regime_classifier_protocol import CognitiveMarketRegimeClassifierProtocol, MarketRegime 
-from cancel_window.simple_cancel_window_protocol import CancelWindowProtocol
+from cancel_window.simple_cancel_window_protocol import CancelWindowProtocol, CancelWindowTunerProtocol, CancelWindowTunerForLayeringProtocol, AdaptiveThresholdProtocol, FillThresholdTunerProtocol
 from cancel_window.simple_cancel_window import SimpleCancelWindow, CancelWindowTuner, CancelWindowTunerForLayering
 from cancel_window.order_layering_detection import OrderLayeringDetection
 from cancel_window.order_laddering_detection import OrderLadderingDetection
@@ -11,6 +11,9 @@ from cancel_window.synthetic_fill_detector import SyntheticFillDetection
 from cancel_window.order_spoofing_detection import OrderSpoofingDetection
 from cancel_window.cancel_density_detection import CancelDensityDetection
 from cancel_window.order_iceberg_detection import OrderIcebergDetection
+from cancel_window.cancel_window_tuner import CancelWindowTuner
+from cancel_window.simple_cancel_window import AdaptiveDensityWindow , AdaptiveThreshold
+
 
 class DummyOrderAgeTracker(OrderAgeDistributionProtocol):
     def get_order_age(self, price: float, side: str) -> float:
@@ -40,24 +43,30 @@ class DummyRegimeClassifier(CognitiveMarketRegimeClassifierProtocol):
     def get_current_regime(self): return MarketRegime.UNKNOWN
     def get_regime_stability(self): return 1.0
     def get_scoring_weights(self): return (0.5, 0.2, 0.1, 0.2)
+    def get_behavioral_overlay(self): return "NORMAL"
 
 #test fast cancel on bid side
 def test_fast_cancel_flag_bid():
-    tuner_for_layering = CancelWindowTunerForLayering()
+    tuner_for_layering = CancelWindowTunerForLayering(classifier = CognitiveMarketRegimeClassifierProtocol)
     cw : CancelWindowProtocol = SimpleCancelWindow(
-        tuner = CancelWindowTuner(),
+        tuner = CancelWindowTuner(classifier = CognitiveMarketRegimeClassifierProtocol),
         order_age_tracker=DummyOrderAgeTracker(),
         order_book=DummyOrderBook(),
         classifier=DummyRegimeClassifier(),
-        order_layering = OrderLayeringDetection(tuner=tuner_for_layering),
+        order_layering = OrderLayeringDetection(regime_classifier = CognitiveMarketRegimeClassifierProtocol, tuner=tuner_for_layering),
         order_ladder_tracker = OrderLadderingDetection(regime_classifier = DummyRegimeClassifier()),
         synthetic_fill_detector = SyntheticFillDetection(regime_classifier = DummyRegimeClassifier()),
         order_spoofing = OrderSpoofingDetection(regime_classifier = DummyRegimeClassifier()),
         order_cancel_density = CancelDensityDetection(regime_classifier=DummyRegimeClassifier),
-        order_iceberg_detection = OrderIcebergDetection(regime_classifier=DummyRegimeClassifier())
+        order_iceberg_detection = OrderIcebergDetection(regime_classifier=DummyRegimeClassifier()),
+        cancel_density_threshold_bid = AdaptiveThreshold(classifier = DummyRegimeClassifier()),
+        cancel_density_threshold_ask = AdaptiveThreshold(classifier = DummyRegimeClassifier()),
+        cancel_density_window_ms = AdaptiveDensityWindow(classifier = DummyRegimeClassifier())
+
 
 
         )
+    
 
     #add level at t0
     cw.process_l2_update({"E": 1000, "b": [["30000", "1.0"]], "a": []})

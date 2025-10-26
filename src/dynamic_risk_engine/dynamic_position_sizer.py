@@ -3,9 +3,11 @@ from dynamic_risk_engine.performance_tracker_protocol import PerformanceTrackerP
 from market_data.orderbook_protocol import OrderBookProtocol
 from dynamic_risk_engine.daily_drawdown_manager_protocol import DailyDrawdownManagerProtocol
 from Execution_layer.binance_adapter_protocol import BinanceExecutionAdapterProtocol
+from dynamic_risk_engine.cognitive_market_regime_classifier_protocol import CognitiveMarketRegimeClassifierProtocol, MarketRegime
 
 class DynamicPositionSizer:
     def __init__(self, binance_adapter: BinanceExecutionAdapterProtocol, 
+                 regime_classifier: CognitiveMarketRegimeClassifierProtocol,
                  confidence: SignalConfidenceCalibratorProtocol,
                  performance_tracker: PerformanceTrackerProtocol,
                  orderbook: OrderBookProtocol,
@@ -27,11 +29,49 @@ class DynamicPositionSizer:
         self.drawdown = drawdown
         self.stop_loss = binance_Execution_adapter
 
+        self.regime_classifier = regime_classifier
+
         self.max_risk_per_trade = None 
     
     async def initialize(self):
         await self.drawdown.initialize()
         self.max_risk_per_trade = self._compute_max_risk_per_trade()
+
+    def get_regime_overlay_modulation(self) -> float:
+        """
+        Returns a behavioral modulation factor based on regime and overlay context.
+        """
+        regime = self.regime_classifier.get_current_regime()
+        overlay = self.regime_classifier.get_behavioral_overlay()
+
+        regime_weights = {
+            MarketRegime.TRENDING: 1.0,
+            MarketRegime.MEAN_REVERTING: 0.9,
+            MarketRegime.VOLATILE: 1.3,
+            MarketRegime.ILLIQUID: 1.2,
+            MarketRegime.UNKNOWN: 1.0
+        }
+
+        overlay_boost = {
+            "LIQUIDITY_VACUUM": 1.4,
+            "AGGRESSIVE_SWEEP_UP": 1.3,
+            "AGGRESSIVE_SWEEP_DOWN": 1.3,
+            "REVERSION_TRAP_UP": 1.1,
+            "REVERSION_TRAP_DOWN": 1.1,
+            "PASSIVE_FADE": 1.2,
+            "CROSS_SIDE_TENSION": 1.1,
+            "LAYER_WIPE": 1.4,
+            "CANCEL_DENSITY_SPIKE": 1.3,
+            "MOMENTUM_EXHAUSTION": 1.2,
+            "CHOPPY_NOISE": 0.8,
+            "NORMAL": 1.0
+        }
+
+        regime_weight = regime_weights.get(regime, 1.0)
+        overlay_factor = overlay_boost.get(overlay, 1.0)
+
+        return regime_weight * overlay_factor
+
 
     def get_drawdown_throttle(self) -> float:
         drawdown = self.drawdown.get_daily_drawdown_limit()
@@ -72,7 +112,8 @@ class DynamicPositionSizer:
         volatility = self.volatility.get_volatility_estimate()
         max_risk_per_trade = self.max_risk_per_trade
         risk_amount = balance* max_risk_per_trade
-        adjusted_risk = risk_amount * self.confidence.get_current_confidence() * (0.5 + self.win_rate.win_rate()) * volatility  * throttle  #Scale with confidence and win rate
+        modulation = self.get_regime_overlay_modulation()
+        adjusted_risk = risk_amount * self.confidence.get_current_confidence() * (0.5 + self.win_rate.win_rate()) * volatility  * throttle * modulation #Scale with confidence and win rate and regime and overlay modulation
 
         if stop_loss_distance == 0:
             return 0 # Avoid division by zero
@@ -93,7 +134,8 @@ class DynamicPositionSizer:
         confidence = self.confidence.get_current_confidence()
         win_rate = self.win_rate.win_rate()
         risk_amount = balance * self.max_risk_per_trade
-        adjusted_risk = risk_amount * confidence * (0.5 + win_rate) * volatility * drawdown
+        modulation = self.get_regime_overlay_modulation()
+        adjusted_risk = risk_amount * confidence * (0.5 + win_rate) * volatility * drawdown * modulation
 
         return {
             "balance": balance,
@@ -122,7 +164,8 @@ class DynamicPositionSizer:
         rrr = self.win_rate.average_rrr()
         max_risk = self.max_risk_per_trade or self._compute_max_risk_per_trade()
         risk_amount = balance * max_risk
-        adjusted_risk = risk_amount * confidence * (0.5 + win_rate) * volatility * drawdown_throttle
+        modulation = self.get_regime_overlay_modulation()
+        adjusted_risk = risk_amount * confidence * (0.5 + win_rate) * volatility * drawdown_throttle * modulation
 
         position_size = round(adjusted_risk / stop_loss_distance, 4) if stop_loss_distance > 0 else 0.0
 
@@ -135,11 +178,12 @@ class DynamicPositionSizer:
             "win_rate": round(win_rate, 4),
             "rrr": round(rrr or (1.5 + confidence), 4),
             "max_risk_per_trade": round(max_risk, 4),
+            "regime_overlay_modulation": round(modulation, 4),
             "risk_amount": round(risk_amount, 2),
             "adjusted_risk": round(adjusted_risk, 2),
             "stop_loss_distance": stop_loss_distance,
             "position_size": position_size,
-            "sizing_rationale": f"Risk scaled by confidence ({confidence}), win rate ({win_rate}), volatility ({volatility}), and drawdown throttle ({drawdown_throttle})"
+            "sizing_rationale": f"Risk scaled by confidence ({confidence}), win rate ({win_rate}), volatility ({volatility}), and drawdown throttle ({drawdown_throttle}), and regime-overlay modulation ({modulation})"
         }
 
 

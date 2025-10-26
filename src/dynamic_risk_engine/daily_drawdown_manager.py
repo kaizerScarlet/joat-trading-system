@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import List, Dict
+from dynamic_risk_engine.cognitive_market_regime_classifier_protocol import CognitiveMarketRegimeClassifierProtocol, MarketRegime
 from Execution_layer.binance_adapter_protocol import BinanceExecutionAdapterProtocol
 
 class DailyDrawdownManager:
@@ -7,11 +8,12 @@ class DailyDrawdownManager:
     Manages daily drawdown limits for trading strategies.
     when limits are hit, it can trigger alerts or stop trading.
     """
-    def __init__(self, daily_drawdown_limit: float, binance_adapter: BinanceExecutionAdapterProtocol):
+    def __init__(self, daily_drawdown_limit: float, binance_adapter: BinanceExecutionAdapterProtocol, regime_classifier: CognitiveMarketRegimeClassifierProtocol):
         """
         :param daily drawdown_limit: Maximum allowed drawdown for the day (in base currency or % of account balance)
         """
         self.account_balance = binance_adapter
+        self.regime_classifier = regime_classifier
         self._drawdown_ratio = daily_drawdown_limit # Store raw ratio
         self.daily_drawdown_limit = None # Will be set later
         self.day_pnls : Dict[str, List[float]] = {}  # Maps date to list of daily PnLs
@@ -36,8 +38,38 @@ class DailyDrawdownManager:
         return timestamp.strftime('%Y-%m-%d')
     
     def get_daily_drawdown_limit(self):
-        daily_drawdown_limit = self.daily_drawdown_limit
-        return daily_drawdown_limit
+        regime = self.regime_classifier.get_current_regime()
+        overlay = self.regime_classifier.get_behavioral_overlay()
+
+        regime_weights = {
+            MarketRegime.TRENDING: 1.0,
+            MarketRegime.MEAN_REVERTING: 0.9,
+            MarketRegime.VOLATILE: 1.3,
+            MarketRegime.ILLIQUID: 1.2,
+            MarketRegime.UNKNOWN: 1.0
+
+        }
+
+        overlay_boost = {
+            "LIQUIDITY_VACUUM": 1.4,
+            "AGGRESSIVE_SWEEP_UP": 1.3,
+            "AGGRESSIVE_SWEEP_DOWN": 1.3,
+            "REVERSION_TRAP_UP": 1.1,
+            "REVERSION_TRAP_DOWN": 1.1,
+            "PASSIVE_FADE": 1.2,
+            "CROSS_SIDE_TENSION": 1.1,
+            "LAYER_WIPE": 1.4,
+            "CANCEL_DENSITY_SPIKE": 1.3,
+            "MOMENTUM_EXHAUSTION": 1.2,
+            "CHOPPY_NOISE": 0.8,
+            "NORMAL": 1.0
+        }
+
+        regime_weight = regime_weights.get(regime, 1.0)
+        overlay_factor = overlay_boost.get(overlay, 1.0)
+
+        return self.daily_drawdown_limit * regime_weight * overlay_factor
+        
     
 
     def record_pnl(self, timestamp: datetime, pnl: float):
@@ -52,7 +84,8 @@ class DailyDrawdownManager:
             self.day_pnls[day] = []
         self.day_pnls[day].append(pnl)
 
-        if self.calculate_daily_drawdown(timestamp) <= self.daily_drawdown_limit:
+        modulated_limit = self.get_daily_drawdown_limit()
+        if self.calculate_daily_drawdown(timestamp) <= modulated_limit:
             self.trading_halted[day] = True
             self.alert_trading_halted(day)
 
@@ -89,7 +122,9 @@ class DailyDrawdownManager:
         :param day: Date string in 'YYYY-MM-DD' format
         """
         days = self._get_day(timestamp)
-        print(f"Trading halted for {days} due to drawdown limit exceeded: {self.daily_drawdown_limit}")
+        regime = self.regime_classifier.get_current_regime()
+        overlay = self.regime_classifier.get_behavioral_overlay()
+        print(f"Trading halted for {days} | Regime : {regime} | overlay : {overlay} due to drawdown limit exceeded: {self.daily_drawdown_limit}")
 
     def is_trading_halted(self, timestamp: datetime) -> bool:
         """
@@ -164,8 +199,21 @@ class DailyDrawdownManager:
         trough = min(curve, default=0.0)
         volatility = round((max(pnls) - min(pnls)) if pnls else 0.0, 4)
 
+        regime = self.regime_classifier.get_current_regime()
+        overlay = self.regime_classifier.get_behavioral_overlay()
+        
+        if "_" in overlay:
+            overlay_type, overlay_direction = overlay.split("_", 1)
+        else:
+            overlay_type, overlay_direction = overlay, "NEUTRAL"
+
+
         return {
             "day": day,
+            "regime": regime,
+            "overlay": overlay,
+            "overlay_type": overlay_type,
+            "overlay_direction": overlay_direction,
             "drawdown_limit": self.daily_drawdown_limit,
             "current_drawdown": round(drawdown, 4),
             "peak_pnl": round(peak, 4),

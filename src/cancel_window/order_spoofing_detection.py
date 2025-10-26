@@ -43,12 +43,16 @@ class OrderSpoofingDetection:
 
     def _summarize_cluster(self, side: str, cluster: list[Dict[str, any]]) -> Dict[str, Any]:
         avg_price = sum(e['price'] for e in cluster) / len(cluster)
+        overlay = self.regime_classifier.get_behavioral_overlay()
+        regime = self.regime_classifier.get_current_regime()
         return {
             'side': side,
             'count': len(cluster),
             'avg_price': avg_price,
             'duration_ms': cluster[-1]['timestamp'] - cluster[0]['timestamp'],
-            'types': list({e['event_type'] for e in cluster})
+            'types': list({e['event_type'] for e in cluster}),
+            'overlay': overlay,
+            'regime': regime.value
         }
 
     def get_spoofing_score(self, side: str = None) -> float:
@@ -76,10 +80,24 @@ class OrderSpoofingDetection:
         overlay_boost = {
             "LIQUIDITY_VACUUM": 1.4,
             "MOMENTUM_EXHAUSTION": 1.2,
+            "AGGRESSIVE_SWEEP_UP": 1.3,
+            "AGGRESSIVE_SWEEP_DOWN": 1.3,
+            "REVERSION_TRAP_UP": 1.1,
+            "REVERSION_TRAP_DOWN": 1.1,
+            "PASSIVE_FADE": 1.2,
+            "CROSS_SIDE_TENSION": 1.1,
+            "LAYER_WIPE": 1.4,
+            "CANCEL_DENSITY_SPIKE": 1.3,
             "CHOPPY_NOISE": 0.8,
             "NORMAL": 1.0
         }
         overlay_factor = overlay_boost.get(overlay, 1.0)
+
+        # Directional boost if overlay direction matches spoofing side
+        if "_" in overlay:
+            _, overlay_direction = overlay.split("_", 1)
+            if any(c["side"] == overlay_direction.lower() for c in clusters):
+                overlay_factor *= 1.1
 
         # Density scoring
         densities = [c['count'] / (c['duration_ms'] + 1) for c in clusters]
@@ -95,4 +113,24 @@ class OrderSpoofingDetection:
         score = sum(adjusted_scores) * weight * overlay_factor
         return min(1.0, score)
 
+
+    def get_debug_view(self) -> Dict[str, Any]:
+        clusters = self.detect_spoofing_clusters()
+        overlay = self.regime_classifier.get_behavioral_overlay()
+        regime = self.regime_classifier.get_current_regime()
+        if "_" in overlay:
+            overlay_type, overlay_direction = overlay.split("_", 1)
+        else:
+            overlay_type, overlay_direction = overlay, "NEUTRAL"
+
+        return {
+            "regime": regime.value,
+            "overlay": overlay,
+            "overlay_type": overlay_type,
+            "overlay_direction": overlay_direction,
+            "spoofing_score_bid": self.get_spoofing_score("bid"),
+            "spoofing_score_ask": self.get_spoofing_score("ask"),
+            "cluster_count": len(clusters),
+            "recent_clusters": clusters[-3:]
+        }
 
