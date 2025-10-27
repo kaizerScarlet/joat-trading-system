@@ -84,8 +84,12 @@ class DummyOrderBook(OrderBookProtocol):
         return 30000.0 if side == 'bid' else 30001.0
     def get_midprice(self) -> float:
         return 30000.5
-    def get_order_imbalance(self) -> float:
+    def get_order_imbalance(self, side: str) -> float:
         return 0.6
+    def get_slip_response_score(self) -> float:
+        return 0.6  # or any float value
+
+
     
 class DummySignalCalibrator(SignalConfidenceCalibratorProtocol):
     def __init__(self):
@@ -119,7 +123,7 @@ def test_environment_trending(setup_classifier):
     ob.asks = {100.05: 100, 100.1: 50}
     ob.last_update_ts = time.time() - 0.1
     ob.get_volatility_estimate = lambda: 0.02
-    ob.get_order_imbalance = lambda: 0.7
+    ob.get_order_imbalance = lambda side: 0.7 if side == "bid" else 0.3 
     ob._update_midprice()
     assert classifier.classify_environment() == MarketRegime.TRENDING
 
@@ -140,7 +144,7 @@ def test_environment_volatile(setup_classifier):
     ob.asks = {100.05: 200}
     ob.last_update_ts = time.time() - 0.1
     ob.get_volatility_estimate = lambda: 0.04
-    ob.get_order_imbalance = lambda: 0.4
+    ob.get_order_imbalance = lambda side: 0.7 if side == "bid" else 0.3
     ob._update_midprice()
     assert classifier.classify_environment() == MarketRegime.VOLATILE
 
@@ -246,7 +250,9 @@ def test_reinforce_to_trending_on_high_confidence_and_imbalance(setup_classifier
     ob.asks = {100.05: 10}
     ob.price_history.extend([100, 101, 102])
     ob.last_update_ts = time.time() - 0.1
-    ob.get_order_imbalance = lambda: 0.7
+    ob.get_order_imbalance = lambda side: 0.7 if side == "bid" else 0.3
+    ob.get_volatility_estimate = lambda: 0.02
+
 
     ob._update_midprice()
     assert classifier.reinforce_regime(MarketRegime.UNKNOWN) == MarketRegime.TRENDING
@@ -417,6 +423,8 @@ def test_behavioral_overlay_momentum_exhaustion(setup_classifier):
     ob.last_update_ts = time.time() - 0.1
     ob._update_midprice()
     ob.get_volatility_estimate = lambda: 0.04
+    ob.get_slip_response_score = lambda: 0.0
+
 
 
     overlay = classifier.get_behavioral_overlay()
@@ -432,6 +440,8 @@ def test_behavioral_overlay_choppy_noise(setup_classifier):
     ob.last_update_ts = time.time() - 0.1
     ob._update_midprice()
     ob.get_volatility_estimate = lambda: 0.003
+    ob.get_slip_response_score = lambda: 0.0
+
 
 
     overlay = classifier.get_behavioral_overlay()

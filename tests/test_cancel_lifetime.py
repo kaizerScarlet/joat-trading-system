@@ -1,5 +1,6 @@
 import time #will need to change this at production so that it is the server time taken not my machine time
 import pytest
+from typing import Dict, Any
 from market_data.orderbook_protocol import OrderBookProtocol
 from cancel_window.order_age_distribution_protocol import OrderAgeDistributionProtocol
 from dynamic_risk_engine.cognitive_market_regime_classifier_protocol import CognitiveMarketRegimeClassifierProtocol, MarketRegime 
@@ -14,9 +15,127 @@ from cancel_window.order_iceberg_detection_protocol import OrderIcebergDetection
 
 from cancel_window.simple_cancel_window_protocol import AdaptiveDensityWindowProtocol , AdaptiveThresholdProtocol
 
-class DummyCancelWindowTunerForLayering(CancelWindowTunerForLayeringProtocol):
+# === Dummy Layering Detection ===
+class DummyOrderLayeringDetection(OrderLayeringDetectionProtocol):
+    def register_order(self, orderid, timestamp, price, size, side): pass
+    def cancel_order(self, orderid, timestamp, event_type, price, size, distance_from_best, side): pass
+    def register_event(self, orderid, timestamp, event_type, price, size, side): pass
+
+# === Dummy Laddering Detection ===
+class DummyOrderLadderingDetection(OrderLadderingDetectionProtocol):
+    def register_event(self, orderid, timestamp, event_type, price, size, side): pass
+
+# === Dummy Synthetic Fill Detector ===
+class DummySyntheticFillDetection(SyntheticFillDetectorProtocol):
+    def register_event(self, orderid, timestamp, event_type, price, size, side): pass
+
+# === Dummy Spoofing Detector ===
+class DummyOrderSpoofingDetection(OrderSpoofingDetectionProtocol):
+    def register_event(self, orderid, timestamp, event_type, price, size, side): pass
+
+# === Dummy Cancel Density Detector ===
+class DummyCancelDensityDetection(CancelDensityDetectionProtocol):
+    def detect_spikes(self, current_time=None): return []
+    def register_cancel(self, orderid, timestamp, event_type, price, size, side): pass
+    def get_density_score(self, side=None, current_time=None): return 0.0
+    def get_debug_view(self): return {}
+
+# === Dummy Iceberg Detection ===
+class DummyOrderIcebergDetection(OrderIcebergDetectionProtocol):
+    def register_event(self, orderid, timestamp, event_type, price, size, side): pass
+
+
+
+
+
+
+
+# === Dummy Adaptive Density Window ===
+class DummyAdaptiveDensityWindow(AdaptiveDensityWindowProtocol):
+    def __init__(self):
+        self.current_window = 100
+        self.decay = 0.1
+        self.classifier = None
+
+    def update(self, ts: float, recent_cancel_rate: float) -> None:
+        pass
+
+    def get_current_window(self) -> int:
+        return self.current_window
+
+    def get_debug_view(self) -> Dict[str, Any]:
+        return {"current_window_ms": self.current_window, "decay": self.decay}
+
+# === Dummy Adaptive Threshold ===
+class DummyAdaptiveThreshold(AdaptiveThresholdProtocol):
+    def __init__(self):
+        self.threshold = 3
+        self.decay = 0.1
+        self.classifier = None
+
+    def update(self, volume: float, volatility: float) -> None:
+        pass
+
+    def get_threshold(self) -> int:
+        return self.threshold
+
+    def get_debug_view(self) -> Dict[str, Any]:
+        return {"threshold": self.threshold, "decay": self.decay}
+
+# === Dummy Fill Threshold Tuner ===
+class DummyFillThresholdTuner(FillThresholdTunerProtocol):
+    def __init__(self):
+        self.ratio = 0.9
+        self.decay = 0.05
+        self.classifier = None
+
+    def update(self, avg_trade_size: float, volatility: float):
+        pass
+
+    def get_ratio(self) -> float:
+        return self.ratio
+
+    def get_debug_view(self) -> Dict[str, Any]:
+        return {"fill_ratio": self.ratio, "decay": self.decay}
+
+# === Dummy Cancel Window Tuner ===
+class DummyCancelWindowTuner(CancelWindowTunerProtocol):
+    def __init__(self):
+        self.ema_latency = 50
+        self.ema_alpha = 0.2
+        self.min_ms = 50
+        self.max_ms = 75
+        self.classifier = None
+
     def update(self, latency_ms: float) -> None:
-        return
+        pass
+
+    def current_window_ms(self) -> int:
+        return self.ema_latency
+
+# === Dummy Cancel Window Tuner for Layering ===
+class DummyCancelWindowTunerForLayering(CancelWindowTunerForLayeringProtocol):
+    def __init__(self):
+        self.ema_latency = 100
+        self.ema_alpha = 0.2
+        self.min_ms = 100
+        self.max_ms = 350
+        self.classifier = None
+
+    def update(self, latency_ms: float) -> None:
+        pass
+
+    def current_window_ms(self) -> int:
+        return self.ema_latency
+
+    def get_debug_view(self) -> Dict[str, Any]:
+        return {
+            "ema_latency": self.ema_latency,
+            "current_window_ms": self.ema_latency,
+            "min_ms": self.min_ms,
+            "max_ms": self.max_ms,
+            "ema_alpha": self.ema_alpha
+        }
         
 
 

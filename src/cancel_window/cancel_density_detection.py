@@ -20,7 +20,7 @@ class CancelDensityDetection:
             'price': price, 
             'side': side})
         
-        self._prune(timestamp)
+        self._prune(current_time=int(time.time() * 1000))
 
     def _prune(self, current_time: int ) -> None:
         current_time = current_time or int(time.time() * 1000)

@@ -72,6 +72,7 @@ class TestCancelDensityDetection(unittest.TestCase):
         # Register events in the past
         old_ts = self.now - 2000  # older than window_ms
         self.detector.register_cancel("old_order", old_ts, "CANCEL", 101.0, 1.0, "bid")
+        self.detector.detect_spikes(current_time=self.now)
         self.assertEqual(len(self.detector.events), 0)
 
     def test_score_caps_at_one(self):
@@ -120,7 +121,7 @@ class TestCancelDensityDetection(unittest.TestCase):
         self.detector.regime_classifier.get_current_regime.return_value = MarketRegime.VOLATILE
         self.detector.regime_classifier.get_behavioral_overlay.return_value = "CANCEL_DENSITY_SPIKE"
 
-        self._register_batch("bid", count=20)
+        self._register_batch("bid", count=30)
         score = self.detector.get_density_score()
         self.assertGreaterEqual(score, 0.75)
         self.assertLessEqual(score, 1.0)

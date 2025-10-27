@@ -38,8 +38,12 @@ class CognitiveMarketRegimeClassifier:
             self.orderbook.get_liquidity_within_bps("ask", 50)
         )
         update_rate = self.orderbook.get_update_rate()
+        
+        # === Volatile ====
+        if volatility > 0.03:
+            return MarketRegime.VOLATILE
         #Directional Trend Detection
-        if volatility > 0.015 :
+        elif volatility > 0.015 :
             if imbalance_bid > 0.6:
                 return MarketRegime.TRENDING #Upward trend
             elif imbalance_ask > 0.6:
@@ -48,10 +52,7 @@ class CognitiveMarketRegimeClassifier:
         # === Mean Reverting ===
         elif volatility < 0.005 and liquidity > 500:
             return MarketRegime.MEAN_REVERTING
-        
-        # === Volatile ====
-        elif volatility > 0.03:
-            return MarketRegime.VOLATILE
+       
         
         # === Illiquid ====
         elif liquidity < 100 or update_rate < 0.5:
@@ -81,6 +82,13 @@ class CognitiveMarketRegimeClassifier:
         ]
 
         max_spoof_score = max(spoof_scores, default=0.0)
+        #reflexive to strong directional signals, even from an unknown base.
+        if base_regime == MarketRegime.UNKNOWN and confidence > 0.7 and volatility > 0.015:
+            if imbalance_bid > 0.6:
+                return MarketRegime.TRENDING
+            if imbalance_ask > 0.6:
+                return MarketRegime.TRENDING
+
 
         #VOLATILE: spoofing + high volatility
         if max_spoof_score > 0.25 and volatility > 0.02:
