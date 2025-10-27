@@ -69,7 +69,7 @@ class TestOrderLadderingDetection(unittest.TestCase):
         Score normalization
         """
         for i in range(20):
-            self._register_ladder_event(f"order{i}", i * 10, "LADDER_TRUE_FILL", 100.0 + i, 5.0, "bid")
+            self._register_ladder_event(f"order{i}", i * 1, "LADDER_TRUE_FILL", 100.0 + i, 5.0, "bid")
         self.detector.regime_classifier.get_current_regime.return_value = MarketRegime.VOLATILE
         self.detector.regime_classifier.get_behavioral_overlay.return_value = "LIQUIDITY_VACUUM"
 
@@ -141,7 +141,7 @@ class TestOrderLadderingDetection(unittest.TestCase):
         # Register dense laddering events...
         for i in range(20):
             self._register_ladder_event(
-            f"order{i}", i * 10, "LADDER_TRUE_FILL", 100.0 + i, 5.0, "bid"
+            f"order{i}", i * 1, "LADDER_TRUE_FILL", 100.0 + i, 5.0, "bid"
         )
 
         score = self.detector.get_laddering_score()

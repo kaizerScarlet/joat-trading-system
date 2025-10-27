@@ -170,3 +170,68 @@ def test_large_depth_update(orderbook):
     assert len(orderbook.bids) <= 150
     assert len(orderbook.asks) <= 150
     assert len(orderbook.price_history) <= 100
+
+def test_resilient_midprice_fallbacks():
+    ob = OrderBook()
+
+    # No data → fallback
+    assert ob.get_resilient_midprice() == 27000.0
+
+    # Synthetic from bid/ask
+    ob.bids = {99.0: 1.0}
+    ob.asks = {101.0: 1.0}
+    assert ob.get_resilient_midprice() == 100.0
+
+    # Cached midprice
+    ob.last_midprice = 105.0
+    ob.bids = {}
+    ob.asks = {}
+    assert ob.get_resilient_midprice() == 105.0
+
+
+def test_midpoint_staleness_score():
+    ob = OrderBook()
+    now = time.time()
+    ob.last_update_ts = now
+    for _ in range(10):
+        ob.price_history.append(100.0)
+    assert ob.get_midpoint_staleness() == pytest.approx(0.9, rel=1e-6)
+
+
+def test_quote_flicker_rate():
+    ob = OrderBook()
+    for i in range(10):
+        ob.bids = {100.0 + i: 1.0}
+        ob.asks = {101.0 + i: 1.0}
+        ob._update_midprice()
+    assert ob.get_quote_flicker_rate() > 0.0
+
+
+def test_depth_retreat_score_behavior():
+    ob = OrderBook()
+    ob.bids = {99.0: 1.0, 90.0: 5.0}
+    ob.asks = {101.0: 1.0, 110.0: 5.0}
+    ob.last_midprice = 100.0
+    assert ob.get_depth_retreat_score() > 0.0
+
+
+def test_slip_response_score_volatility_sensitive():
+    ob = OrderBook()
+    for i in range(20):
+        ob.price_history.append(100.0 + i)
+    assert ob.get_slip_response_score() > 0.0
+
+
+def test_bid_aggression_score():
+    ob = OrderBook()
+    ob.bids = {97.0: 1.0, 98.5: 2.0, 99.5: 3.0}
+    ob.last_midprice = 100.0
+    assert ob.get_bid_aggression() > 0.0
+
+
+def test_ask_defense_score():
+    ob = OrderBook()
+    ob.asks = {101.0: 1.0, 102.0: 2.0, 103.0: 3.0}
+    ob.last_midprice = 100.0
+    assert ob.get_ask_defense() > 0.0
+

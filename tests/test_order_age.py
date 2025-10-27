@@ -53,6 +53,8 @@ def test_detect_bursts_flags_short_lived_activity():
 
 def test_detects_single_short_lived_burst():
     tracker: OrderAgeDistributionProtocol = OrderAgeDistribution(regime_classifier = MagicMock())
+    tracker.regime_classifier.get_behavioral_overlay = lambda: "NORMAL"
+
     now = 1000
 
     # 4 short-lived orders spaced within 400ms → 1 burst
@@ -68,6 +70,8 @@ def test_detects_single_short_lived_burst():
 
 def test_detects_two_separate_short_lived_bursts():
     tracker: OrderAgeDistributionProtocol = OrderAgeDistribution(regime_classifier = MagicMock())
+    tracker.regime_classifier.get_behavioral_overlay = lambda: "NORMAL"
+
     now = 1000
 
     # Burst 1
