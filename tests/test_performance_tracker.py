@@ -89,3 +89,36 @@ def test_diagnostics_snapshot():
     diagnostics = tracker.get_diagnostics()
     assert diagnostics["total_trades"] == 1
     assert diagnostics["slippage_events"] == 1
+
+
+def test_average_rrr_calculation():
+    tracker = PerformanceTracker()
+    tracker.record_trade(order_id='t1', pnl=100, risk=50, reward=150)  # rrr = 3.0
+    tracker.record_trade(order_id='t2', pnl=-50, risk=50, reward=100)  # rrr = 2.0
+    avg_rrr = tracker.average_rrr()
+    assert avg_rrr == pytest.approx(2.5, 0.01)
+
+
+def test_full_diagnostics_snapshot():
+    tracker = PerformanceTracker()
+    tracker.record_trade(order_id="t1", pnl=100, risk=50, reward=150)
+    tracker.record_slippage(order_id="t1", slippage=0.5, side="buy", qty=1.0, price=100.0, symbol="BTCUSDT")
+    tracker.record_fee(order_id="t1", fee=0.1, side="buy", qty=1.0, price=100.0, symbol="BTCUSDT")
+    tracker.record_latency(order_id="t1", latency_ms=120.0, side="buy", qty=1.0, price=100.0, symbol="BTCUSDT")
+    tracker.record_fill_probability(order_id="t1", fill_probability=0.85, side="buy", qty=1.0, price=100.0, symbol="BTCUSDT")
+    tracker.record_sl_tp_drift(order_id="t1", sl=95.0, tp=120.0)
+
+    diag = tracker.get_diagnostics()
+    assert diag["total_trades"] == 1
+    assert diag["win_rate"] == 1.0
+    assert diag["average_rrr"] == 3.0
+    assert diag["profit_factor"] == float("inf")
+    assert diag["final_balance"] == 100.0
+    assert diag["slippage_events"] == 1
+    assert diag["fee_events"] == 1
+    assert diag["latency_events"] == 1
+    assert diag["fill_probability_events"] == 1
+    assert diag["sl_tp_drift_events"] == 1
+
+
+

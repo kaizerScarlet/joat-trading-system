@@ -1,4 +1,4 @@
-from typing import Protocol
+from typing import Protocol, Dict, Any
 from market_data.orderbook_protocol import OrderBookProtocol
 
 class SmartRepricingModelProtocol(Protocol):
@@ -16,4 +16,8 @@ class SmartRepricingModelProtocol(Protocol):
         Computes an optimized limit price based on spread, fill probability, jitter, and slippage cap.
         Returns a tick-aligned price.
         """
+        ...
+
+    def get_debug_view(self, side: str, orderbook: OrderBookProtocol, fill_prob_target: float) -> Dict[str, Any]:
+        """Get debug view for introspection"""
         ...
