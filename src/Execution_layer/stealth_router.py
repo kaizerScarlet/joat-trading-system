@@ -64,6 +64,7 @@ class StealthRouter:
         self.tick_size = tick_size
         self.qty_precision = qty_precison
         self.max_slices = max_slices
+        # keep internal representation as fraction (not bps)
         self.slippage_bps = slippage_bps / 10000.0 #convert bps to fraction
         self.queue_model = queue_model
         self.regime_classifier = regime_classifier
@@ -93,7 +94,7 @@ class StealthRouter:
                                    mode: str = "normal",    #New: normal | hybrid
                                    hybrid_threshold: float = 0.3, # Fill prob cutoff
                                    hybrid_horizon: int = 5, # Seconds to evaluate fill prob
-                                   fill_prob_threshold: float = 0.25, # New: Hybrid upgrade trigger
+                                   fill_prob_threshold: float = 0.45, # New: Hybrid upgrade trigger
                                    ):
         """
         Executes a parent order in multiple stealthy slices.
@@ -329,7 +330,25 @@ class StealthRouter:
                     mid = (best_bid + best_ask) * 0.5 if best_bid and best_ask else None
                     tight = (spread / (mid or 1.0)) < 0.0002
 
-                    if tight:
+                    # Compute current expected slippage (market impact) and compare to router cap
+                    current_slip_frac = 0.0
+                    try:
+                        if self.slippage_model and mid:
+                            curr_top_liq = max(1.0, orderbook.get_top_liquidity(side, depth_levels=5))
+                            # Use effective qty consistent with compute params (cap at 5% of total liq)
+                            total_liq = orderbook.get_estimated_volume(side)
+                            effective_qty = min(qty, 0.05 * max(total_liq, 1.0))
+                            current_slip = self.slippage_model.expected_market_slip(side, mid, spread, effective_qty, curr_top_liq)
+                            current_slip_frac = (current_slip / mid) if mid else 0.0
+                    except Exception:
+                        current_slip_frac = 0.0
+
+                    # If market is tight OR expected slip is large relative to our dynamic cap,
+                    # cross immediately. Otherwise, attempt a conservative reprice at current best.
+                    # We use a simple heuristic: cross if slip pressure is at least 2x the current cap.
+                    cross_due_to_slip = current_slip_frac > (self.slippage_bps * 2 if self.slippage_bps else 0.0)
+                    
+                    if tight or cross_due_to_slip:
                         # cross immediately
                         await self.exchange_client.place_order(
                             symbol = self.symbol,
@@ -337,7 +356,7 @@ class StealthRouter:
                             type = "MARKET",
                             quantity = round(qty, self.qty_precision)
                         )
-                        logger.info(f"Hybrid: flipped slice {order_id} to MARKET due low fill probability")
+                        logger.info(f"Hybrid: flipped slice {order_id} to MARKET due low fill probability (tight={tight}, cross_due_to_slip = {cross_due_to_slip})")
                     else:
                         # Reprice passive at current best
                         new_price = best_ask if side.upper() == "BUY" else best_bid
@@ -380,21 +399,31 @@ class StealthRouter:
 
 
         spread = abs(self.orderbook.get_best_price("ask") - self.orderbook.get_best_price("bid"))
-        top_liq = self.orderbook.get_top_liquidity(side)
-        slip = self.slippage_model.expected_market_slip(side, mid, spread, qty, top_liq)
+        top_liq = self.orderbook.get_top_liquidity(side, depth_levels=5)
+        total_liq = self.orderbook.get_estimated_volume(side)
+        effective_qty = min(qty, 0.05 * max(total_liq, 1.0)) # Trade up to 5% of depth for impact realism
+
+        # Slippage model returns absolute slip, convert to fraction of mid
+        slip = self.slippage_model.expected_market_slip(side, mid, spread, effective_qty, top_liq)
 
         #Convery slip -> fractive relative to mid. keep internal representation as fraction.
         #e.g slip / mid  == 0.0015 thats 15bps; we will return 0.0015 and keep self.slippage_bps
         #as that fraction everywhere.
+        slippage_frac = (slip / mid) if mid else 0.0
 
-        try:
-            slippage_frac = (slip / mid) if mid else 0.0
-        except Exception:
-            slippage_frac = 0.0
+        # Updated internal dynamic slippage fraction for reuse (repring + tick control)
+        self.slippage_bps = slippage_frac
+        if self.repricing_model:
+            try:
+                self.repricing_model.slippage_bps = slippage_frac
+            except Exception:
+                logger.debug("Repricing has no attribute 'slippage_bps (ignored)")
 
         # for human friendly logging, compute bps but keep the returned value as the fraction
         slippage_bps_for_log = round(slippage_frac * 10000, 2)
-        logger.debug(f"[Execution] computed expected slip = {slip: .6f}, slippage={slippage_bps_for_log} bps")
+        logger.debug(f"[Execution] computed expected slip = {slip: .6f}, slippage={slippage_bps_for_log} bps, "
+                     f"liquidity(Top 5)={top_liq: .2f}, qty={effective_qty: .4f}"
+                     )
 
         # ---- Fill probability threshold from queue model ----
         _, prob_per_sec = self.queue_model.estimate(side, qty, top_liq, orderbook)
@@ -420,7 +449,7 @@ class StealthRouter:
 
 
     def _choose_slice_price(self, side: str, limit_price: Optional[float], order_type: str):
-        """Random price adjustment for limit orders using tick_size"""
+        """Random price adjustment for limit orders using tick_size and dynamic slippage bounds"""
         
         if order_type.upper() == "MARKET":
             return None 
@@ -436,7 +465,7 @@ class StealthRouter:
         tick_jitter = random.randint(-2, 2)
         jitter = self.tick_size * tick_jitter
 
-        #Optional slippage control
+        #Dynamic slippage cap (already fraction of mid)
         max_slip = mid_price * self.slippage_bps
         jitter = max(min(jitter, max_slip), -max_slip)
 

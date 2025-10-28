@@ -29,7 +29,7 @@ class MockOrderBook(OrderBookProtocol):
     def get_volatility_estimate(self):
         return 0.015
 
-    def get_order_imbalance(self):
+    def get_order_imbalance(self, depth_levels: int):
         bid_qty = sum(qty for _, qty in self.bids)
         ask_qty = sum(qty for _, qty in self.asks)
         total = bid_qty + ask_qty
@@ -43,6 +43,43 @@ class MockOrderBook(OrderBookProtocol):
 
     def get_update_rate(self):
         return 0.8
+    
+
+    def get_midprice(self):
+        return 100.0
+
+    def get_resilient_midprice(self):
+        return 100.0
+
+    def get_level_size(self, price, side):
+        return 1.0
+
+    def get_tick_size(self):
+        return 0.01
+
+    def get_quote_flicker_rate(self):
+        return 0.2
+
+    def get_depth_retreat_score(self):
+        return 0.4
+
+    def get_slip_response_score(self):
+        return 0.3
+
+    def get_bid_aggression(self):
+        return 0.6
+
+    def get_ask_defense(self):
+        return 0.5
+
+    def get_midpoint_staleness(self):
+        return 0.3
+
+    def get_top_levels(self, side: str, depth_levels: int = 5):
+        book = self.bids if side == "bid" else self.asks
+        return book[:depth_levels]
+
+
 
 class MockCancelWindow(CancelWindowProtocol):
     def __init__(self):
@@ -171,7 +208,8 @@ async def test_hybrid_upgrades_to_market(router):
     router.orderbook.get_best_price = lambda side: 99.0 if side == "bid" else 101.0
     router.orderbook.get_midprice = lambda: 100.0
     router.orderbook.get_resilient_midprice = lambda: 100.0
-    router.orderbook.get_top_liquidity = lambda side: 1.0
+    router.orderbook.get_top_liquidity = lambda side, depth_levels=5: 1.0
+
 
     router.queue_model.estimate = lambda side, qty, tob_qty, ob: (0.5, 0.01)
     router.fill_prob_threshold = 0.25

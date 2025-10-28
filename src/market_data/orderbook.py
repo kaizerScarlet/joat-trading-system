@@ -177,20 +177,25 @@ class OrderBook:
             return sum(size for price, size in self.asks.items() if (price - mid) <= threshold)
 
     # -------------------- Microstructure metrics ---------------------------------
-    def get_order_imbalance(self, side: str) -> float:
+    def get_order_imbalance(self, side: str, depth_levels: int = 5) -> float:
         """
         Order book imbalance = bid_vol / (bid_vol + ask_vol).
         Range [0, 1], > 0.5 means more bid-side liquidity.
         """
-        bid_vol = self.get_estimated_volume(side="bid")
-        ask_vol = self.get_estimated_volume(side="ask")
+        bid_levels = sorted(self.bids.items(), key=lambda x: x[0], reverse=True)[:depth_levels]
+        ask_levels = sorted(self.asks.items(), key=lambda x: x[0])[:depth_levels]
+
+        bid_vol = sum(size for _, size in bid_levels)
+        ask_vol = sum(size for _, size in ask_levels)
+
         denom = bid_vol + ask_vol
         if denom == 0:
-            return 0.5 # Balanced fallback
+            return 0.5  # Balanced fallback
         if side == "ask":
-            return ask_vol /denom
+            return ask_vol / denom
         elif side == "bid":
             return bid_vol / denom
+
 
     def get_volatility_estimate(self) -> float:
         """
@@ -200,12 +205,19 @@ class OrderBook:
         """
         if len(self.price_history) < 2:
             return 0.001 #Minimal Baseline
-        returns = [
-            (self.price_history[i] - self.price_history[i-1]) / self.price_history[i-1]
-            for i in range (1, len(self.price_history))
-        ]
-        variance = sum( r ** 2 for r in returns ) / len(returns)
-        return variance ** 0.5
+        
+        try:
+            returns = [
+                (self.price_history[i] - self.price_history[i-1]) / self.price_history[i-1]
+                for i in range (1, len(self.price_history))
+            ]
+            if not returns:
+                return 0.001
+     
+            variance = sum( r ** 2 for r in returns ) / len(returns)
+            return max(0.001, variance ** 0.5)
+        except Exception:
+            return 0.001
     
 
     def get_update_rate(self) -> float:
@@ -313,8 +325,13 @@ class OrderBook:
         High score = fear, spoof unwind, or reactive defense.
         """
         # Placeholder: simulate slip detection using volatility spike
-        vol = self.get_volatility_estimate()
-        return min(1.0, vol * 20)
+        try:
+            vol = self.get_volatility_estimate()
+            if vol is None or not isinstance(vol, (float, int)) or math.isnan(vol):
+                return 0.0    
+            return min(1.0, vol * 20)
+        except Exception:
+            return 0.0
 
     def get_bid_aggression(self) -> float:
         """
@@ -339,6 +356,21 @@ class OrderBook:
         near_asks = sum(size for price, size in self.asks.items() if price - mid < 3)
         total_asks = sum(self.asks.values())
         return near_asks / max(1e-6, total_asks)
+    
+
+    def get_top_levels(self, side: str, depth_levels: int = 5) -> list[tuple[float, float]]:
+        """
+        Returns the top N price levels and sizes for the given side.
+        :param side: 'bid' or 'ask'
+        :param depth_levels: number of levels to return
+        :return: list of (price, size) tuples
+        """
+        book = self.bids if side == "bid" else self.asks
+        if not book:
+            return []
+        levels = sorted(book.items(), key=lambda x: x[0], reverse=(side == "bid"))
+        return levels[:depth_levels]
+
 
 
 

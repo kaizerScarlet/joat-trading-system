@@ -43,7 +43,7 @@ class OrderBookProtocol(Protocol):
         """Returns total liquidity within X basis points of midprice."""
         ...
 
-    def get_order_imbalance(self, side: str) -> float:
+    def get_order_imbalance(self, side: str, depth_levels: int = 5) -> float:
         """Returns order book imbalance score (0.0 to 1.0)."""
         ...
 

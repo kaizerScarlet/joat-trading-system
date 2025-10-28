@@ -1,15 +1,17 @@
 import random
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, Any
+from Execution_layer.slippage_model_protocol import SlippageModelProtocol
 from market_data.orderbook_protocol import OrderBookProtocol
 
 class SmartRepricingModel:
-    def __init__(self, tick_size: float = 0.01, max_jitter_ticks: int = 2, slippage_bps: float = 5.0):
+    def __init__(self, tick_size: float = 0.01, max_jitter_ticks: int = 2, slippage_bps: float = 5.0, slippage_model: SlippageModelProtocol = None):
         self.tick_size = tick_size
         self.max_jitter_ticks = max_jitter_ticks
         self.slippage_bps = slippage_bps # Convert bps to fraction
+        self.slippage_model = slippage_model or SlippageModelProtocol
 
-    def optimize_price(self, side: str, orderbook:OrderBookProtocol, fill_prob_target: float = 0.6) -> float:
+    def optimize_price(self, side: str, orderbook:OrderBookProtocol, fill_prob_target: float = 0.45, qty: float = 1.0) -> float:
         """
         Computes an optimized limit price based on spread, fill probability, jitter, and slippage cap.
         Returns a tick-aligned price.
@@ -22,11 +24,14 @@ class SmartRepricingModel:
             return best_ask if side.upper() == "BUY" else best_bid  # fallback
 
         spread = abs(best_ask - best_bid)
-        spread_ratio = spread / mid
-        max_slip = mid * (self.slippage_bps / 1e4)
+        top_liquidity = getattr(orderbook, "get_top_liquidity", lambda s: 100.0)(side)
+
+        #Estimate dynamic slippage using the impact model
+        #qty use actual trade size: take this from the determined position size in position sizer class
+        max_slip = self.slippage_model.expected_market_slip(side, mid, spread, qty,top_liquidity)
 
         # Base price logic
-        if spread_ratio < 0.001:
+        if spread / mid < 0.001:
             base_price = best_ask if side.upper() == "BUY" else best_bid
             adjusted_price = base_price # Skip jitter in tight spreads
         else:
@@ -38,9 +43,11 @@ class SmartRepricingModel:
             jitter = self.tick_size * tick_jitter
             jitter = max(min(jitter, max_slip), -max_slip)
 
-
             # Apply jitter directionally
             adjusted_price = base_price + jitter if side.upper() == "BUY" else base_price - jitter
+        
+        #Apply micro-reversion adjustment
+        adjusted_price = self.slippage_model.expected_limit_price(side, adjusted_price, mid)
 
         # Clamp to mid-relative slippage bounds
         adjusted_price = min(max(adjusted_price, mid - max_slip), mid + max_slip)
@@ -58,6 +65,9 @@ class SmartRepricingModel:
         adjusted_price = float(
             (Decimal(str(adjusted_price)) / tick).to_integral_value(rounding=ROUND_HALF_UP) * tick
         )
+        # Final clamp to enforce slippage cap post-rounding
+        adjusted_price = min(max(adjusted_price, mid - max_slip), mid + max_slip)
+
 
         return adjusted_price
 
@@ -70,6 +80,7 @@ class SmartRepricingModel:
             "tick_size": self.tick_size,
             "max_jitter_ticks": self.max_jitter_ticks,
             "slippage_bps": self.slippage_bps,
+            "slippage_model": type(self.slippage_model).__name__,
             "side": side,
             "best_bid": best_bid,
             "best_ask": best_ask,
