@@ -8,6 +8,7 @@ from Execution_layer.binance_adapter_protocol import BinanceExecutionAdapterProt
 
 @pytest.mark.asyncio
 async def test_record_pnl_and_no_halt():
+    
     manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(
         binance_adapter = BinanceExecutionAdapterProtocol,
         daily_drawdown_limit=0.25,
@@ -30,6 +31,7 @@ async def test_record_pnl_and_no_halt():
 
 @pytest.mark.asyncio
 async def test_trading_halted_when_limit_exceeded(capfd):
+    
     manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(
         binance_adapter = BinanceExecutionAdapterProtocol,
         daily_drawdown_limit=0.25,
@@ -54,6 +56,7 @@ async def test_trading_halted_when_limit_exceeded(capfd):
 
 @pytest.mark.asyncio
 async def test_trades_return_zero_drawdown():
+    
     manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(
         binance_adapter = BinanceExecutionAdapterProtocol,
         daily_drawdown_limit=0.25,
@@ -71,6 +74,7 @@ async def test_trades_return_zero_drawdown():
 
 @pytest.mark.asyncio
 async def test_reset_daily_drawdown():
+    
     manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(
         binance_adapter = BinanceExecutionAdapterProtocol,
         daily_drawdown_limit=0.25,
@@ -92,6 +96,7 @@ async def test_reset_daily_drawdown():
 
 @pytest.mark.asyncio
 async def test_multiple_days_handling():
+
     manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(
         binance_adapter = BinanceExecutionAdapterProtocol,
         daily_drawdown_limit=0.25,
@@ -126,6 +131,7 @@ async def test_multiple_days_handling():
 
 @pytest.mark.asyncio
 async def test_drawdown_curve_accuracy():
+
     manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(
         binance_adapter = BinanceExecutionAdapterProtocol,
         daily_drawdown_limit=0.25,
@@ -146,6 +152,7 @@ async def test_drawdown_curve_accuracy():
 
 @pytest.mark.asyncio
 async def test_empty_day_drawdown():
+
     manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(
         binance_adapter = BinanceExecutionAdapterProtocol,
         daily_drawdown_limit=0.25,
@@ -161,6 +168,7 @@ async def test_empty_day_drawdown():
 
 @pytest.mark.asyncio
 async def test_reset_clears_state():
+
     manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(
         binance_adapter = BinanceExecutionAdapterProtocol,
         daily_drawdown_limit=0.25,
@@ -181,6 +189,7 @@ async def test_reset_clears_state():
 
 @pytest.mark.asyncio
 async def test_status_snapshot():
+
     manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(
         binance_adapter = BinanceExecutionAdapterProtocol,
         daily_drawdown_limit=0.25,
@@ -202,6 +211,7 @@ async def test_status_snapshot():
 
 @pytest.mark.asyncio
 async def test_drawdown_equals_limit_triggers_halt():
+
     manager : DailyDrawdownManagerProtocol = DailyDrawdownManager(
         binance_adapter = BinanceExecutionAdapterProtocol,
         daily_drawdown_limit=0.25,

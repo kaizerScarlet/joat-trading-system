@@ -8,10 +8,12 @@ class StubCancelWindow:
     
 
 def test_protocol_compliance():
+
     scorer: CancelActivityScorerProtocol = CancelActivityScorer(window_ms_tuner=StubCancelWindow())
     assert isinstance(scorer, CancelActivityScorer)
 
 def test_score_bounds_stability():
+
     scorer: CancelActivityScorerProtocol = CancelActivityScorer(window_ms_tuner=StubCancelWindow())
     for i in range(10):
         scorer.register_events(1000 + i * 10, 'CANCEL_SPOOF', price=100.0 + i, size=5.0, side="bid", distance_from_best=i)
@@ -21,6 +23,7 @@ def test_score_bounds_stability():
 
 
 def test_debug_view_exposes_state():
+
     scorer: CancelActivityScorerProtocol = CancelActivityScorer(window_ms_tuner=StubCancelWindow())
     scorer.register_events(1000, 'CANCEL_SPOOF', price=100.0, size=5.0, side="bid", distance_from_best=0)
     view = scorer.get_debug_view()
@@ -28,6 +31,7 @@ def test_debug_view_exposes_state():
     assert 'ema_scores' in view
 
 def test_cancel_on_ask_side():
+
     scorer: CancelActivityScorerProtocol = CancelActivityScorer(window_ms_tuner=StubCancelWindow())
     scorer.register_events(1000, 'CANCEL_SPOOF', price=101.0, size=5.0, side="ask", distance_from_best=0)
     score = scorer.compute_score(1030, side="ask")["ask"]
@@ -35,6 +39,7 @@ def test_cancel_on_ask_side():
 
 
 def test_single_cancel():
+    
     scorer: CancelActivityScorerProtocol = CancelActivityScorer(window_ms_tuner=StubCancelWindow())
     scorer.register_events(1000, 'CANCEL_SPOOF', price=100.0, size=5.0, side="bid", distance_from_best=0)
     score = scorer.compute_score(1030, side="bid")["bid"]
@@ -44,6 +49,7 @@ def test_single_cancel():
 
 def test_multiple_cancel_bid_at_same_price():
     """Multiple cancel-like events at same time/price/side should accumulate positive score"""
+
     scorer: CancelActivityScorerProtocol = CancelActivityScorer(window_ms_tuner=StubCancelWindow())
     scorer.register_events(1000, "CANCEL_SPOOF", price=100.1, size=6.0, side="bid", distance_from_best=0)
     scorer.register_events(1000, "REPOSTING_BEHAVIOUR", price=100.1, size=4.0, side="bid", distance_from_best=0)
@@ -60,7 +66,9 @@ def test_multiple_cancel_bid_at_same_price():
     assert 1.0 >= score >= 0.5
 
 
+
 def test_partial_fill_penalty():
+
     scorer : CancelActivityScorerProtocol = CancelActivityScorer(window_ms_tuner=StubCancelWindow())
     scorer.register_events(1000, 'PARTIAL_FILL', price=100.1, size=5.0, side="bid", distance_from_best=0)
     score = scorer.compute_score(1040, side="bid")["bid"]
@@ -69,6 +77,7 @@ def test_partial_fill_penalty():
 
 
 def test_iceberg_cancel_bonus():
+
     scorer : CancelActivityScorerProtocol= CancelActivityScorer(window_ms_tuner=StubCancelWindow())
     scorer.register_events(1000, 'ICEBERG_CANCEL', price=100.2, size=5.0, side="bid", distance_from_best=0)
     score = scorer.compute_score(1030, side="bid")["bid"]
@@ -77,6 +86,7 @@ def test_iceberg_cancel_bonus():
 
 
 def test_size_weighting():
+
     scorer : CancelActivityScorerProtocol = CancelActivityScorer(window_ms_tuner=StubCancelWindow())
     scorer.register_events(1000, 'CANCEL_SPOOF', price=100.3, size=10.0, side="bid", distance_from_best=0)
     high_score = scorer.compute_score(1040, "bid")["bid"]
@@ -91,6 +101,7 @@ def test_size_weighting():
 
 
 def test_depth_penalty():
+
     scorer : CancelActivityScorerProtocol = CancelActivityScorer(window_ms_tuner=StubCancelWindow())
     scorer.register_events(1000, 'CANCEL_SPOOF', price=100.5, size=5.0, side="bid", distance_from_best=0)  # near top
     score_near = scorer.compute_score(1020, "bid")["bid"]
@@ -104,6 +115,7 @@ def test_depth_penalty():
 
 
 def test_outside_window_ignored():
+
     scorer : CancelActivityScorerProtocol = CancelActivityScorer(window_ms_tuner=StubCancelWindow())
     scorer.register_events(1000, 'CANCEL_SPOOF', price=100.7, size=2.0, side="bid", distance_from_best=0)
     score = scorer.compute_score(3000, "bid")["bid"]  # event should expire
@@ -111,6 +123,7 @@ def test_outside_window_ignored():
 
 
 def test_reset_clears_events():
+
     scorer : CancelActivityScorerProtocol = CancelActivityScorer(window_ms_tuner=StubCancelWindow())
     scorer.register_events(1000, 'CANCEL_SPOOF', price=100.8, size=5.0, side="bid", distance_from_best=0)
     scorer.reset()

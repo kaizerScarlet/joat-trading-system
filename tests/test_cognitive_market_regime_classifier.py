@@ -117,6 +117,7 @@ def setup_classifier():
 # ------------------ Environment Classification ------------------
 
 def test_environment_trending(setup_classifier):
+    
     classifier, ob, _, _ = setup_classifier
     ob.price_history.extend([100, 101, 102, 103, 104, 105])
     ob.bids = {99.95: 300, 99.9: 200}
@@ -128,6 +129,7 @@ def test_environment_trending(setup_classifier):
     assert classifier.classify_environment() == MarketRegime.TRENDING
 
 def test_environment_mean_reverting(setup_classifier):
+
     classifier, ob, _, _ = setup_classifier
     ob.price_history.extend([100, 100.05, 99.95, 100])
     ob.bids = {99.95: 300, 99.9: 200}
@@ -138,6 +140,7 @@ def test_environment_mean_reverting(setup_classifier):
     assert classifier.classify_environment() == MarketRegime.MEAN_REVERTING
 
 def test_environment_volatile(setup_classifier):
+
     classifier, ob, _, _ = setup_classifier
     ob.price_history.extend([100, 110, 90, 115])
     ob.bids = {99.95: 200}
@@ -149,6 +152,7 @@ def test_environment_volatile(setup_classifier):
     assert classifier.classify_environment() == MarketRegime.VOLATILE
 
 def test_environment_illiquid(setup_classifier):
+    
     classifier, ob, _, _ = setup_classifier
     ob.bids = {99.5: 1}
     ob.asks = {100.5: 1}
@@ -160,6 +164,7 @@ def test_environment_illiquid(setup_classifier):
     assert classifier.classify_environment() == MarketRegime.ILLIQUID
 
 def test_environment_unknown(setup_classifier):
+
     classifier, ob, _, _ = setup_classifier
     ob.price_history.clear()
     ob.bids.clear()
@@ -180,6 +185,7 @@ def test_environment_unknown(setup_classifier):
 
 # ------------------ Reinforcement Logic ------------------
 def test_reinforce_to_volatile_on_high_spoof_score(setup_classifier):
+
     classifier, ob, _, cw = setup_classifier
 
     # Step 1: Volatility
@@ -217,6 +223,7 @@ def test_reinforce_to_volatile_on_high_spoof_score(setup_classifier):
 
 
 def test_reinforce_to_mean_reverting_on_low_confidence(setup_classifier):
+
     classifier, ob, sc, _ = setup_classifier
 
     # Step 1: Stronger signal decay
@@ -244,6 +251,7 @@ def test_reinforce_to_mean_reverting_on_low_confidence(setup_classifier):
 
 
 def test_reinforce_to_trending_on_high_confidence_and_imbalance(setup_classifier):
+
     classifier, ob, sc, _ = setup_classifier
     sc.signal_history.extend([{'signal_id': 's1', 'was_correct': True}] * 10)
     ob.bids = {99.95: 300}
@@ -258,6 +266,7 @@ def test_reinforce_to_trending_on_high_confidence_and_imbalance(setup_classifier
     assert classifier.reinforce_regime(MarketRegime.UNKNOWN) == MarketRegime.TRENDING
 
 def test_reinforce_to_illiquid_on_low_liquidity_and_update_rate(setup_classifier):
+
     classifier, ob, _, _ = setup_classifier
     ob.bids = {99.5: 1}
     ob.asks = {100.5: 1}
@@ -271,6 +280,7 @@ def test_reinforce_to_illiquid_on_low_liquidity_and_update_rate(setup_classifier
     assert classifier.reinforce_regime(MarketRegime.TRENDING) == MarketRegime.ILLIQUID
 
 def test_low_spoof_score_does_not_trigger_volatile(setup_classifier):
+
     classifier, ob, _, cw = setup_classifier
     ob.price_history.extend([100, 101, 102])
     ob.bids = {100: 100}
@@ -292,6 +302,7 @@ def test_low_spoof_score_does_not_trigger_volatile(setup_classifier):
 # ------------------ Temporal Memory ------------------
 
 def test_update_regime_adds_to_history(setup_classifier):
+
     classifier, ob, _, _ = setup_classifier
     ob.price_history.extend([100, 101, 102])
     ob.bids = {99.95: 300}
@@ -302,6 +313,7 @@ def test_update_regime_adds_to_history(setup_classifier):
     assert regime in classifier.regime_history
 
 def test_get_current_regime_majority_vote(setup_classifier):
+
     classifier, _, _, _ = setup_classifier
     classifier.regime_history.extend([
         MarketRegime.TRENDING,
@@ -312,6 +324,7 @@ def test_get_current_regime_majority_vote(setup_classifier):
 
 
 def test_regime_drift_from_trending_due_to_exhaustion(setup_classifier):
+
     classifier, ob, sc, cw = setup_classifier
 
     classifier.regime_history.extend([MarketRegime.TRENDING] * 5)
@@ -381,6 +394,7 @@ def test_regime_drift_from_mean_reverting_to_volatile(setup_classifier):
     assert drift is True
 
 def test_behavioral_overlay_liquidity_vacuum(setup_classifier):
+
     classifier, ob, sc, cw = setup_classifier
     classifier.cancel_window.compute_cancel_impact_score = lambda price, side: 0.7
 
@@ -484,6 +498,7 @@ def test_scoring_weights_per_regime(setup_classifier):
 
 
 def test_regime_duration_tracking(setup_classifier):
+
     classifier, ob, _, _ = setup_classifier
     ob.price_history.extend([100, 101, 102])
     ob.bids = {99.95: 300}

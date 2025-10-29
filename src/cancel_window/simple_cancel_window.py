@@ -692,7 +692,7 @@ class SimpleCancelWindow(CancelWindow):
 
                 if fill_ratio >= 1.0 and confidence >= 0.6:
                     selected_fill_type = "SYNTHETIC_TRUE_FILL"
-                elif fill_ratio >= 0.5 and confidence >= 0.4:
+                elif fill_ratio >= 0.5 and confidence >= 0.2:
                     selected_fill_type = "SYNTHETIC_PARTIAL_FILL"
                 else:
                     selected_fill_type = "SYNTHETIC_WEAK_FILL"
