@@ -1369,3 +1369,121 @@ class TestSyntheticFillDetection(unittest.TestCase):
 
         flags = [f for f in self.window._flags if f["type"] == "SYNTHETIC_LADDER_FILL_EXPIRED"]
         self.assertEqual(len(flags), 1)
+
+
+def test_synthetic_true_fill_emission():
+    cw = SimpleCancelWindow(
+        tuner=DummyCancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier(),
+        order_layering=DummyOrderLayeringDetection(),
+        order_ladder_tracker=DummyOrderLadderingDetection(),
+        synthetic_fill_detector=DummySyntheticFillDetection(),
+        order_spoofing=DummyOrderSpoofingDetection(),
+        order_cancel_density=DummyCancelDensityDetection(),
+        order_iceberg_detection=DummyOrderIcebergDetection(),
+        cancel_density_threshold_bid=DummyAdaptiveThreshold(),
+        cancel_density_threshold_ask=DummyAdaptiveThreshold(),
+        cancel_density_window_ms=DummyAdaptiveDensityWindow(),
+        market_type="futures"
+    )
+
+    # Simulate a cancel, then a trade that fully fills it
+    key = ("bid", 100.0)
+    cw.cancel_cache[key] = (100000, 10.0)
+    trade_msg = {"T": 100050, "p": "100.0", "q": "10.0", "m": True}
+    cw.process_trade(trade_msg)
+
+    flags = [f for f in cw._flags if f["type"] == "SYNTHETIC_TRUE_FILL"]
+    assert len(flags) == 1
+
+
+
+def test_synthetic_partial_fill_emission():
+    cw = SimpleCancelWindow(
+        tuner=DummyCancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier(),
+        order_layering=DummyOrderLayeringDetection(),
+        order_ladder_tracker=DummyOrderLadderingDetection(),
+        synthetic_fill_detector=DummySyntheticFillDetection(),
+        order_spoofing=DummyOrderSpoofingDetection(),
+        order_cancel_density=DummyCancelDensityDetection(),
+        order_iceberg_detection=DummyOrderIcebergDetection(),
+        cancel_density_threshold_bid=DummyAdaptiveThreshold(),
+        cancel_density_threshold_ask=DummyAdaptiveThreshold(),
+        cancel_density_window_ms=DummyAdaptiveDensityWindow(),
+        market_type="futures"
+    )
+
+    # Simulate a cancel, then a smaller trade
+    key = ("bid", 99.5)
+    cw.cancel_cache[key] = (100000, 10.0)
+    trade_msg = {"T": 100050, "p": "99.5", "q": "5.0", "m": True}
+    cw.process_trade(trade_msg)
+
+    flags = [f for f in cw._flags if f["type"] == "SYNTHETIC_PARTIAL_FILL"]
+    assert len(flags) == 1
+
+
+
+def test_synthetic_weak_fill_emission():
+    cw = SimpleCancelWindow(
+        tuner=DummyCancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier(),
+        order_layering=DummyOrderLayeringDetection(),
+        order_ladder_tracker=DummyOrderLadderingDetection(),
+        synthetic_fill_detector=DummySyntheticFillDetection(),
+        order_spoofing=DummyOrderSpoofingDetection(),
+        order_cancel_density=DummyCancelDensityDetection(),
+        order_iceberg_detection=DummyOrderIcebergDetection(),
+        cancel_density_threshold_bid=DummyAdaptiveThreshold(),
+        cancel_density_threshold_ask=DummyAdaptiveThreshold(),
+        cancel_density_window_ms=DummyAdaptiveDensityWindow(),
+        market_type="futures"
+    )
+
+    key = ("bid", 99.5)
+    cw.cancel_cache[key] = (100000, 10.0)
+    trade_msg = {"T": 100050, "p": "99.5", "q": "1.0", "m": True}
+    cw.process_trade(trade_msg)
+
+    flags = [f for f in cw._flags if f["type"] == "SYNTHETIC_WEAK_FILL"]
+    assert len(flags) == 1
+
+
+def test_multiple_flag_types_emitted():
+    cw = SimpleCancelWindow(
+        tuner=DummyCancelWindowTuner(),
+        order_age_tracker=DummyOrderAgeTracker(),
+        order_book=DummyOrderBook(),
+        classifier=DummyRegimeClassifier(),
+        order_layering=DummyOrderLayeringDetection(),
+        order_ladder_tracker=DummyOrderLadderingDetection(),
+        synthetic_fill_detector=DummySyntheticFillDetection(),
+        order_spoofing=DummyOrderSpoofingDetection(),
+        order_cancel_density=DummyCancelDensityDetection(),
+        order_iceberg_detection=DummyOrderIcebergDetection(),
+        cancel_density_threshold_bid=DummyAdaptiveThreshold(),
+        cancel_density_threshold_ask=DummyAdaptiveThreshold(),
+        cancel_density_window_ms=DummyAdaptiveDensityWindow(),
+        market_type="futures"
+    )
+
+    # true fill
+    cw.cancel_cache[("bid", 100.0)] = (100000, 10.0)
+    cw.process_trade({"T": 100050, "p": "100.0", "q": "10.0", "m": True})
+    # weak fill
+    cw.cancel_cache[("bid", 99.5)] = (100000, 10.0)
+    cw.process_trade({"T": 100050, "p": "99.5", "q": "1.0", "m": True})
+    # no cancel
+    cw.process_trade({"T": 100100, "p": "99.9", "q": "5.0", "m": True})
+
+    types = [f["type"] for f in cw._flags]
+    assert "SYNTHETIC_TRUE_FILL" in types
+    assert "SYNTHETIC_WEAK_FILL" in types
+    assert "SYNTHETIC_FILL_NO_CANCEL" in types
