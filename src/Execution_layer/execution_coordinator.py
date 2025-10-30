@@ -380,9 +380,9 @@ class ExecutionCoordinator:
           
      
           # --- Decision Logic ---
-          if bid_score >= self.config["min_confidence_to_trade"] and bid_score > ask_score: #[Intent Layer]
+          if bid_score >= self.config["min_confidence_to_trade"] and bid_score > ask_score: #  [Intent Layer]
                if regime == "TRENDING":
-                    #[Pressure Modulation Layer]
+                    # [Pressure Modulation Layer]
                     if bid_cancel_spoof < 0.3 and bid_layering_score > 0.5:
                          return "BUY"
                     if iceberg_bias == "bid" and bid_fill_conf > 0.6:
@@ -403,7 +403,7 @@ class ExecutionCoordinator:
 
           elif ask_score >= self.config["min_confidence_to_trade"] and ask_score > bid_score: #[Intent Layer]
                if regime == "TRENDING":
-                    #[Pressure Modulation Layer]
+                    #    [Pressure Modulation Layer]
                     if ask_cancel_spoof < 0.3 and ask_layering_score > 0.5:
                          return "SELL"
                     if iceberg_bias == "ask" and ask_fill_conf > 0.6:
@@ -722,6 +722,7 @@ class ExecutionCoordinator:
 
                    #Only match if different (avoid excessive modify calls)
                    if (pos_sl != sl) or (pos_tp != tp):
+                        
                         self.exchange_client.modify_order_sl_tp(
                              position_id = pos_id,
                              stop_loss = sl,
@@ -737,6 +738,7 @@ class ExecutionCoordinator:
          self.entry_price = 0.0
          self.sl_order_id = None
          self.tp_order_id = None
+
     def generate_decision_context(self) -> Dict[str, Any]:
           """
           Generate a narratable decision context for trade side evaluation.
@@ -761,12 +763,16 @@ class ExecutionCoordinator:
 
           bid_cancel_spoof = spoof_pressure.get("bid", 0.0)
           ask_cancel_spoof = spoof_pressure.get("ask", 0.0)
+
           bid_layering_score = layering_score.get("bid", 0.0)
           ask_layering_score = layering_score.get("ask", 0.0)
+
           bid_density = cancel_density.get("bid", 0.0)
           ask_density = cancel_density.get("ask", 0.0)
+
           bid_fill_conf = synthetic_fill_confidence.get("bid", 0.0)
           ask_fill_conf = synthetic_fill_confidence.get("ask", 0.0)
+
           bid_age_score = order_age_bias.get("bid", 0.0)
           ask_age_score = order_age_bias.get("ask", 0.0)
 
@@ -775,6 +781,7 @@ class ExecutionCoordinator:
           ladder_type = laddering_signal.get("type")
           ladder_side = laddering_signal.get("side")
           ladder_filled = laddering_signal.get("filled", False)
+
           override_decision = ladder_type in ["LADDER_FILL", "SYNTHETIC_LADDER_FILL"]
 
           trade_side = self._decide_trade_side()

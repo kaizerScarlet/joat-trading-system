@@ -7,7 +7,8 @@ class EventStreamBridge:
     def __init__(self,
                  cancel_window: SimpleCancelWindow,
                  layering_detector: OrderLayeringDetection,
-                 order_age_tracker: OrderAgeDistribution):
+                 order_age_tracker: OrderAgeDistribution,
+                 ):
         self.cancel_window = cancel_window
         self.layering_detector = layering_detector
         self.order_age_tracker = order_age_tracker

@@ -1,0 +1,23 @@
+Metadata-Version: 2.4
+Name: EPIC-QUEST-4-ALPHA
+Version: 2.1.2
+Classifier: Programming Language :: Python :: 3.14.0
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.14
+Requires-Dist: websockets==11.0
+Requires-Dist: aiohttp
+Requires-Dist: pandas
+Requires-Dist: pyyaml
+Requires-Dist: python-dotenv
+Requires-Dist: redis
+Requires-Dist: numpy
+Requires-Dist: scikit-learn
+Requires-Dist: requests
+Provides-Extra: dev
+Requires-Dist: pytest-asyncio>=0.23; extra == "dev"
+Requires-Dist: setuptools; extra == "dev"
+Dynamic: classifier
+Dynamic: provides-extra
+Dynamic: requires-dist
+Dynamic: requires-python

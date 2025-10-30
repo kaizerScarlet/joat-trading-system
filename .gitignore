@@ -13,3 +13,6 @@ __pycache__/
 
 # Secrets
 config/api_keys.yaml
+
+# Python package metadata
+*.egg-info/

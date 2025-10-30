@@ -540,6 +540,7 @@ class StealthRouter:
     def get_debug_view(self):
         """Get introspection and debugging"""
         return {
+            
             "symbol": self.symbol,
             "last_delay_range": self.random_delay_range,
             "last_slippage_bps": self.slippage_bps,
