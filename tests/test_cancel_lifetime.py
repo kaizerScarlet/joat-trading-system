@@ -169,6 +169,9 @@ class DummyRegimeClassifier(CognitiveMarketRegimeClassifierProtocol):
     def get_regime_stability(self): return 1.0
     def get_scoring_weights(self): return (0.5, 0.2, 0.1, 0.2)
     def get_behavioral_overlay(self): return "NORMAL"
+    def get_debug_view(self):
+        return {"spoof_score": 0.0, "volatility": 0.001}
+
 
 #test fast cancel on bid side
 def test_fast_cancel_flag_bid():

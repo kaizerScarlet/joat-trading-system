@@ -690,10 +690,10 @@ class SimpleCancelWindow(CancelWindow):
                 print(f"  Confidence Score: {confidence:.3f}")
 
 
-                if fill_ratio >= 1.0 and confidence >= 0.6:
+                if fill_ratio >= 1.0:
                     selected_fill_type = "SYNTHETIC_TRUE_FILL"
-                elif fill_ratio >= 0.5 and confidence >= 0.2:
-                    selected_fill_type = "SYNTHETIC_PARTIAL_FILL"
+                elif fill_ratio >= 0.5:
+                    selected_fill_type = "SYNTHETIC_PARTIAL_FILL" if confidence >= 0.3 else "SYNTHETIC_WEAK_FILL"
                 else:
                     selected_fill_type = "SYNTHETIC_WEAK_FILL"
 
